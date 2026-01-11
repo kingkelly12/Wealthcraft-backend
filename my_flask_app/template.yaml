@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  WealthCraft Flask API on AWS Lambda
+  
+  This SAM template defines:
+  - Lambda function running Flask app
+  - API Gateway for HTTP routing
+  - Environment variables for configuration
+  - IAM roles and permissions
+
+Globals:
+  Function:
+    Timeout: 30  # Maximum execution time (API requests should complete within 30s)
+    MemorySize: 512  # MB of RAM (affects CPU allocation - more memory = more CPU)
+    Runtime: python3.8  # Match your local Python version
+    Environment:
+      Variables:
+        FLASK_CONFIG: production  # Use production config from config.py
+
+Resources:
+  # 🎓 LAMBDA FUNCTION
+  # This is the core compute resource that runs your Flask app
+  WealthCraftAPI:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .  # Package entire directory (SAM will exclude files in .samignore)
+      Handler: lambda_handler.lambda_handler  # Points to lambda_handler() in lambda_handler.py
+      Description: WealthCraft Flask API backend
+      
+      # 🎓 API GATEWAY EVENT
+      # This creates an API Gateway that triggers the Lambda function
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /{proxy+}  # Catch-all route - forwards ALL paths to Flask
+            Method: ANY  # Accept all HTTP methods (GET, POST, PUT, DELETE, etc.)
+      
+      # 🎓 ENVIRONMENT VARIABLES
+      # These are injected into the Lambda runtime (accessible via os.getenv())
+      # NoEcho parameters are encrypted and hidden in AWS Console
+      Environment:
+        Variables:
+          DATABASE_URL: !Ref DatabaseURL
+          SUPABASE_JWT_SECRET: !Ref SupabaseJWTSecret
+          SECRET_KEY: !Ref SecretKey
+          CORS_ORIGINS: !Ref CorsOrigins
+
+# 🎓 PARAMETERS
+# These are prompted during deployment (sam deploy --guided)
+# Values are stored in samconfig.toml for subsequent deployments
+Parameters:
+  DatabaseURL:
+    Type: String
+    NoEcho: true  # Hide value in CloudFormation console
+    Description: Supabase database connection string (postgresql://...)
+  
+  SupabaseJWTSecret:
+    Type: String
+    NoEcho: true
+    Description: Supabase JWT secret for authentication
+  
+  SecretKey:
+    Type: String
+    NoEcho: true
+    Description: Flask secret key for session management
+  
+  CorsOrigins:
+    Type: String
+    Default: "*"
+    Description: Comma-separated CORS origins (e.g., https://app.example.com,https://mobile.example.com)
+
+# 🎓 OUTPUTS
+# These are displayed after deployment and stored in CloudFormation
+Outputs:
+  ApiURL:
+    Description: API Gateway endpoint URL for your Flask API
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiURL"
+  
+  FunctionArn:
+    Description: Lambda function ARN (for monitoring/debugging)
+    Value: !GetAtt WealthCraftAPI.Arn

@@ -1,0 +1,64 @@
+# .samignore - Exclude files from Lambda deployment package
+# Smaller package = faster cold starts and deployments
+
+# Python virtual environment
+venv/
+env/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Testing
+.pytest_cache/
+tests/
+test_*.py
+*_test.py
+
+# Environment files (NEVER deploy .env - use Lambda environment variables)
+.env
+.env.example
+.env.local
+
+# Documentation
+*.md
+docs/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Gunicorn config (not needed for Lambda)
+gunicorn_config.py
+start_production.sh
+
+# Database instance folder
+instance/
+
+# Deployment artifacts
+.aws-sam/
+samconfig.toml
+
+# Scripts not needed in production
+analyze_supabase_connection.py
+check_password_encoding.py
+connection_guide.py
+diagnose_db_url.py
+fix_python38_compat.py
+inspect_schema.py
+verify_supabase_project.py
+seed_mentors.sql
+
+# Jobs (if you have scheduled tasks, these should be separate Lambda functions)
+jobs/
