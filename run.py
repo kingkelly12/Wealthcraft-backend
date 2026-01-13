@@ -1,6 +1,12 @@
 import os
 import sys
 
+# This will print to your Render logs so we can verify the environment
+print("--- DEBUG START ---")
+print(f"SUPABASE_JWT_SECRET exists in env: {'SUPABASE_JWT_SECRET' in os.environ}")
+print(f"FLASK_CONFIG: {os.environ.get('FLASK_CONFIG')}")
+print("--- DEBUG END ---")
+
 # 1. Path Handling
 # This ensures that whether you run locally or on Render, 
 # the 'my_flask_app' directory is always in Python's search path.
