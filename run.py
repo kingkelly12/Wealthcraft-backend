@@ -1,24 +1,32 @@
 import os
 import sys
-import argparse
 
-# Add my_flask_app to the Python path so imports work from root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'my_flask_app'))
+# 1. Path Handling
+# This ensures that whether you run locally or on Render, 
+# the 'my_flask_app' directory is always in Python's search path.
+base_dir = os.path.dirname(__file__)
+app_dir = os.path.join(base_dir, 'my_flask_app')
+if app_dir not in sys.path:
+    sys.path.insert(0, app_dir)
 
 from app import create_app, db
-# Import models so they are registered with SQLAlchemy
+# Import models to ensure SQLAlchemy registers them
 from app import models
 
-app = create_app(os.getenv('FLASK_CONFIG') or 'default')
+# 2. App Initialization
+# We use the 'FLASK_CONFIG' env var to choose the config class.
+# On Render, you set this to 'production'.
+config_mode = os.getenv('FLASK_CONFIG') or 'default'
+app = create_app(config_mode)
 
 @app.shell_context_processor
 def make_shell_context():
     return dict(db=db, app=app)
 
+# 3. Execution Logic
+# This block only runs during local development (python run.py).
+# Gunicorn ignores this and looks directly for the 'app' variable above.
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Run Flask development server')
-    parser.add_argument('--host', default='127.0.0.1', help='Host to bind to (use 0.0.0.0 for network access)')
-    parser.add_argument('--port', type=int, default=5000, help='Port to bind to')
-    args = parser.parse_args()
-    
-    app.run(host=args.host, port=args.port, debug=True)
+    # We keep your debug=True for local use
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
