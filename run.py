@@ -1,5 +1,10 @@
 import os
+import sys
 import argparse
+
+# Add my_flask_app to the Python path so imports work from root
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'my_flask_app'))
+
 from app import create_app, db
 # Import models so they are registered with SQLAlchemy
 from app import models

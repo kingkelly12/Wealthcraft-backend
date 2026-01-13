@@ -15,6 +15,15 @@ Performance Impact: 1000x improvement over Flask dev server!
 
 import multiprocessing
 import os
+import sys
+
+# =====================================================
+# PYTHONPATH CONFIGURATION
+# =====================================================
+# Add my_flask_app to Python path so Gunicorn can find the app module
+my_flask_app_path = os.path.join(os.path.dirname(__file__), 'my_flask_app')
+if my_flask_app_path not in sys.path:
+    sys.path.insert(0, my_flask_app_path)
 
 # =====================================================
 # WORKER CONFIGURATION
