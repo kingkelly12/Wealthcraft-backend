@@ -34,6 +34,7 @@ class Profile(db.Model):
             'credit_score': self.credit_score,
             'wealth_level': self.wealth_level,
             'experience_points': self.experience_points,
+            'trading_profits': float(self.trading_profits) if self.trading_profits else 0,
             'profile_picture_url': self.profile_picture_url,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }

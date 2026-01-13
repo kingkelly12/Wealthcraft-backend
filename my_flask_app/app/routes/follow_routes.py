@@ -159,3 +159,57 @@ def unfollow_user(current_user_id: str, target_user_id: str):
             'error': 'OPERATION_FAILED',
             'message': str(e)
         }), 500
+
+
+@follow_bp.route('/leaderboard', methods=['GET'])
+@require_auth
+def get_leaderboard(current_user_id: str):
+    """
+    Get leaderboard data sorted by specified metric
+    
+    Query Params:
+    - sort_by: net_worth | monthly_income | credit_score | trading_profits (default: net_worth)
+    - limit: max results (default: 50, max: 100)
+    """
+    try:
+        from app.models.profile import Profile
+        from sqlalchemy import desc
+        from app import db
+        
+        # Get query parameters
+        sort_by = request.args.get('sort_by', 'net_worth')
+        limit = min(int(request.args.get('limit', 50)), 100)
+        
+        # Validate sort_by
+        valid_sort_fields = ['net_worth', 'monthly_income', 'credit_score', 'trading_profits']
+        if sort_by not in valid_sort_fields:
+            sort_by = 'net_worth'
+            
+        # Determine sort column
+        sort_column = getattr(Profile, sort_by)
+        
+        # Query database
+        profiles = db.session.query(Profile)\
+            .order_by(desc(sort_column))\
+            .limit(limit)\
+            .all()
+            
+        # Format response
+        leaderboard_data = []
+        for index, profile in enumerate(profiles):
+            data = profile.to_dict()
+            data['rank'] = index + 1
+            leaderboard_data.append(data)
+            
+        return jsonify({
+            'success': True,
+            'data': leaderboard_data
+        }), 200
+        
+    except Exception as e:
+        print(f"Leaderboard error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'LEADERBOARD_ERROR',
+            'message': 'Failed to fetch leaderboard'
+        }), 500
