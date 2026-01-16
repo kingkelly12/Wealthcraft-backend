@@ -4,43 +4,33 @@ JWT Helper utilities for verifying Supabase JWT tokens
 import jwt
 import os
 from functools import wraps
-from flask import request, jsonify, current_app
+from flask import request, jsonify
 from typing import Optional, Dict, Any
 
-def get_supabase_secret():
-    """
-    Helper to get the secret from Flask config or Environment.
-    This is safer than a top-level check.
-    """
-    # Priority: 1. Flask Config, 2. OS Environment
-    secret = os.getenv('SUPABASE_JWT_SECRET')
-    
-    # If using current_app context (inside a request), check config too
-    try:
-        if not secret and current_app:
-            secret = current_app.config.get('SUPABASE_JWT_SECRET')
-    except RuntimeError:
-        # Not in an application context
-        pass
-        
-    return secret
+# Get Supabase JWT secret from environment
+SUPABASE_JWT_SECRET = os.getenv('SUPABASE_JWT_SECRET')
+
+if not SUPABASE_JWT_SECRET:
+    raise ValueError('SUPABASE_JWT_SECRET environment variable is required')
+
 
 def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
     """
     Decode and verify a Supabase JWT token
+    
+    Args:
+        token: The JWT token string
+        
+    Returns:
+        Decoded token payload if valid, None otherwise
     """
-    secret = get_supabase_secret()
-    if not secret:
-        print("CRITICAL: SUPABASE_JWT_SECRET is not set. Cannot decode token.")
-        return None
-
     try:
         # Verify and decode the token
         payload = jwt.decode(
             token,
-            secret,
+            SUPABASE_JWT_SECRET,
             algorithms=['HS256'],
-            audience='authenticated'
+            audience='authenticated'  # Supabase uses 'authenticated' as audience
         )
         return payload
     except jwt.ExpiredSignatureError:
@@ -49,7 +39,6 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
     except jwt.InvalidTokenError as e:
         print(f'Invalid token: {e}')
         return None
-
 
 
 def get_user_id_from_token(token: str) -> Optional[str]:
@@ -169,4 +158,36 @@ def require_admin(f):
         user_id = payload.get('sub')
         return f(user_id, *args, **kwargs)
     
+    
     return decorated_function
+
+def create_token(user_id: str, email: str) -> str:
+    """
+    Create a JWT token compatible with Supabase
+    
+    Args:
+        user_id: The user's ID
+        email: The user's email
+        
+    Returns:
+        Encoded JWT token string
+    """
+    import time
+    
+    payload = {
+        "aud": "authenticated",
+        "exp": int(time.time()) + 3600 * 24 * 7,  # 7 days expiration
+        "iat": int(time.time()),
+        "iss": "supabase",
+        "sub": str(user_id),
+        "email": email,
+        "role": "authenticated",
+        "app_metadata": {
+            "provider": "email",
+            "providers": ["email"]
+        },
+        "user_metadata": {},
+    }
+    
+    token = jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+    return token

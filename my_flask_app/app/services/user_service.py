@@ -1,6 +1,7 @@
 from app import db
 from app.models.user import User
 from app.schemas.user_schema import UserCreate
+from typing import Optional
 
 class UserService:
     @staticmethod
@@ -20,3 +21,10 @@ class UserService:
     @staticmethod
     def get_user_by_id(user_id: int) -> User:
         return User.query.get(user_id)
+
+    @staticmethod
+    def authenticate(email: str, password: str) -> Optional[User]:
+        user = User.query.filter_by(email=email).first()
+        if user and user.check_password(password):
+            return user
+        return None
