@@ -58,6 +58,10 @@ def create_app(config_name='default'):
     @app.route('/health')
     def health_check():
         return jsonify({'status': 'healthy', 'message': 'WealthCraft API is running'}), 200
+
+    @app.route('/')
+    def root():
+        return jsonify({'status': 'online', 'service': 'WealthCraft API', 'version': '1.0.0'}), 200
     
     # Error handlers
     @app.errorhandler(401)

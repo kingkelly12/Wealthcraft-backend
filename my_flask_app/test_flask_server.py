@@ -30,7 +30,7 @@ def test_flask_api():
     print("   Waiting for server to start...")
     time.sleep(3)
     
-    base_url = "http://localhost:5000"
+    base_url = "http://127.0.0.1:5000"
     
     try:
         # Test 1: Health check / root endpoint
@@ -48,15 +48,15 @@ def test_flask_api():
         # Test 2: Check if API routes are registered
         print("\n3️⃣  Testing API Route Registration...")
         try:
-            # Try profile endpoint (should require auth)
-            response = requests.get(f"{base_url}/api/profile", timeout=5)
-            print(f"   Profile endpoint status: {response.status_code}")
-            if response.status_code in [401, 403]:
-                print("   ✅ Profile endpoint exists (requires authentication)")
-            elif response.status_code == 404:
-                print("   ❌ Profile endpoint not found")
+            # Try asset marketplace endpoint (public)
+            response = requests.get(f"{base_url}/api/assets/marketplace", timeout=5)
+            print(f"   Assets endpoint status: {response.status_code}")
+            if response.status_code == 200:
+                print("   ✅ API routes working (Assets endpoint verified)")
+            elif response.status_code in [401, 403]:
+                print("   ⚠️  Endpoint protected (Access Denied)")
             else:
-                print(f"   ℹ️  Unexpected response: {response.status_code}")
+                print(f"   ❌ Endpoint error: {response.status_code}")
         except requests.exceptions.RequestException as e:
             print(f"   ❌ Request failed: {e}")
         
