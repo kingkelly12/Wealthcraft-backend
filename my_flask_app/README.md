@@ -1,4 +1,4 @@
-# WealthCraft Flask Backend
+# Adulting Flask Backend
 
 Scalable Python/Flask backend with 20 SQLAlchemy models, service layer, and RESTful API.
 

@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# 🚀 WealthCraft Lambda Deployment Script
+# Adulting Lambda Deployment Script
 # This script automates the deployment of your Flask API to AWS Lambda
 
 set -e  # Exit immediately if any command fails
 
 echo "========================================="
-echo "🚀 WealthCraft Lambda Deployment"
+echo "🚀 Adulting Lambda Deployment"
 echo "========================================="
 echo ""
 
@@ -83,7 +83,7 @@ echo "📝 Next Steps:"
 echo "  1. Copy the API URL from the outputs above"
 echo "  2. Update your mobile app to use the new Lambda URL"
 echo "  3. Test your endpoints: curl <API_URL>/health"
-echo "  4. Monitor logs: sam logs -n WealthCraftAPI --tail"
+echo "  4. Monitor logs: sam logs -n AdultingAPI --tail"
 echo ""
 echo "💰 Cost Monitoring:"
 echo "  - Check AWS billing dashboard"

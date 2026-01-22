@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  WealthCraft Flask API on AWS Lambda
+  Adulting Flask API on AWS Lambda
   
   This SAM template defines:
   - Lambda function running Flask app
@@ -26,7 +26,7 @@ Resources:
     Properties:
       CodeUri: .  # Package entire directory (SAM will exclude files in .samignore)
       Handler: lambda_handler.lambda_handler  # Points to lambda_handler() in lambda_handler.py
-      Description: WealthCraft Flask API backend
+      Description: Adulting Flask API backend
       
       # 🎓 API GATEWAY EVENT
       # This creates an API Gateway that triggers the Lambda function
@@ -82,4 +82,4 @@ Outputs:
   
   FunctionArn:
     Description: Lambda function ARN (for monitoring/debugging)
-    Value: !GetAtt WealthCraftAPI.Arn
+    Value: !GetAtt AdultingAPI.Arn

@@ -6,13 +6,19 @@ load_dotenv()
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'you-will-never-guess'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    database_url = os.environ.get('DATABASE_URL')
+    database_url = os.environ.get('DATABASE_URL', '').strip()
+    
     if database_url:
-        database_url = database_url.strip()  # Remove leading/trailing whitespace
+        # Remove leading/trailing whitespace
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    
-    SQLALCHEMY_DATABASE_URI = database_url or 'sqlite:///app.db'
+        SQLALCHEMY_DATABASE_URI = database_url
+    else:
+        # Only use SQLite as fallback in non-production environments
+        flask_config = os.environ.get('FLASK_CONFIG', 'development')
+        if flask_config == 'production':
+            raise ValueError('DATABASE_URL environment variable is required for production deployment')
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///app.db'
     
     # CORS Configuration
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
