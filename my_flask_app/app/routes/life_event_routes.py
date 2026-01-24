@@ -85,13 +85,47 @@ def make_life_event_choice(current_user_id: str):
             # No balance change
             current_balance = BalanceService.get_current_balance(current_user_id)
             balance_result = {'new_balance': current_balance}
+
+        # 5. Apply Sanity Impact & Check Burnout
+        # Fetch current profile to get sanity
+        profile_res = supabase.table('profiles').select('sanity').eq('user_id', current_user_id).single().execute()
+        current_sanity = profile_res.data.get('sanity', 100)
+        
+        # Calculate new sanity
+        impact_sanity = event.get('impact_sanity', 0) 
+        # Ideally choice should have sanity impact too, but for now using event's impact.
+        # Future improvement: Add impact_sanity to life_event_choices table.
+        
+        new_sanity = current_sanity + impact_sanity
+        burnout_triggered = False
+        outcome_message = choice.get('outcome_description', 'Choice made')
+
+        if new_sanity <= 0:
+            # BURNOUT TRIGGERED
+            burnout_triggered = True
+            new_sanity = 50 # Reset to 50
+            
+            # Apply penalty
+            burnout_cost = Decimal(500)
+            BalanceService.subtract_balance(
+                user_id=current_user_id,
+                amount=burnout_cost,
+                reason="Medical Bill: Burnout Recovery"
+            )
+            outcome_message = f"BURNOUT! You collapsed from stress. Hospital bill: $500. {outcome_message}"
+        
+        # Update Profile with new sanity
+        supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', current_user_id).execute()
         
         return jsonify({
             'success': True,
             'message': 'Choice processed successfully',
-            'outcome': choice.get('outcome_description', 'Choice made'),
+            'outcome': outcome_message,
             'balance_change': float(net_impact),
-            'new_balance': float(balance_result['new_balance'])
+            'new_balance': float(balance_result['new_balance']),
+            'sanity_change': impact_sanity,
+            'new_sanity': new_sanity,
+            'burnout_triggered': burnout_triggered
         }), 200
         
     except ValidationError as e:

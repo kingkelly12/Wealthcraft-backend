@@ -13,6 +13,7 @@ class LifeEvent(db.Model):
     impact_cash = db.Column(db.Numeric(15, 2), default=0)
     impact_income = db.Column(db.Numeric(15, 2), default=0)
     impact_expenses = db.Column(db.Numeric(15, 2), default=0)
+    impact_sanity = db.Column(db.Integer, default=0)
     impact_assets = db.Column(db.Text)
     time_limit_seconds = db.Column(db.Integer, default=604800)  # 7 days default
     icon_name = db.Column(db.String(50), default='Zap')
@@ -27,6 +28,7 @@ class LifeEvent(db.Model):
             'description': self.description,
             'event_type': self.event_type,
             'impact_cash': float(self.impact_cash) if self.impact_cash else 0,
+            'impact_sanity': self.impact_sanity,
             'icon_name': self.icon_name,
             'is_active': self.is_active
         }

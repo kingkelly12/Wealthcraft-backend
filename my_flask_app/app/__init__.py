@@ -37,6 +37,7 @@ def create_app(config_name='default'):
     from app.routes.follow_routes import follow_bp
     from app.routes.notification_routes import notification_bp
     from app.routes.mission_routes import mission_bp
+    from app.routes.sanity_routes import sanity_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -52,6 +53,7 @@ def create_app(config_name='default'):
     app.register_blueprint(follow_bp, url_prefix='/api/social')
     app.register_blueprint(notification_bp, url_prefix='/api/notifications')
     app.register_blueprint(mission_bp, url_prefix='/api/missions')
+    app.register_blueprint(sanity_bp, url_prefix='/api/sanity')
 
     
     # Health check endpoint
