@@ -121,18 +121,6 @@ class MentorService:
         if current_jobs:
             work_hours_per_week = max([job.work_hours_per_week or 40 for job in current_jobs])
         
-        # 13. Net worth growth (from financial snapshots)
-        from app.models.player_financial_snapshot import PlayerFinancialSnapshot
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-        old_snapshot = PlayerFinancialSnapshot.query.filter(
-            PlayerFinancialSnapshot.player_id == player_id,
-            PlayerFinancialSnapshot.snapshot_date <= thirty_days_ago
-        ).order_by(PlayerFinancialSnapshot.snapshot_date.desc()).first()
-        
-        net_worth_growth_percentage = 0
-        if old_snapshot and old_snapshot.net_worth != 0:
-            net_worth_growth_percentage = (net_worth - float(old_snapshot.net_worth)) / float(old_snapshot.net_worth)
-        
         return {
             'net_worth': net_worth,
             'total_assets': total_assets,
@@ -160,8 +148,7 @@ class MentorService:
             'monthly_savings': monthly_savings,
             'savings_rate': savings_rate,
             'engagement_days': engagement_days,
-            'work_hours_per_week': work_hours_per_week,
-            'net_worth_growth_percentage': net_worth_growth_percentage
+            'work_hours_per_week': work_hours_per_week
         }
 
     @staticmethod
@@ -195,14 +182,7 @@ class MentorService:
                 'data': {'concentration': int(metrics['asset_concentration'] * 100)}
             })
 
-        # 3. Net worth growth (>20% increase) ✅ NOW ACTIVE
-        if metrics.get('net_worth_growth_percentage', 0) > 0.2:
-            triggers.append({
-                'type': 'net_worth_growth',
-                'mentor_role': 'strategic',
-                'priority': 3,
-                'data': {'growth_percentage': int(metrics['net_worth_growth_percentage'] * 100)}
-            })
+
         
         # 4. Overextension (>40% liabilities ratio)
         total_assets = metrics.get('total_assets', 0)

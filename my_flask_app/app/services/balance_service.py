@@ -1,3 +1,4 @@
+
 """
 Service layer for balance operations
 Handles business logic for adding/subtracting user balance
@@ -6,17 +7,7 @@ from decimal import Decimal
 from typing import Dict, Any
 import uuid
 from datetime import datetime
-from supabase import create_client, Client
-import os
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')  # Use service role for server-side operations
-
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-    raise ValueError('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set')
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+from app import supabase
 
 
 class BalanceService:

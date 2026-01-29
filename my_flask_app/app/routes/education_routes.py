@@ -7,18 +7,14 @@ from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.education_schema import CourseEnrollmentRequest, CourseCompletionRequest, CourseEnrollmentResponse, CourseCompletionResponse
-from supabase import create_client
-from decimal import Decimal
 import os
 import uuid
+import random
 from datetime import datetime
+from app.services.push_notification_service import ExpoPushService
+from app import supabase
 
 education_bp = Blueprint('education', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @education_bp.route('/enroll', methods=['POST'])

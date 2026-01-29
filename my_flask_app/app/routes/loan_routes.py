@@ -6,19 +6,36 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
-from app.schemas.loan_schema import LoanApplicationRequest, LoanApplicationResponse
-from supabase import create_client
+from app.schemas.loan_schema import LoanApplicationRequest
+from app import supabase
 from decimal import Decimal
-import os
 import uuid
 from datetime import datetime
+from app.services.push_notification_service import ExpoPushService
 
 loan_bp = Blueprint('loan', __name__)
 
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+@loan_bp.route('/available', methods=['GET'])
+def get_available_loans():
+    """
+    Get available bank loan products
+    Returns a list of loans where borrower_id is NULL (templates)
+    """
+    try:
+        response = supabase.table('bank_loans').select('*').is_('borrower_id', 'null').eq('status', 'available').execute()
+        
+        return jsonify({
+            'success': True,
+            'data': response.data
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'OPERATION_FAILED',
+            'message': str(e)
+        }), 500
+
 
 
 @loan_bp.route('/apply', methods=['POST'])
@@ -54,32 +71,50 @@ def apply_for_loan(current_user_id: str):
         loan_amount = Decimal(str(loan['amount']))
         monthly_payment = Decimal(str(loan.get('monthly_payment', loan_amount * Decimal('0.05'))))
         
-        # 2. Add loan amount to balance
+        # 2. Create a specific bank_loan record for this user
+        user_loan_id = str(uuid.uuid4())
+        supabase.table('bank_loans').insert({
+            'id': user_loan_id,
+            'borrower_id': current_user_id,
+            'type': loan['type'],
+            'amount': float(loan_amount),
+            'interest_rate': float(loan['interest_rate']),
+            'term': loan['term'],
+            'monthly_payment': float(monthly_payment),
+            'total_interest': float(loan['total_interest']),
+            'credit_required': loan['credit_required'],
+            'status': 'active',
+            'collateral': loan['collateral'],
+            'funded_at': datetime.utcnow().isoformat(),
+            'due_date': None # TODO: Calculate due date
+        }).execute()
+
+        # 3. Add loan amount to balance
         balance_result = BalanceService.add_balance(
             user_id=current_user_id,
             amount=loan_amount,
-            reason=f"Loan received: {loan['name']}"
+            reason=f"Loan received: {loan.get('type', 'Bank Loan')}"
         )
         
-        # 3. Create liability record
+        # 4. Create liability record (for unified view)
         liability_id = str(uuid.uuid4())
         supabase.table('liabilities').insert({
             'id': liability_id,
             'user_id': current_user_id,
-            'name': loan['name'],
-            'type': 'bank_loan',
-            'total_amount': float(loan_amount),
-            'remaining_amount': float(loan_amount),
-            'interest_rate': loan.get('interest_rate', 5.0),
+            'name': loan.get('type', 'Bank Loan'),
+            'liability_type': 'bank_loan',
+            'amount': float(loan_amount),
+            'remaining_amount': float(loan_amount), # Full amount initially
+            'interest_rate': float(loan['interest_rate']) * 100, # Convert to percentage if needed, checking conventions
             'monthly_payment': float(monthly_payment),
-            'term_months': loan.get('term', 12),
-            'remaining_term': loan.get('term', 12)
+            'p2p_loan_id': None # Not a P2P loan
         }).execute()
         
         return jsonify({
             'success': True,
             'message': f'You have received ${loan_amount:,.2f}.',
             'liability_id': uuid.UUID(liability_id),
+            'bank_loan_id': uuid.UUID(user_loan_id),
             'new_balance': float(balance_result['new_balance']),
             'loan_amount': float(loan_amount),
             'monthly_payment': float(monthly_payment)
@@ -92,6 +127,26 @@ def apply_for_loan(current_user_id: str):
             'message': 'Invalid request data',
             'details': e.errors()
         }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'OPERATION_FAILED',
+            'message': str(e)
+        }), 500
+
+@loan_bp.route('/active', methods=['GET'])
+@require_auth
+def get_active_loans(current_user_id: str):
+    """
+    Get active bank loans for the current user
+    """
+    try:
+        response = supabase.table('bank_loans').select('*').eq('borrower_id', current_user_id).eq('status', 'active').execute()
+        
+        return jsonify({
+            'success': True,
+            'data': response.data
+        }), 200
     except Exception as e:
         return jsonify({
             'success': False,

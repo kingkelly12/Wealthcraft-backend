@@ -6,27 +6,28 @@ load_dotenv()
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'you-will-never-guess'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    database_url = os.environ.get('DATABASE_URL', '').strip()
-    
+    database_url = os.environ.get('DATABASE_URL')
     if database_url:
-        # Remove leading/trailing whitespace
+        database_url = database_url.strip()  # Remove leading/trailing whitespace
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        SQLALCHEMY_DATABASE_URI = database_url
-    else:
-        # Only use SQLite as fallback in non-production environments
-        flask_config = os.environ.get('FLASK_CONFIG', 'development')
-        if flask_config == 'production':
-            raise ValueError('DATABASE_URL environment variable is required for production deployment')
-        SQLALCHEMY_DATABASE_URI = 'sqlite:///app.db'
+    
+    SQLALCHEMY_DATABASE_URI = database_url or 'sqlite:///app.db'
     
     # CORS Configuration
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
     
     # Supabase JWT Configuration
     SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET')
+    SUPABASE_URL = os.environ.get('SUPABASE_URL')
+    SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+
     if not SUPABASE_JWT_SECRET:
-        raise ValueError('SUPABASE_JWT_SECRET environment variable is required')
+         raise ValueError('SUPABASE_JWT_SECRET environment variable is required')
+    if not SUPABASE_URL:
+        raise ValueError('SUPABASE_URL environment variable is required')
+    if not SUPABASE_KEY:
+        raise ValueError('SUPABASE_KEY environment variable is required')
     
     # API Configuration
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max request size

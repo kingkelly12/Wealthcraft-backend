@@ -6,18 +6,11 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.schemas.follow_schema import FollowUserRequest, FollowUserResponse
-from supabase import create_client
-import os
-import uuid
+from app import supabase
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 
 follow_bp = Blueprint('follow', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @follow_bp.route('/follow', methods=['POST'])
@@ -181,7 +174,7 @@ def get_leaderboard(current_user_id: str):
         limit = min(int(request.args.get('limit', 50)), 100)
         
         # Validate sort_by
-        valid_sort_fields = ['net_worth', 'monthly_income', 'credit_score', 'trading_profits']
+        valid_sort_fields = ['net_worth', 'monthly_income', 'credit_score', 'trading_profits', 'sanity']
         if sort_by not in valid_sort_fields:
             sort_by = 'net_worth'
             

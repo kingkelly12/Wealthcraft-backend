@@ -6,17 +6,13 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError, BaseModel, Field
 from app.utils.jwt_helper import require_auth
 from app.services.push_notification_service import ExpoPushService
-from supabase import create_client
+from app import supabase
 import os
+import uuid
 from datetime import datetime
 from typing import Optional
 
-notification_bp = Blueprint('notifications', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+notification_bp = Blueprint('notification', __name__)
 
 
 # Pydantic schemas
@@ -26,7 +22,7 @@ class RegisterTokenRequest(BaseModel):
 
 class TestPushRequest(BaseModel):
     title: Optional[str] = "Test Notification"
-    body: Optional[str] = "This is a test push notification from WealthCraft!"
+    body: Optional[str] = "This is a test push notification from Adulting!"
 
 
 @notification_bp.route('/register-token', methods=['POST'])

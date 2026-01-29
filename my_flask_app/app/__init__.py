@@ -4,8 +4,11 @@ from flask_migrate import Migrate
 from flask_cors import CORS
 from config import config
 
+from supabase import create_client, Client
+
 db = SQLAlchemy()
 migrate = Migrate()
+supabase: Client = None
 
 def create_app(config_name='default'):
     app = Flask(__name__)
@@ -14,6 +17,13 @@ def create_app(config_name='default'):
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
+    
+    # Initialize Supabase
+    global supabase
+    url = app.config.get('SUPABASE_URL')
+    key = app.config.get('SUPABASE_KEY')
+    if url and key:
+        supabase = create_client(url, key)
     
     # Configure CORS
     CORS(app, 
@@ -38,6 +48,7 @@ def create_app(config_name='default'):
     from app.routes.notification_routes import notification_bp
     from app.routes.mission_routes import mission_bp
     from app.routes.sanity_routes import sanity_bp
+    from app.routes.void_routes import void_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -54,6 +65,7 @@ def create_app(config_name='default'):
     app.register_blueprint(notification_bp, url_prefix='/api/notifications')
     app.register_blueprint(mission_bp, url_prefix='/api/missions')
     app.register_blueprint(sanity_bp, url_prefix='/api/sanity')
+    app.register_blueprint(void_bp, url_prefix='/api/void')
 
     
     # Health check endpoint

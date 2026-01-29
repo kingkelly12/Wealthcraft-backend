@@ -6,7 +6,7 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.schemas.chat_schema import SendMessageRequest, SendMessageResponse
-from supabase import create_client
+from app import supabase
 import os
 import uuid
 from datetime import datetime
@@ -14,11 +14,6 @@ from app.services.push_notification_service import ExpoPushService
 
 
 chat_bp = Blueprint('chat', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @chat_bp.route('/send', methods=['POST'])

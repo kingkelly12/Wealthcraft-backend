@@ -82,4 +82,4 @@ Outputs:
   
   FunctionArn:
     Description: Lambda function ARN (for monitoring/debugging)
-    Value: !GetAtt AdultingAPI.Arn
+    Value: !GetAtt WealthCraftAPI.Arn

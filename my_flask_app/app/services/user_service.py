@@ -1,30 +1,47 @@
-from app import db
-from app.models.user import User
-from app.schemas.user_schema import UserCreate
-from typing import Optional
+from app import supabase
+from gotrue.errors import AuthApiError
 
 class UserService:
     @staticmethod
-    def create_user(data: UserCreate) -> User:
-        if User.query.filter_by(username=data.username).first():
-            raise ValueError("Username already exists")
-        if User.query.filter_by(email=data.email).first():
-            raise ValueError("Email already exists")
-
-        new_user = User(username=data.username, email=data.email)
-        new_user.set_password(data.password)
-        
-        db.session.add(new_user)
-        db.session.commit()
-        return new_user
+    def create_user(data):
+        """
+        Register a new user with Supabase Auth.
+        """
+        try:
+            # Sign up with email and password
+            # metadata will be stored in 'raw_user_meta_data' in auth.users
+            res = supabase.auth.sign_up({
+                "email": data.email,
+                "password": data.password,
+                "options": {
+                    "data": {
+                        "username": data.username
+                    }
+                }
+            })
+            return res.user
+        except AuthApiError as e:
+            # Pass the error message up to the route handler
+            raise ValueError(e.message)
+        except Exception as e:
+            print(f"Supabase Register Error: {e}")
+            raise e
 
     @staticmethod
-    def get_user_by_id(user_id: int) -> User:
-        return User.query.get(user_id)
-
-    @staticmethod
-    def authenticate(email: str, password: str) -> Optional[User]:
-        user = User.query.filter_by(email=email).first()
-        if user and user.check_password(password):
-            return user
-        return None
+    def authenticate(email, password):
+        """
+        Authenticate a user with Supabase Auth.
+        Returns the session/user object or raises an error.
+        """
+        try:
+            res = supabase.auth.sign_in_with_password({
+                "email": email,
+                "password": password
+            })
+            return res
+        except AuthApiError as e:
+             # Pass the error message up to the route handler
+            raise ValueError(e.message)
+        except Exception as e:
+            print(f"Supabase Login Error: {e}")
+            raise e

@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from app.utils.jwt_helper import require_auth
-from supabase import create_client
+from app import supabase
 from decimal import Decimal
 import os
 import uuid
@@ -8,11 +8,6 @@ from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 
 mission_bp = Blueprint('mission', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @mission_bp.route('/available', methods=['GET'])

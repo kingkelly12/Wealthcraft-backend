@@ -3,19 +3,16 @@ from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.asset_schema import AssetPurchase
-from supabase import create_client
+from app import supabase
 from decimal import Decimal
 import os
 import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
+from app.models.profile import Profile
+from app import db
 
 asset_bp = Blueprint('asset', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @asset_bp.route('/purchase', methods=['POST'])
@@ -232,7 +229,21 @@ def sell_asset(current_user_id: str, asset_id: str):
             }), 404
         
         asset = asset_response.data
-        sale_value = Decimal(str(asset.get('value', 0)))
+        
+        # 1.5 Get current market price (to calculate true sale value)
+        market_asset_response = supabase.table('assets').select('price').eq('name', asset.get('name')).single().execute()
+        
+        current_price = Decimal(str(asset.get('purchase_price'))) # Default to purchase price if lookup fails
+        if market_asset_response.data:
+             current_price = Decimal(str(market_asset_response.data.get('price')))
+             
+        quantity = Decimal(str(asset.get('quantity', 1)))
+        sale_value = current_price * quantity
+        
+        # Calculate profit
+        purchase_price = Decimal(str(asset.get('purchase_price', 0)))
+        cost_basis = purchase_price * quantity
+        profit = sale_value - cost_basis
         
         # 2. Add money to balance
         balance_result = BalanceService.add_balance(
@@ -244,12 +255,39 @@ def sell_asset(current_user_id: str, asset_id: str):
         # 3. Delete the asset
         supabase.table('user_assets').delete().eq('id', asset_id).execute()
         
+        # 3.5 Update Profile (Trading Profits & Net Worth)
+        try:
+            profile = Profile.query.filter_by(user_id=current_user_id).first()
+            if profile:
+                profile.trading_profits = (profile.trading_profits or 0) + profit
+                # Net worth update: 
+                # Old Net Worth = Cash + Assets
+                # New Net Worth = (Cash + Sale Value) + (Assets - Asset Value)
+                # Change = Sale Value - Asset Value.
+                # If Asset Value was tracked as 'current market value' in net worth, then change is 0 (if sale = market).
+                # But usually net worth is sum of assets + cash.
+                # If we assume net worth was previously accurate with *old* asset value, 
+                # then we just add the realized profit?
+                # Actually, simpler: just add the profit. 
+                # Verification:
+                # Start: Cash 100, Asset 100. NW = 200.
+                # Price goes to 150. Asset still recorded as 100 (in purchase price) unless cron updated it.
+                # Sell for 150. Cash becomes 250. Asset 0.
+                # NW should be 250. 
+                # Previous NW 200. change = +50 (profit).
+                # So yes, adding profit works.
+                profile.net_worth = (profile.net_worth or 0) + profit
+                db.session.commit()
+        except Exception as e:
+            print(f"Failed to update profile stats: {e}")
+            db.session.rollback()
+        
         # 4. Create notification
         supabase.table('notifications').insert({
             'user_id': current_user_id,
             'type': 'financial_move',
             'title': 'Asset Sold',
-            'message': f'You sold {asset.get("name", "your asset")} for ${sale_value:,.2f}',
+            'message': f'You sold {asset.get("name", "your asset")} for ${sale_value:,.2f} (Profit: ${profit:,.2f})',
             'read': False
         }).execute()
         
@@ -259,11 +297,12 @@ def sell_asset(current_user_id: str, asset_id: str):
                 supabase_client=supabase,
                 user_id=current_user_id,
                 title='💵 Asset Sold',
-                body=f'You sold {asset.get("name", "your asset")} for ${sale_value:,.2f}',
+                body=f'Sold {asset.get("name", "asset")} for ${sale_value:,.2f}. Profit: ${profit:,.2f}',
                 notification_type='financial_move',
                 data={
                     'asset_id': asset_id,
                     'amount': float(sale_value),
+                    'profit': float(profit),
                     'transaction_type': 'asset_sale'
                 }
             )
@@ -274,6 +313,7 @@ def sell_asset(current_user_id: str, asset_id: str):
             'success': True,
             'message': f'Successfully sold {asset.get("name", "asset")}',
             'sale_value': float(sale_value),
+            'profit': float(profit),
             'new_balance': float(balance_result['new_balance'])
         }), 200
         

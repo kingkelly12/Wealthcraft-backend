@@ -6,18 +6,15 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
-from app.schemas.life_event_schema import LifeEventChoiceRequest, LifeEventChoiceResponse
-from supabase import create_client
+from app.schemas.life_event_schema import LifeEventChoiceResponse
+from app import supabase
 from decimal import Decimal
 import os
+import random
 from datetime import datetime
+from app.services.push_notification_service import ExpoPushService
 
 life_event_bp = Blueprint('life_event', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @life_event_bp.route('/make-choice', methods=['POST'])

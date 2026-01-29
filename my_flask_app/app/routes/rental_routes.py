@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.rental_schema import RentalRequest, RentalResponse, MoveOutResponse
-from supabase import create_client
+from app import supabase
 from decimal import Decimal
 import os
 import uuid
@@ -15,11 +15,6 @@ from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 
 rental_bp = Blueprint('rental', __name__)
-
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @rental_bp.route('/rent', methods=['POST'])

@@ -1,15 +1,13 @@
 from flask import Blueprint, request, jsonify
+from app import supabase
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
+from app.models.profile import Profile
+from app import db
 from decimal import Decimal
 import os
-from supabase import create_client
 
 sanity_bp = Blueprint('sanity', __name__)
-
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_ROLE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 RECOVERY_ACTIONS = {
     'touch_grass': {'cost': 0, 'sanity': 5, 'message': 'You touched grass. Nature heals a little.'},

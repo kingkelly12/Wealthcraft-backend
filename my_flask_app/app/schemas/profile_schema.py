@@ -12,6 +12,7 @@ class ProfileUpdate(BaseModel):
     net_worth: Optional[float] = None
     monthly_income: Optional[float] = None
     credit_score: Optional[int] = Field(None, ge=300, le=850)
+    has_completed_onboarding: Optional[bool] = None
 
 class ProfileResponse(BaseModel):
     id: str
@@ -22,6 +23,7 @@ class ProfileResponse(BaseModel):
     credit_score: int
     wealth_level: str
     experience_points: int
+    has_completed_onboarding: bool
     profile_picture_url: str
     created_at: str
 
