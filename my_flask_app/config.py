@@ -7,12 +7,17 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'you-will-never-guess'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     database_url = os.environ.get('DATABASE_URL')
+    
+    # Validate and normalize database URL
     if database_url:
         database_url = database_url.strip()  # Remove leading/trailing whitespace
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    else:
+        # DATABASE_URL is required in production
+        raise ValueError('DATABASE_URL environment variable is required. It must be set on Render.')
     
-    SQLALCHEMY_DATABASE_URI = database_url or 'sqlite:///app.db'
+    SQLALCHEMY_DATABASE_URI = database_url
     
     # CORS Configuration
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')

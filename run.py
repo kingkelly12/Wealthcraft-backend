@@ -4,6 +4,14 @@ import sys
 # This will print to your Render logs so we can verify the environment
 print("--- DEBUG START ---")
 print(f"SUPABASE_JWT_SECRET exists in env: {'SUPABASE_JWT_SECRET' in os.environ}")
+print(f"DATABASE_URL exists in env: {'DATABASE_URL' in os.environ}")
+if 'DATABASE_URL' in os.environ:
+    # Print first 50 chars of DB URL for debugging (mask the sensitive part)
+    db_url = os.environ.get('DATABASE_URL', '')
+    if len(db_url) > 50:
+        print(f"DATABASE_URL preview: {db_url[:50]}...")
+    else:
+        print(f"DATABASE_URL length: {len(db_url)} chars")
 print(f"FLASK_CONFIG: {os.environ.get('FLASK_CONFIG')}")
 print("--- DEBUG END ---")
 
