@@ -10,6 +10,7 @@ python-dotenv
 psycopg2-binary
 PyJWT
 supabase
+gotrue
 requests
 gunicorn
 gevent
