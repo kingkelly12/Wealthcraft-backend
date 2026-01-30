@@ -13,4 +13,4 @@ supabase
 gotrue
 requests
 gunicorn
-gevent
+
