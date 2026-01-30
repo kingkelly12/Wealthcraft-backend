@@ -797,7 +797,35 @@ def get_pending_story_events(current_user_id: str):
             'message': str(e)
         }), 500
 
+@mission_bp.route('/quit', methods=['POST'])
+@require_auth
+def quit_mission(current_user_id: str):
+    """Alias for abandon mission"""
+    return abandon_mission(current_user_id)
 
+@mission_bp.route('/story-events/<event_id>/acknowledge', methods=['POST'])
+@require_auth
+def acknowledge_story_event_endpoint(current_user_id: str, event_id: str):
+    """Acknowledge a story event (mark as viewed)"""
+    try:
+        # Get active mission first
+        progress_res = supabase.table('player_mission_progress').select('id').eq('player_id', current_user_id).eq('is_active', True).single().execute()
+        if not progress_res.data:
+             return jsonify({'success': False, 'error': 'No active mission'}), 404
+             
+        player_mission_id = progress_res.data['id']
+        
+        # Insert into player_story_progress
+        supabase.table('player_story_progress').insert({
+            'player_mission_id': player_mission_id,
+            'story_event_id': event_id,
+            'has_been_viewed': True,
+            'viewed_at': datetime.utcnow().isoformat()
+        }).execute()
+        
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 @mission_bp.route('/story-events/<event_id>/acknowledge', methods=['POST'])
 @require_auth
 def acknowledge_story_event(current_user_id: str, event_id: str):

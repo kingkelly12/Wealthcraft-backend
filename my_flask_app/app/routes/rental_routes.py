@@ -17,6 +17,37 @@ from app.services.push_notification_service import ExpoPushService
 rental_bp = Blueprint('rental', __name__)
 
 
+@rental_bp.route('/available', methods=['GET'])
+def get_available_rentals():
+    """Get available rental properties"""
+    try:
+        response = supabase.table('rental_properties').select('*').execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+         return jsonify({'success': False, 'error': str(e)}), 500
+
+@rental_bp.route('/user/<user_id>', methods=['GET'])
+@require_auth
+def get_user_rental(current_user_id: str, user_id: str):
+    """Get specific user's active rental"""
+    return get_current_rental(user_id)
+
+@rental_bp.route('/current', methods=['GET'])
+@require_auth
+def get_current_rental(current_user_id: str):
+    """Get user's current active rental"""
+    try:
+        # Join with properties to get details
+        response = supabase.table('player_rentals').select('*, rental_properties(*)').eq('player_id', current_user_id).eq('is_active', True).maybe_single().execute()
+        
+        if not response.data:
+             return jsonify({'success': True, 'data': None}), 200
+             
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @rental_bp.route('/rent', methods=['POST'])
 @require_auth
 def rent_property(current_user_id: str):
@@ -144,11 +175,25 @@ def rent_property(current_user_id: str):
         }), 500
 
 
+@rental_bp.route('/moveout', methods=['POST'])
 @rental_bp.route('/moveout/<rental_id>', methods=['POST'])
 @require_auth
-def move_out(current_user_id: str, rental_id: str):
+def move_out(current_user_id: str, rental_id: str = None):
     """Move out of a rental property"""
     try:
+        # Support getting ID from body if not in URL
+        if not rental_id:
+            data = request.get_json() or {}
+            rental_id = data.get('rental_id')
+            
+        if not rental_id:
+             # Try to find active rental for user automatically if no ID provided
+             current = supabase.table('player_rentals').select('id').eq('player_id', current_user_id).eq('is_active', True).maybe_single().execute()
+             if current.data:
+                 rental_id = current.data['id']
+             else:
+                 return jsonify({'success': False, 'error': 'NO_ACTIVE_RENTAL', 'message': 'No active rental found to move out from'}), 400
+
         # Get rental details
         rental_response = supabase.table('player_rentals').select('*, rental_properties(name)').eq('id', rental_id).eq('player_id', current_user_id).single().execute()
         

@@ -204,6 +204,23 @@ def get_user_assets(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@asset_bp.route('/', methods=['GET'])
+def get_all_assets():
+    """Get all available assets (public)"""
+    return get_marketplace_assets()
+
+@asset_bp.route('/portfolio', methods=['GET'])
+@require_auth
+def get_portfolio(current_user_id: str):
+    """Get authenticated user's portfolio (alias for /user)"""
+    return get_user_assets(current_user_id)
+
+@asset_bp.route('/portfolio/<user_id>', methods=['GET'])
+@require_auth
+def get_user_portfolio(current_user_id: str, user_id: str):
+    """Get specific user's portfolio"""
+    return get_user_assets(user_id)
+
 @asset_bp.route('/sell/<asset_id>', methods=['POST'])
 @require_auth
 def sell_asset(current_user_id: str, asset_id: str):

@@ -6,6 +6,65 @@ import uuid
 
 profile_bp = Blueprint('profile', __name__)
 
+from app.utils.jwt_helper import require_auth
+
+@profile_bp.route('/me', methods=['GET'])
+@require_auth
+def get_current_user_profile(current_user_id: str):
+    """Get authenticated user's profile"""
+    return get_profile(current_user_id)
+
+@profile_bp.route('/dashboard', methods=['GET'])
+@require_auth
+def get_dashboard_data(current_user_id: str):
+    """Get dashboard data (profile, balance, etc.)"""
+    try:
+        from app.services.balance_service import BalanceService
+        
+        # Get profile
+        profile = ProfileService.get_profile_by_user_id(uuid.UUID(current_user_id))
+        if not profile:
+             return jsonify({'error': 'Profile not found'}), 404
+             
+        # Get balance
+        balance = BalanceService.get_current_balance(current_user_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'profile': profile.to_dict(),
+                'balance': float(balance)
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@profile_bp.route('/income', methods=['GET'])
+@require_auth
+def get_income(current_user_id: str):
+    """Get user's monthly income"""
+    try:
+        profile = ProfileService.get_profile_by_user_id(uuid.UUID(current_user_id))
+        if not profile:
+            return jsonify({'success': False, 'error': 'Profile not found'}), 404
+            
+        return jsonify({'success': True, 'data': float(profile.monthly_income)}), 200
+    except Exception as e:
+         return jsonify({'success': False, 'error': str(e)}), 500
+
+@profile_bp.route('/net-worth', methods=['GET'])
+@require_auth
+def get_net_worth(current_user_id: str):
+    """Get user's net worth"""
+    try:
+        profile = ProfileService.get_profile_by_user_id(uuid.UUID(current_user_id))
+        if not profile:
+            return jsonify({'success': False, 'error': 'Profile not found'}), 404
+            
+        return jsonify({'success': True, 'data': float(profile.net_worth)}), 200
+    except Exception as e:
+         return jsonify({'success': False, 'error': str(e)}), 500
+
 @profile_bp.route('/<user_id>', methods=['GET'])
 def get_profile(user_id: str):
     """Get user profile by user ID"""

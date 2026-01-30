@@ -155,9 +155,10 @@ def get_active_loans(current_user_id: str):
         }), 500
 
 
+@loan_bp.route('/repay', methods=['POST'])
 @loan_bp.route('/repay/<liability_id>', methods=['POST'])
 @require_auth
-def repay_loan(current_user_id: str, liability_id: str):
+def repay_loan(current_user_id: str, liability_id: str = None):
     """
     Repay a loan (full or partial payment)
     
@@ -171,10 +172,19 @@ def repay_loan(current_user_id: str, liability_id: str):
     
     Request body:
     {
-        "amount": 1000.00  // Optional - defaults to monthly_payment
+        "amount": 1000.00,  // Optional - defaults to monthly_payment
+        "loan_id": "..."    // Optional if in URL
     }
     """
     try:
+        # Support getting ID from body if not in URL
+        if not liability_id:
+            data = request.get_json() or {}
+            liability_id = data.get('loan_id') or data.get('liability_id')
+            
+        if not liability_id:
+            return jsonify({'success': False, 'error': 'MISSING_ID', 'message': 'Loan ID is required'}), 400
+
         # 1. Get the loan and verify ownership
         loan_response = supabase.table('liabilities').select('*').eq('id', liability_id).eq('user_id', current_user_id).single().execute()
         

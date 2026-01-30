@@ -11,6 +11,29 @@ from app.schemas.balance_schema import BalanceAddRequest, BalanceSubtractRequest
 balance_bp = Blueprint('balance', __name__)
 
 
+@balance_bp.route('/', methods=['GET'])
+@require_auth
+def get_balance_root(current_user_id: str):
+    """Alias for getting current balance"""
+    return get_current_balance(current_user_id)
+
+
+@balance_bp.route('/history', methods=['GET'])
+@require_auth
+def get_balance_history(current_user_id: str):
+    """Get balance history (transactions)"""
+    from app import supabase
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        
+        response = supabase.table('transactions').select('*').eq('user_id', current_user_id).order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+        
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @balance_bp.route('/add', methods=['POST'])
 @require_admin  # Only admins can add balance (prevents cheating)
 def add_balance(current_user_id: str):

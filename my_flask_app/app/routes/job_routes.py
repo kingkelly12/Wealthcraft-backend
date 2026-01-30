@@ -17,6 +17,26 @@ from app.services.push_notification_service import ExpoPushService
 job_bp = Blueprint('job', __name__)
 
 
+@job_bp.route('/available', methods=['GET'])
+def get_available_jobs():
+    """Get available jobs from the market"""
+    try:
+        response = supabase.table('jobs_market').select('*').execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@job_bp.route('/current', methods=['GET'])
+@require_auth
+def get_current_jobs(current_user_id: str):
+    """Get user's current jobs"""
+    try:
+        response = supabase.table('jobs').select('*').eq('user_id', current_user_id).eq('is_current', True).execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @job_bp.route('/apply', methods=['POST'])
 @require_auth
 def apply_for_job(current_user_id: str):

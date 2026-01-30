@@ -17,6 +17,25 @@ from app import supabase
 education_bp = Blueprint('education', __name__)
 
 
+@education_bp.route('/courses', methods=['GET'])
+def get_courses():
+    """Get available courses"""
+    try:
+        response = supabase.table('courses').select('*').order('cost').execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@education_bp.route('/enrolled', methods=['GET'])
+@require_auth
+def get_enrolled_courses(current_user_id: str):
+    """Get courses the user is enrolled in"""
+    try:
+        response = supabase.table('user_courses').select('*, courses(*)').eq('user_id', current_user_id).execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @education_bp.route('/enroll', methods=['POST'])
 @require_auth
 def enroll_in_course(current_user_id: str):

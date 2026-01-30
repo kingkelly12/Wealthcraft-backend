@@ -211,3 +211,37 @@ def mark_notification_read(current_user_id: str, notification_id: str):
             'error': 'OPERATION_FAILED',
             'message': str(e)
         }), 500
+
+
+@notification_bp.route('/', methods=['GET'])
+@require_auth
+def get_all_notifications(current_user_id: str):
+    """Get all notifications"""
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        response = supabase.table('notifications').select('*').eq('user_id', current_user_id).order('created_at', desc=True).limit(limit).execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@notification_bp.route('/unread', methods=['GET'])
+@require_auth
+def get_unread_count(current_user_id: str):
+    """Get count of unread notifications"""
+    try:
+        response = supabase.table('notifications').select('id', count='exact').eq('user_id', current_user_id).eq('read', False).execute()
+        return jsonify({'success': True, 'data': response.count}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@notification_bp.route('/read-all', methods=['PUT'])
+@require_auth
+def mark_all_read(current_user_id: str):
+    """Mark all notifications as read"""
+    try:
+        supabase.table('notifications').update({'read': True}).eq('user_id', current_user_id).eq('read', False).execute()
+        return jsonify({'success': True, 'message': 'All marked as read'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

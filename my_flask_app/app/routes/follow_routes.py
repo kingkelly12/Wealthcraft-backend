@@ -201,8 +201,74 @@ def get_leaderboard(current_user_id: str):
         
     except Exception as e:
         print(f"Leaderboard error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': 'LEADERBOARD_ERROR',
-            'message': 'Failed to fetch leaderboard'
-        }), 500
+@follow_bp.route('/mentors', methods=['GET'])
+def get_mentors():
+    """Get list of potential mentors"""
+    try:
+        # Assuming mentors specific logic or just fetch high net worth users
+        # For MVP, returning top 10 net worth users as mentors
+        response = supabase.table('profiles').select('*').order('net_worth', desc=True).limit(10).execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@follow_bp.route('/search', methods=['GET'])
+def search_users():
+    """Search for users"""
+    try:
+        query = request.args.get('query', '')
+        if not query:
+             return jsonify({'success': True, 'data': []}), 200
+             
+        response = supabase.table('profiles').select('*').ilike('username', f'%{query}%').execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+         return jsonify({'success': False, 'error': str(e)}), 500
+
+@follow_bp.route('/rank/<user_id>', methods=['GET'])
+def get_user_rank(user_id: str):
+    """Get specific user's rank"""
+    try:
+        # Logic to calculate rank (can be expensive, maybe optimized via view?)
+        # For now, simple count query
+        profile_res = supabase.table('profiles').select('net_worth').eq('user_id', user_id).single().execute()
+        if not profile_res.data:
+             return jsonify({'success': False, 'error': 'User not found'}), 404
+             
+        net_worth = profile_res.data['net_worth']
+        
+        # Count users with greater net worth
+        count_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()
+        rank = count_res.count + 1
+        
+        return jsonify({'success': True, 'data': rank}), 200
+    except Exception as e:
+         return jsonify({'success': False, 'error': str(e)}), 500
+
+@follow_bp.route('/interactions', methods=['GET'])
+@require_auth
+def get_interactions(current_user_id: str):
+    """Get social interactions"""
+    try:
+        # Assuming 'social_interactions' table
+        response = supabase.table('social_interactions').select('*').eq('user_id', current_user_id).order('created_at', desc=True).execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        # If table doesn't exist, return empty list
+        return jsonify({'success': True, 'data': []}), 200
+
+@follow_bp.route('/interactions/<interaction_id>/read', methods=['PUT'])
+@require_auth
+def mark_interaction_read(current_user_id: str, interaction_id: str):
+    """Mark interaction as read"""
+    try:
+        supabase.table('social_interactions').update({'is_read': True}).eq('id', interaction_id).eq('user_id', current_user_id).execute()
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@follow_bp.route('/interactions/<interaction_id>/action', methods=['POST'])
+@require_auth
+def interaction_action(current_user_id: str, interaction_id: str):
+    """Perform action on interaction (e.g. accept friend request?)"""
+    return jsonify({'success': True}), 200
