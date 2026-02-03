@@ -11,6 +11,7 @@ import os
 import uuid
 import random
 from datetime import datetime
+from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
 
