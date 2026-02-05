@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
+from app.services.mentor_service import MentorService
 from app.schemas.asset_schema import AssetPurchase
 from app import supabase
 from decimal import Decimal
@@ -142,6 +143,30 @@ def purchase_asset(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # Check if this is first asset purchase (triggers congratulations message)
+        try:
+            trigger = MentorService.check_real_time_triggers(
+                player_id=current_user_id,
+                action='buy_asset',
+                action_data={
+                    'cost': float(total_price),
+                    'asset_name': asset['name'],
+                    'quantity': quantity
+                }
+            )
+            
+            if trigger:
+                # Send mentor message to player (with push notification in Phase 4)
+                MentorService.send_mentor_message(
+                    player_id=current_user_id,
+                    mentor_data=trigger,
+                    metrics={},
+                    supabase_client=supabase
+                )
+        except Exception as e:
+            print(f"Failed to trigger mentor response: {str(e)}")
+        
         return jsonify({
             'success': True,
             'message': f'Successfully purchased {quantity} {asset["name"]}',
@@ -276,23 +301,7 @@ def sell_asset(current_user_id: str, asset_id: str):
         try:
             profile = Profile.query.filter_by(user_id=current_user_id).first()
             if profile:
-                profile.trading_profits = (profile.trading_profits or 0) + profit
-                # Net worth update: 
-                # Old Net Worth = Cash + Assets
-                # New Net Worth = (Cash + Sale Value) + (Assets - Asset Value)
-                # Change = Sale Value - Asset Value.
-                # If Asset Value was tracked as 'current market value' in net worth, then change is 0 (if sale = market).
-                # But usually net worth is sum of assets + cash.
-                # If we assume net worth was previously accurate with *old* asset value, 
-                # then we just add the realized profit?
-                # Actually, simpler: just add the profit. 
-                # Verification:
-                # Start: Cash 100, Asset 100. NW = 200.
-                # Price goes to 150. Asset still recorded as 100 (in purchase price) unless cron updated it.
-                # Sell for 150. Cash becomes 250. Asset 0.
-                # NW should be 250. 
-                # Previous NW 200. change = +50 (profit).
-                # So yes, adding profit works.
+                profile.trading_profits = (profile.trading_profits or 0) + profit 
                 profile.net_worth = (profile.net_worth or 0) + profit
                 db.session.commit()
         except Exception as e:
@@ -325,6 +334,34 @@ def sell_asset(current_user_id: str, asset_id: str):
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
+        
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # Check for panic selling (selling large percentage of portfolio)
+        try:
+            # Calculate percentage of assets sold (simple: assume this is significant if profit is negative)
+            percentage_sold = 1.0 if profit < 0 else 0.3  # Full sale if loss, partial if gain
+            
+            trigger = MentorService.check_real_time_triggers(
+                player_id=current_user_id,
+                action='sell_assets',
+                action_data={
+                    'amount': float(sale_value),
+                    'asset_name': asset.get('name'),
+                    'profit': float(profit),
+                    'percentage_sold': percentage_sold
+                }
+            )
+            
+            if trigger:
+                # Send mentor message to player (with push notification in Phase 4)
+                MentorService.send_mentor_message(
+                    player_id=current_user_id,
+                    mentor_data=trigger,
+                    metrics={},
+                    supabase_client=supabase
+                )
+        except Exception as e:
+            print(f"Failed to trigger mentor response: {str(e)}")
         
         return jsonify({
             'success': True,

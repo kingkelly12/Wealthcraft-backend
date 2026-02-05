@@ -2,11 +2,13 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.services.liability_service import LiabilityService
 from app.services.balance_service import BalanceService
+from app.services.mentor_service import MentorService
 from app.utils.jwt_helper import require_auth
 from app.schemas.liability_schema import LiabilityPurchaseRequest, LiabilityPurchaseResponse, LiabilitySellResponse
 import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
+from app import supabase
 
 liability_bp = Blueprint('liability', __name__)
 
@@ -104,6 +106,29 @@ def purchase_liability(current_user_id: str):
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
+        
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # Check for immediate mentor reactions to expensive purchases
+        try:
+            trigger = MentorService.check_real_time_triggers(
+                player_id=current_user_id,
+                action='buy_liability',
+                action_data={
+                    'cost': purchase_price,
+                    'item_name': item['name']
+                }
+            )
+            
+            if trigger:
+                # Send mentor message to player (with push notification in Phase 4)
+                MentorService.send_mentor_message(
+                    player_id=current_user_id,
+                    mentor_data=trigger,
+                    metrics={},
+                    supabase_client=supabase
+                )
+        except Exception as e:
+            print(f"Failed to trigger mentor response: {str(e)}")
         
         response = LiabilityPurchaseResponse(
             success=True,

@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
+from app.services.mentor_service import MentorService
 from app.schemas.loan_schema import LoanApplicationRequest
 from app import supabase
 from decimal import Decimal
@@ -109,6 +110,48 @@ def apply_for_loan(current_user_id: str):
             'monthly_payment': float(monthly_payment),
             'p2p_loan_id': None # Not a P2P loan
         }).execute()
+        
+        # Send push notification
+        try:
+            ExpoPushService.send_notification_to_user(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                title='💳 Loan Received',
+                body=f'You received ${loan_amount:,.2f} loan at {float(loan["interest_rate"])}% interest',
+                notification_type='loan_received',
+                data={
+                    'loan_id': user_loan_id,
+                    'amount': float(loan_amount),
+                    'monthly_payment': float(monthly_payment),
+                    'interest_rate': float(loan['interest_rate'])
+                }
+            )
+        except Exception as e:
+            print(f"Failed to send push notification: {str(e)}")
+        
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # Check for immediate mentor reactions to large loans
+        try:
+            trigger = MentorService.check_real_time_triggers(
+                player_id=current_user_id,
+                action='take_loan',
+                action_data={
+                    'amount': float(loan_amount),
+                    'interest_rate': float(loan['interest_rate']),
+                    'monthly_payment': float(monthly_payment)
+                }
+            )
+            
+            if trigger:
+                # Send mentor message to player (with push notification in Phase 4)
+                MentorService.send_mentor_message(
+                    player_id=current_user_id,
+                    mentor_data=trigger,
+                    metrics={},
+                    supabase_client=supabase
+                )
+        except Exception as e:
+            print(f"Failed to trigger mentor response: {str(e)}")
         
         return jsonify({
             'success': True,

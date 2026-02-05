@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
+from app.services.mentor_service import MentorService
 from app.schemas.education_schema import CourseEnrollmentRequest, CourseCompletionRequest, CourseEnrollmentResponse, CourseCompletionResponse
 import os
 import uuid
@@ -200,6 +201,45 @@ def complete_course(current_user_id: str):
             amount=bonus,
             reason=f"Course completion bonus for {course['title']}"
         )
+        
+        # Send push notification
+        try:
+            ExpoPushService.send_notification_to_user(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                title='🎓 Course Completed',
+                body=f'You completed {course["title"]}! Salary +${salary_boost}/mo and ${bonus} bonus',
+                notification_type='course_completed',
+                data={
+                    'course_id': course['id'],
+                    'salary_boost': float(salary_boost),
+                    'bonus': float(bonus)
+                }
+            )
+        except Exception as e:
+            print(f"Failed to send push notification: {str(e)}")
+    
+        try:
+            trigger = MentorService.check_real_time_triggers(
+                player_id=current_user_id,
+                action='complete_course',
+                action_data={
+                    'course_name': course.get('title'),
+                    'salary_boost': float(salary_boost),
+                    'bonus': float(bonus)
+                }
+            )
+            
+            if trigger:
+                # Send mentor message to player (with push notification in Phase 4)
+                MentorService.send_mentor_message(
+                    player_id=current_user_id,
+                    mentor_data=trigger,
+                    metrics={},
+                    supabase_client=supabase
+                )
+        except Exception as e:
+            print(f"Failed to trigger mentor response: {str(e)}")
         
         return jsonify({
             'success': True,

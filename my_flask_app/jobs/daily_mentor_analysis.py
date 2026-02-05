@@ -4,7 +4,7 @@ Analyzes all active players' financial data and sends mentor messages
 Run this daily via cron or task scheduler
 """
 
-from app import create_app, db
+from app import create_app, db, supabase
 from app.services.mentor_service import MentorService
 from app.models.profile import Profile
 from app.models.user import User
@@ -63,10 +63,12 @@ def run_daily_mentor_analysis():
                     )
                     
                     if mentor_data:
+                        # Pass supabase client for push notifications (Phase 4)
                         MentorService.send_mentor_message(
                             user.id,
                             mentor_data,
-                            metrics
+                            metrics,
+                            supabase_client=supabase
                         )
                         messages_sent += 1
                         logger.info(
