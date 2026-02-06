@@ -13,4 +13,6 @@ supabase
 gotrue
 requests
 gunicorn
+google-auth
+google-auth-oauthlib
 

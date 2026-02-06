@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.services.user_service import UserService
+from app.services.google_auth_service import GoogleAuthService
 from app.schemas.user_schema import UserCreate, UserResponse
 
 auth_bp = Blueprint('auth', __name__)
@@ -51,6 +52,77 @@ def logout():
         'success': True,
         'message': 'Logged out successfully'
     }), 200
+
+@auth_bp.route('/google-signin', methods=['POST'])
+def google_signin():
+    """
+    Handle Google OAuth sign-in from React Native mobile app.
+    
+    Expected JSON:
+    {
+        "idToken": "google_id_token_from_mobile",
+        "email": "user@example.com" (optional, from token metadata)
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "data": {
+            "token": "access_token",
+            "refresh_token": "refresh_token",
+            "user": {
+                "id": 123,
+                "email": "user@example.com",
+                "username": "username"
+            }
+        }
+    }
+    """
+    try:
+        data = request.get_json()
+        id_token_str = data.get('idToken')
+        email = data.get('email')
+        
+        if not id_token_str:
+            return jsonify({
+                'success': False,
+                'error': 'Missing idToken'
+            }), 400
+        
+        # Verify token and create/update user
+        user, access_token, refresh_token = GoogleAuthService.verify_and_create_user(
+            id_token_str,
+            email
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'token': access_token,
+                'refresh_token': refresh_token,
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                }
+            }
+        }), 200
+    
+    except ValueError as e:
+        # Token verification or auth errors
+        print(f"Google Sign-In Validation Error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 401
+    except Exception as e:
+        print(f"Google Sign-In Error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Authentication failed'
+        }), 500
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
