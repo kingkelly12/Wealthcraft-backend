@@ -109,6 +109,7 @@ def trigger_random_events():
                             notification_type="life_event",
                             data={
                                 "type": "life_event",
+                                "screen": f"/life-events/{selected_event.id}",
                                 "eventId": str(selected_event.id),
                                 "userEventId": str(new_user_event.id)
                             }

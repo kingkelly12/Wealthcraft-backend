@@ -1,4 +1,4 @@
-#!/home/kelly_koome/Devops/Wealthcraft-backend/.venv/bin/python3
+#!/home/kelly_koome/Devops/Wealthcraft-backend/.venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

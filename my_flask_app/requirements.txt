@@ -5,12 +5,14 @@ flask-cors
 pydantic
 email-validator
 pytest
-apig-wsgi  # Lambda WSGI adapter for API Gateway integration
+apig-wsgi
 python-dotenv
 psycopg2-binary
 PyJWT
 supabase
+gotrue
 requests
 gunicorn
 gevent
-supabase
+google-auth>=2.20.0
+google-auth-oauthlib

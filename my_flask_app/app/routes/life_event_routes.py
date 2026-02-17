@@ -147,3 +147,51 @@ def make_life_event_choice(current_user_id: str):
             'error': 'OPERATION_FAILED',
             'message': error_message
         }), 500
+
+
+@life_event_bp.route('/<event_id>', methods=['GET'])
+@require_auth
+def get_life_event_details(current_user_id: str, event_id: str):
+    """
+    Get details of a specific life event and its choices
+    """
+    try:
+        # 1. Get life event details
+        event_response = supabase.table('life_events').select('*').eq('id', event_id).single().execute()
+        
+        if not event_response.data:
+            return jsonify({
+                'success': False,
+                'error': 'EVENT_NOT_FOUND',
+                'message': f'Life event {event_id} not found'
+            }), 404
+        
+        event = event_response.data
+        
+        # 2. Get choices for this event
+        choices_response = supabase.table('life_event_choices').select('*').eq('life_event_id', event_id).order('choice_order', desc=False).execute()
+        choices = choices_response.data or []
+        
+        # 3. Check if user already made a choice
+        user_event_response = supabase.table('user_life_events').select('*').eq('user_id', current_user_id).eq('life_event_id', event_id).execute()
+        
+        user_event = None
+        if user_event_response.data and len(user_event_response.data) > 0:
+            user_event = user_event_response.data[0]
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'event': event,
+                'choices': choices,
+                'user_choice': user_event.get('choice_id') if user_event else None,
+                'is_completed': user_event.get('choice_id') is not None if user_event else False
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'OPERATION_FAILED',
+            'message': str(e)
+        }), 500

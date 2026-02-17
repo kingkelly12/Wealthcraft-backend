@@ -8,6 +8,7 @@ import requests
 from typing import List, Dict, Optional, Tuple
 import logging
 from datetime import datetime
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +83,21 @@ class ExpoPushService:
         }
         
         try:
+            # Prepare headers with optional Expo Access Token
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+            
+            # Add Expo Access Token if available (for better rate limits)
+            expo_token = os.getenv('EXPO_ACCESS_TOKEN')
+            if expo_token:
+                headers["Authorization"] = f"Bearer {expo_token}"
+            
             response = requests.post(
                 cls.EXPO_PUSH_URL,
                 json=[message],
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json"
-                },
+                headers=headers,
                 timeout=10
             )
             
@@ -101,7 +110,11 @@ class ExpoPushService:
                 
                 if ticket.get('status') == 'error':
                     error_msg = ticket.get('message', 'Unknown error')
+                    error_details = ticket.get('details', {})
+                    
                     logger.error(f"Push notification error: {error_msg}")
+                    
+                    # Return error type for caller to handle (e.g., DeviceNotRegistered)
                     return False, error_msg
                 
                 logger.info(f"Push notification sent successfully to {push_token[:20]}...")
@@ -174,13 +187,20 @@ class ExpoPushService:
             batch = messages[i:i + cls.MAX_BATCH_SIZE]
             
             try:
+                # Prepare headers with optional Expo Access Token
+                headers = {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                }
+                
+                expo_token = os.getenv('EXPO_ACCESS_TOKEN')
+                if expo_token:
+                    headers["Authorization"] = f"Bearer {expo_token}"
+                
                 response = requests.post(
                     cls.EXPO_PUSH_URL,
                     json=batch,
-                    headers={
-                        "Accept": "application/json",
-                        "Content-Type": "application/json"
-                    },
+                    headers=headers,
                     timeout=30
                 )
                 
@@ -194,7 +214,8 @@ class ExpoPushService:
                             success_count += 1
                         else:
                             failed_count += 1
-                            logger.warning(f"Batch notification failed: {ticket.get('message')}")
+                            error_msg = ticket.get('message', 'Unknown error')
+                            logger.warning(f"Batch notification failed: {error_msg}")
                 
             except Exception as e:
                 logger.error(f"Batch notification request failed: {str(e)}")
@@ -254,6 +275,19 @@ class ExpoPushService:
                 body=body,
                 data=notification_data
             )
+            
+            # Handle DeviceNotRegistered error - clean up invalid token
+            if not success and error and 'DeviceNotRegistered' in error:
+                logger.warning(f"Removing invalid push token for user {user_id}: DeviceNotRegistered")
+                try:
+                    # Remove invalid token from database
+                    supabase_client.table('profiles').update({
+                        'push_token': None,
+                        'push_token_updated_at': datetime.utcnow().isoformat()
+                    }).eq('user_id', user_id).execute()
+                    logger.info(f"Successfully removed invalid token for user {user_id}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup invalid token for user {user_id}: {str(cleanup_error)}")
             
             return success
             
