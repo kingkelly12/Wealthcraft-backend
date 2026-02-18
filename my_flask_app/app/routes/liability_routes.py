@@ -7,6 +7,7 @@ from app.utils.jwt_helper import require_auth
 from app.schemas.liability_schema import LiabilityPurchaseRequest, LiabilityPurchaseResponse, LiabilitySellResponse
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
 
@@ -107,8 +108,6 @@ def purchase_liability(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
-        # Check for immediate mentor reactions to expensive purchases
         try:
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,
@@ -185,8 +184,8 @@ def get_all_liabilities(current_user_id: str):
 def get_luxury_items():
     """Get available luxury items"""
     try:
-        # Assuming 'luxury_items' table exists
-        response = supabase.table('luxury_items').select('*').execute()
+        # Query luxury items from liability_items table
+        response = supabase.table('liability_items').select('*').execute()
         return jsonify({'success': True, 'data': response.data}), 200
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
@@ -195,36 +194,33 @@ def get_luxury_items():
 @require_auth
 def purchase_luxury_item(current_user_id: str):
     """Purchase a luxury item (alias or implementation)"""
-    # Assuming there's a purchase logic implementation to reuse or write here
-    # For now, implementing redirect-like logic
     return _purchase_luxury_logic(current_user_id)
 
 def _purchase_luxury_logic(current_user_id: str):
-    # Implementation of purchase logic
-    # (Copied/Refactored from existing if present, or new)
     try:
         data = request.json
         item_id = data.get('item_id')
         if not item_id: return jsonify({'error': 'item_id required'}), 400
         
-        # ... logic ...
-        # Creating stub for now as I need to see if it existed elsewhere.
-        # Actually, let's assume it calls basic asset purchase or similar?
-        # Re-reading: Client calls /liabilities/luxury/purchase. 
-        # I'll implement basic purchase logic here since I didn't see it before.
-        
-        item = supabase.table('luxury_items').select('*').eq('id', item_id).single().execute()
+        # Query from liability_items table (not luxury_items)
+        item = supabase.table('liability_items').select('*').eq('id', item_id).single().execute()
         if not item.data: return jsonify({'error': 'Item not found'}), 404
         
-        cost = item.data['cost']
+        # Use base_price field (not cost)
+        cost = item.data.get('base_price') or item.data.get('cost')
+        monthly_cost = item.data.get('monthly_cost', 0)
+        
         from app.services.balance_service import BalanceService
         
         BalanceService.subtract_balance(current_user_id, Decimal(str(cost)), f"Bought {item.data['name']}")
         
-        supabase.table('player_liabilities').insert({ # or user_assets? "liabilities" usually implies recurring cost?
-            'user_id': current_user_id,
-            'item_id': item_id,
-            'is_active': True
+        supabase.table('player_liabilities').insert({
+            'player_id': current_user_id,
+            'liability_id': item_id,
+            'purchase_price': float(cost),
+            'monthly_cost': float(monthly_cost),
+            'is_active': True,
+            'purchase_date': datetime.utcnow().isoformat()
         }).execute()
         
         return jsonify({'success': True, 'message': f"Purchased {item.data['name']}"}), 200
@@ -235,10 +231,6 @@ def _purchase_luxury_logic(current_user_id: str):
 @require_auth
 def take_liability_loan(current_user_id: str):
     """Take a loan via liability service (Bank Loan Alias)"""
-    # Redirect to loan blueprint logic if possible, or reimplement
-    # Client uses this for 'takeLoan'.
-    # I'll import the logic from loan_routes key function if I can, or just tell client to use /api/loans/apply?
-    # Better to implement here to avoid client changes.
     from app.routes.loan_routes import apply_for_loan
     return apply_for_loan(current_user_id)
 
@@ -294,3 +286,35 @@ def get_depreciation_preview(liability_id: str):
         return jsonify({'error': str(e)}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@liability_bp.route('/cron/monthly-depreciation', methods=['POST'])
+def cron_monthly_depreciation():
+    """
+    Cron job endpoint for monthly depreciation
+    Called by Supabase Edge Functions (monthly-depreciation)
+    
+    This endpoint:
+    1. Backfills any liabilities missing initial values
+    2. Applies monthly depreciation to all active liabilities
+    3. Returns summary of updates
+    """
+    try:
+        # 1. Backfill any liabilities missing initial values (safety check)
+        backfill_result = LiabilityService.backfill_existing_liabilities()
+        
+        # 2. Apply monthly depreciation
+        result = LiabilityService.apply_monthly_depreciation()
+        
+        return jsonify({
+            'success': True,
+            'backfilled': backfill_result.get('backfilled_count', 0),
+            'updated': result.get('updated_count', 0),
+            'total_depreciation': result.get('total_depreciation', 0),
+            'date': result.get('date')
+        }), 200
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
