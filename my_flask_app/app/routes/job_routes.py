@@ -21,7 +21,7 @@ job_bp = Blueprint('job', __name__)
 def get_available_jobs():
     """Get available jobs from the market"""
     try:
-        response = supabase.table('jobs_market').select('*').execute()
+        response = supabase.table('job_market').select('*').execute()
         return jsonify({'success': True, 'data': response.data}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -56,7 +56,7 @@ def apply_for_job(current_user_id: str):
         data = JobApplicationRequest(**request.json)
         
         # 1. Get job details
-        job_response = supabase.table('jobs_market').select('*').eq('id', str(data.job_id)).single().execute()
+        job_response = supabase.table('job_market').select('*').eq('id', str(data.job_id)).single().execute()
         
         if not job_response.data:
             return jsonify({
