@@ -12,8 +12,75 @@ from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 from app.models.profile import Profile
 from app import db
+import logging
 
 asset_bp = Blueprint('asset', __name__)
+
+logger = logging.getLogger(__name__)
+
+
+def _notify_mentors_of_move(user_id, move_type, asset_name, amount, profit=None):
+    """
+    Notify all mentors about a student's financial move.
+    
+    Psychology:
+    - Mentors feel responsible for their students' actions.
+    - Competitive copy ("Are you keeping up?") triggers status anxiety.
+    - Loss framing ("panic-sold at a loss") triggers protective instincts.
+    """
+    try:
+        # Get user's username
+        profile_res = supabase.table('profiles').select('username').eq('user_id', user_id).single().execute()
+        username = profile_res.data.get('username', 'Your student') if profile_res.data else 'Your student'
+
+        # Get all followers 
+        followers_res = supabase.table('user_follows').select('follower_id').eq('following_id', user_id).execute()
+        followers = followers_res.data if followers_res.data else []
+
+        if not followers:
+            return
+
+        # Craft notification copy based on move type
+        if move_type == 'buy':
+            title = '\U0001f4ca Student Move'
+            body = f'{username} just invested in {asset_name}. Are you keeping up?'
+        elif move_type == 'sell' and profit is not None and profit >= 0:
+            title = '\U0001f4b0 Student Win'
+            body = f'{username} sold {asset_name} for a ${profit:,.2f} profit. Impressive moves.'
+        else:
+            title = '\U0001f4c9 Student Alert'
+            body = f'{username} panic-sold {asset_name} at a loss. Mentor them?'
+
+        for f in followers:
+            follower_id = f['follower_id']
+            try:
+                # In-app notification
+                supabase.table('notifications').insert({
+                    'user_id': follower_id,
+                    'type': 'student_move',
+                    'title': title,
+                    'message': body,
+                    'related_user_id': user_id,
+                    'read': False
+                }).execute()
+
+                # Push notification
+                ExpoPushService.send_notification_to_user(
+                    supabase_client=supabase,
+                    user_id=follower_id,
+                    title=title,
+                    body=body,
+                    notification_type='student_move',
+                    data={
+                        'type': 'student_move',
+                        'student_id': user_id,
+                        'navigate_to': f'/users/{user_id}'
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify mentor {follower_id}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to notify mentors of move: {str(e)}")
 
 
 @asset_bp.route('/purchase', methods=['POST'])
@@ -143,7 +210,7 @@ def purchase_asset(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # ============ REAL-TIME MENTOR TRIGGER ============
         # Check if this is first asset purchase (triggers congratulations message)
         try:
             trigger = MentorService.check_real_time_triggers(
@@ -157,7 +224,7 @@ def purchase_asset(current_user_id: str):
             )
             
             if trigger:
-                # Send mentor message to player (with push notification in Phase 4)
+                # Send mentor message to player (with push notification)
                 MentorService.send_mentor_message(
                     player_id=current_user_id,
                     mentor_data=trigger,
@@ -166,6 +233,17 @@ def purchase_asset(current_user_id: str):
                 )
         except Exception as e:
             print(f"Failed to trigger mentor response: {str(e)}")
+        
+        # ============ NOTIFY MENTORS ============
+        try:
+            _notify_mentors_of_move(
+                user_id=current_user_id,
+                move_type='buy',
+                asset_name=asset['name'],
+                amount=float(total_price)
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify mentors of purchase: {str(e)}")
         
         return jsonify({
             'success': True,
@@ -301,7 +379,7 @@ def sell_asset(current_user_id: str, asset_id: str):
         try:
             profile = Profile.query.filter_by(user_id=current_user_id).first()
             if profile:
-                profile.trading_profits = (profile.trading_profits or 0) + profit 
+                profile.trading_profits = (profile.trading_profits or 0) + profit
                 profile.net_worth = (profile.net_worth or 0) + profit
                 db.session.commit()
         except Exception as e:
@@ -335,7 +413,7 @@ def sell_asset(current_user_id: str, asset_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # ============ REAL-TIME MENTOR TRIGGER ============
         # Check for panic selling (selling large percentage of portfolio)
         try:
             # Calculate percentage of assets sold (simple: assume this is significant if profit is negative)
@@ -362,6 +440,18 @@ def sell_asset(current_user_id: str, asset_id: str):
                 )
         except Exception as e:
             print(f"Failed to trigger mentor response: {str(e)}")
+        
+        # ============ NOTIFY MENTORS ============
+        try:
+            _notify_mentors_of_move(
+                user_id=current_user_id,
+                move_type='sell',
+                asset_name=asset.get('name', 'an asset'),
+                amount=float(sale_value),
+                profit=float(profit)
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify mentors of sale: {str(e)}")
         
         return jsonify({
             'success': True,

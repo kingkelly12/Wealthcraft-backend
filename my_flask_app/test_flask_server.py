@@ -20,15 +20,26 @@ def test_flask_api():
     env['FLASK_ENV'] = 'development'
     
     server_process = subprocess.Popen(
-        ['python3', 'run.py'],
+        ['python3', '-u', 'run.py', '--no-reload'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env
     )
     
-    # Wait for server to start
+    # Wait for server to start - increased timeout
     print("   Waiting for server to start...")
-    time.sleep(3)
+    max_retries = 15
+    for attempt in range(max_retries):
+        try:
+            response = requests.get("http://127.0.0.1:5000/health", timeout=1)
+            if response.status_code == 200:
+                print("   ✅ Server is ready")
+                break
+        except:
+            if attempt < max_retries - 1:
+                time.sleep(0.5)
+            else:
+                print("   ⚠️  Server startup timeout - proceeding with tests anyway")
     
     base_url = "http://127.0.0.1:5000"
     

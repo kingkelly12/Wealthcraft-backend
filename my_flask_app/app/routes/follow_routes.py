@@ -66,24 +66,24 @@ def follow_user(current_user_id: str):
             'created_at': datetime.utcnow().isoformat()
         }).execute()
         
-        # Create notification for followed user
+        # Create notification for followed user — framed as MENTORSHIP
         supabase.table('notifications').insert({
             'user_id': str(data.target_user_id),
-            'type': 'follow',
-            'title': 'New Follower',
-            'message': 'Someone started following you!',
+            'type': 'mentorship',
+            'title': '🎓 New Student',
+            'message': 'A player just chose you as their mentor. They\'ll learn from your moves.',
             'related_user_id': current_user_id,
             'read': False
         }).execute()
         
-        # Send push notification
+        # Send push notification — mentorship framing
         try:
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,
                 user_id=str(data.target_user_id),
-                title='👥 New Follower',
-                body='Someone started following you!',
-                notification_type='follow',
+                title='🎓 You Have a New Student',
+                body='Someone just chose you as their financial mentor. They\'ll learn from your moves.',
+                notification_type='mentorship',
                 data={
                     'follower_id': current_user_id,
                     'navigate_to': f'/users/{current_user_id}'
@@ -242,4 +242,4 @@ def get_user_rank(user_id: str):
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-# Mentor interactions moved to mentor_routes.py
+

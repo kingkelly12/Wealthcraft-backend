@@ -1,8 +1,12 @@
 from flask import Blueprint, request, jsonify
 from app import supabase
 from app.utils.jwt_helper import require_auth
+from app.services.push_notification_service import ExpoPushService
 import os
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 void_bp = Blueprint('void', __name__)
 
@@ -34,9 +38,21 @@ def scream(current_user_id: str):
 @require_auth
 def feed(current_user_id: str):
     try:
-        # Fetch latest 50 posts
-        posts_res = supabase.table('void_posts').select('*').order('created_at', desc=True).limit(50).execute()
-        posts = posts_res.data
+        # --- Cursor-based pagination (The Bottomless Bowl) ---
+        cursor = request.args.get('cursor')  # ISO timestamp of last post seen
+        limit = min(int(request.args.get('limit', 20)), 50)
+
+        query = supabase.table('void_posts').select('*').order('created_at', desc=True)
+        if cursor:
+            query = query.lt('created_at', cursor)
+        # Fetch one extra to determine has_more
+        posts_res = query.limit(limit + 1).execute()
+        raw_posts = posts_res.data
+
+        has_more = len(raw_posts) > limit
+        posts = raw_posts[:limit]
+
+        next_cursor = posts[-1]['created_at'] if posts else None
         
         # Fetch user's reactions to these posts to show "active" state
         post_ids = [p['id'] for p in posts]
@@ -48,6 +64,46 @@ def feed(current_user_id: str):
                 .in_('post_id', post_ids)\
                 .execute()
             my_reactions = reactions_res.data
+        
+        # Fetch reactor identities for all posts (latest 5 per post)
+        all_reactions = []
+        if post_ids:
+            all_reactions_res = supabase.table('void_reactions')\
+                .select('post_id, user_id, reaction_type, created_at')\
+                .in_('post_id', post_ids)\
+                .order('created_at', desc=True)\
+                .execute()
+            all_reactions = all_reactions_res.data
+        
+        # Fetch profile info for all unique reactor user_ids
+        reactor_user_ids = list(set(r['user_id'] for r in all_reactions))
+        reactor_profiles = {}
+        if reactor_user_ids:
+            profiles_res = supabase.table('profiles')\
+                .select('user_id, username, profile_picture_url')\
+                .in_('user_id', reactor_user_ids)\
+                .execute()
+            reactor_profiles = {
+                p['user_id']: {
+                    'username': p['username'],
+                    'profile_picture_url': p.get('profile_picture_url')
+                }
+                for p in profiles_res.data
+            }
+        
+        # Group reactions by post_id (latest 5 per post)
+        reactions_by_post = {}
+        for r in all_reactions:
+            pid = r['post_id']
+            if pid not in reactions_by_post:
+                reactions_by_post[pid] = []
+            if len(reactions_by_post[pid]) < 5:
+                profile = reactor_profiles.get(r['user_id'], {})
+                reactions_by_post[pid].append({
+                    'username': profile.get('username', 'Anonymous'),
+                    'profile_picture_url': profile.get('profile_picture_url'),
+                    'reaction_type': r['reaction_type']
+                })
             
         # Map reactions to posts
         reaction_map = {r['post_id']: r['reaction_type'] for r in my_reactions}
@@ -61,10 +117,16 @@ def feed(current_user_id: str):
                 'same_count': p['same_count'],
                 'created_at': p['created_at'],
                 'my_reaction': reaction_map.get(p['id'], None),
-                'is_mine': p['user_id'] == current_user_id
+                'is_mine': p['user_id'] == current_user_id,
+                'reactors': reactions_by_post.get(p['id'], [])
             })
             
-        return jsonify({'success': True, 'data': feed_data}), 200
+        return jsonify({
+            'success': True,
+            'data': feed_data,
+            'next_cursor': next_cursor,
+            'has_more': has_more
+        }), 200
         
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -119,6 +181,7 @@ def react(current_user_id: str):
                 # SANITY REWARD CHECK (Switching TO 'same')
                 if new_type == 'same':
                     _reward_sanity(post_res.data['user_id'], current_user_id)
+                    _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
 
         else:
             # New Reaction
@@ -136,6 +199,7 @@ def react(current_user_id: str):
             # SANITY REWARD CHECK
             if new_type == 'same':
                 _reward_sanity(post_res.data['user_id'], current_user_id)
+                _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
                 
         # Apply updates to post
         if post_update:
@@ -165,6 +229,37 @@ def _reward_sanity(poster_id, reactor_id):
             supabase.table('profiles').update({'sanity': new_val}).eq('user_id', poster_id).execute()
     except:
         pass # Fail silently, don't block reaction
+
+
+def _send_consolation_notification(poster_id, reactor_id, post_id):
+    """
+    Send a "Consolation" push notification to the poster when someone reacts 'Same'.
+    
+    Psychology:
+    - The notification deliberately withholds WHO reacted.
+    - The user must re-enter The Void to see the reactor's face.
+    - Copy sells the FEELING ("You're not alone") not the feature.
+    """
+    if poster_id == reactor_id:
+        return  # No self-notifications
+    
+    try:
+        ExpoPushService.send_notification_to_user(
+            supabase_client=supabase,
+            user_id=poster_id,
+            title="🫂 The Void Heard You",
+            body="Someone just related to your scream. You're not alone. Your Sanity is rising.",
+            notification_type='void_consolation',
+            data={
+                'type': 'void_consolation',
+                'screen': '/(tabs)/void',
+                'post_id': str(post_id)
+            }
+        )
+        logger.info(f"Consolation notification sent to poster {poster_id} for post {post_id}")
+    except Exception as e:
+        logger.error(f"Failed to send consolation notification: {str(e)}")
+        # Fail silently — never block the reaction flow
 
 
 @void_bp.route('/scream/<post_id>', methods=['DELETE', 'PUT'])

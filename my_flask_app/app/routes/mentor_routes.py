@@ -91,7 +91,6 @@ def get_player_interactions(current_user_id: str):
                 'message_id': str(interaction.message_id) if interaction.message_id else None,
                 'message_content': interaction.message_content,
                 'trigger_type': interaction.trigger_type,
-                'player_data_snapshot': interaction.player_data_snapshot,
                 'sent_at': interaction.sent_at.isoformat() if interaction.sent_at else None,
                 'read_at': interaction.read_at.isoformat() if interaction.read_at else None,
                 'action_taken': interaction.action_taken,
