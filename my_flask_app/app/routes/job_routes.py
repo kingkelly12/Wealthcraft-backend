@@ -209,3 +209,5 @@ def quit_job(current_user_id: str, job_id: str):
             'error': 'OPERATION_FAILED',
             'message': str(e)
         }), 500
+
+

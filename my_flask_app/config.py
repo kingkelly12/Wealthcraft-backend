@@ -37,6 +37,9 @@ class Config:
     # API Configuration
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max request size
     
+    # Cron Job Secret (shared between Supabase pg_cron and Flask)
+    CRON_SECRET = os.environ.get('CRON_SECRET')
+    
     # 🎓 LAMBDA DATABASE CONNECTION POOLING
     # Lambda instances are single-threaded (one request at a time) and scale horizontally
     # Example: 100 concurrent requests = 100 Lambda instances (not workers)

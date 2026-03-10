@@ -4,6 +4,14 @@ from datetime import datetime, timedelta
 from app.services.balance_service import BalanceService
 from supabase import create_client
 from decimal import Decimal
+import logging
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Initialize Supabase
 SUPABASE_URL = os.getenv('SUPABASE_URL')
@@ -13,60 +21,153 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 def process_monthly_deductions():
     """
     Process monthly payments for all active bank loans.
-    Should be run daily to check for due dates, or monthly if simplify.
-    For this implementation, we'll iterate all active loans and check if a month has passed since last update/creation.
+    - Deducts monthly payment from user balance
+    - Updates next_payment_date for tracking
+    - Logs missed payments if user has insufficient funds
+    - Sends notifications for payment issues
     """
     app = create_app()
     with app.app_context():
-        print(f"[{datetime.now()}] Starting monthly deduction job...")
+        logger.info(f"Starting monthly deduction job...")
         
         # Fetch all active loans
         try:
             loans = supabase.table('bank_loans').select('*').eq('status', 'active').execute()
         except Exception as e:
-            print(f"Error fetching loans: {e}")
+            logger.error(f"Error fetching loans: {e}")
             return
+
+        successful_payments = 0
+        missed_payments = 0
+        errors = 0
 
         for loan in loans.data:
             user_id = loan['borrower_id']
             loan_id = loan['id']
             monthly_payment = Decimal(str(loan['monthly_payment']))
             
-            # Simple check: In a real system, checking 'next_payment_date' is better.
-            # Here we just assume this runs and we process payments. 
-            # To be safe, we'll log it.
-            
             try:
-                # 1. Check Balance
+                # 1. Check if payment is due (check next_payment_date)
+                next_payment_date = loan.get('next_payment_date')
+                if next_payment_date:
+                    next_payment = datetime.fromisoformat(next_payment_date)
+                    if datetime.utcnow() < next_payment:
+                        logger.info(f"Loan {loan_id} payment not yet due (due: {next_payment_date})")
+                        continue
+                
+                # 2. Check Balance
                 current_balance = BalanceService.get_current_balance(user_id)
                 
                 if current_balance >= monthly_payment:
-                    # 2. Deduct
+                    # Payment successful
+                    # 3. Deduct from balance
                     BalanceService.subtract_balance(
                         user_id=user_id, 
                         amount=monthly_payment, 
                         reason=f"Monthly Loan Payment: {loan['type']}"
                     )
                     
-                    # 3. Update Loan (reduce remaining amount?) 
-                    # Note: bank_loans table in schema didn't have remaining_amount in the inspection result?
-                    # Let's check inspection again... 
-                    # It had: amount, total_interest. It did NOT have remaining_balance in Step 56.
-                    # It seems `liabilities` table is where remaining balance is tracked primarily?
-                    # But we should update the `bank_loans` if we want to track it there.
-                    # Since schema is fixed, let's just log the payment in transactions for now.
+                    # 4. Update loan with new next_payment_date and total_paid
+                    next_payment_date = (datetime.utcnow() + timedelta(days=30)).isoformat()
+                    total_paid = Decimal(str(loan.get('total_paid', 0))) + monthly_payment
                     
-                    print(f"Processed payment of ${monthly_payment} for user {user_id}")
+                    supabase.table('bank_loans').update({
+                        'next_payment_date': next_payment_date,
+                        'total_paid': float(total_paid),
+                        'updated_at': datetime.utcnow().isoformat()
+                    }).eq('id', loan_id).execute()
+                    
+                    logger.info(f"✅ Processed payment of ${monthly_payment} for user {user_id} on loan {loan_id}")
+                    
+                    # 5. Send success notification
+                    try:
+                        from app.services.push_notification_service import ExpoPushService
+                        loan_type = loan.get('type', 'loan')
+                        ExpoPushService.send_notification_to_user(
+                            supabase_client=supabase,
+                            user_id=user_id,
+                            title='💳 Loan Payment Processed',
+                            body=f'Monthly payment of ${monthly_payment} for {loan_type} processed successfully.',
+                            notification_type='financial_move',
+                            data={
+                                'type': 'loan_payment',
+                                'loan_id': loan_id,
+                                'amount': float(monthly_payment),
+                                'screen': '/loans'
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send payment notification: {e}")
+                    
+                    successful_payments += 1
                     
                 else:
-                    # Mark as missed/default?
-                    print(f"User {user_id} insufficient funds for loan {loan_id}")
-                    # In a robust system, we'd trigger a notification or penalty.
+                    # Payment failed - insufficient funds
+                    logger.warning(f"⚠️  User {user_id} insufficient funds for loan {loan_id}. Required: ${monthly_payment}, Available: ${current_balance}")
+                    
+                    # Log missed payment
+                    supabase.table('missed_payments').insert({
+                        'user_id': user_id,
+                        'loan_id': loan_id,
+                        'missed_amount': float(monthly_payment),
+                        'required_balance': float(monthly_payment),
+                        'current_balance': float(current_balance),
+                        'date': datetime.utcnow().isoformat(),
+                        'status': 'pending'
+                    }).execute()
+                    
+                    # Apply late penalty (e.g., 5% of monthly payment)
+                    penalty = monthly_payment * Decimal('0.05')
+                    
+                    # Update loan with penalty
+                    new_penalty_total = Decimal(str(loan.get('total_interest', 0))) + penalty
+                    supabase.table('bank_loans').update({
+                        'total_interest': float(new_penalty_total),
+                        'status': 'delinquent',
+                        'updated_at': datetime.utcnow().isoformat()
+                    }).eq('id', loan_id).execute()
+                    
+                    logger.warning(f"Applied ${penalty} penalty for missed payment")
+                    
+                    # Send alert notification
+                    try:
+                        from app.services.push_notification_service import ExpoPushService
+                        loan_type = loan.get('type', 'loan')
+                        ExpoPushService.send_notification_to_user(
+                            supabase_client=supabase,
+                            user_id=user_id,
+                            title='⚠️ Loan Payment Failed',
+                            body=f'Insufficient funds for {loan_type} payment. Penalty of ${penalty} applied. Current balance: ${current_balance}',
+                            notification_type='financial_alert',
+                            data={
+                                'type': 'missed_payment',
+                                'loan_id': loan_id,
+                                'amount': float(monthly_payment),
+                                'penalty': float(penalty),
+                                'screen': '/loans'
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send missed payment notification: {e}")
+                    
+                    missed_payments += 1
                     
             except Exception as e:
-                print(f"Error processing loan {loan_id}: {e}")
+                db.session.rollback()
+                errors += 1
+                logger.error(f"Error processing loan {loan_id}: {e}")
+                continue
 
-        print("Monthly deduction job completed.")
+        logger.info(
+            f"Monthly deduction job completed. "
+            f"Successful: {successful_payments}, Missed: {missed_payments}, Errors: {errors}"
+        )
+        
+        return {
+            'successful_payments': successful_payments,
+            'missed_payments': missed_payments,
+            'errors': errors
+        }
 
 if __name__ == "__main__":
     process_monthly_deductions()

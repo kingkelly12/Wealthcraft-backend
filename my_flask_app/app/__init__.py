@@ -50,6 +50,7 @@ def create_app(config_name='default'):
     from app.routes.sanity_routes import sanity_bp
     from app.routes.void_routes import void_bp
     from app.routes.mentor_routes import mentor_bp
+    from app.routes.cron_routes import cron_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -68,6 +69,7 @@ def create_app(config_name='default'):
     app.register_blueprint(sanity_bp, url_prefix='/api/sanity')
     app.register_blueprint(void_bp, url_prefix='/api/void')
     app.register_blueprint(mentor_bp)  # No prefix - routes define their own paths
+    app.register_blueprint(cron_bp, url_prefix='/api/cron')
 
     
     # Health check endpoint
