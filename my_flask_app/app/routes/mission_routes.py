@@ -42,9 +42,11 @@ def get_available_missions(current_user_id: str):
         ).execute()
         
         if not missions_response.data:
+            print(f"[Missions] No missions found in integrated_missions table")
             return jsonify({
                 'success': True,
-                'data': []
+                'data': [],
+                'has_active_mission': False
             }), 200
         
         # Get completed missions for this user
@@ -60,6 +62,8 @@ def get_available_missions(current_user_id: str):
         ).eq('player_id', current_user_id).eq('is_active', True).execute()
         
         has_active_mission = bool(active_response.data)
+        
+        print(f"[Missions] User {current_user_id}: has_active={has_active_mission}, completed={len(completed_mission_ids)}")
         
         # Filter missions based on prerequisites
         available_missions = []
@@ -78,21 +82,25 @@ def get_available_missions(current_user_id: str):
             prerequisite_reasons = []
             
             # Format constraints for response
-            constraints = {
-                'income_multiplier': float(mission.get('income_multiplier', 1.0)),
-                'expense_multiplier': float(mission.get('expense_multiplier', 1.0)),
-                'can_change_job': mission.get('can_change_job', True),
-                'can_buy_assets': mission.get('can_buy_assets', True),
-                'can_take_loans': mission.get('can_take_loans', True),
-                'can_rent_property': mission.get('can_rent_property', True),
-                'can_sell_assets': mission.get('can_sell_assets', True),
-                'can_buy_lifestyle_items': mission.get('can_buy_lifestyle_items', True),
-                'allowed_asset_types': mission.get('allowed_asset_types'),
-                'max_loan_amount': float(mission.get('max_loan_amount')) if mission.get('max_loan_amount') else None,
-                'allowed_loan_types': mission.get('allowed_loan_types'),
-                'max_monthly_spending': float(mission.get('max_monthly_spending')) if mission.get('max_monthly_spending') else None,
-            }
-            
+            try:
+                constraints = {
+                    'income_multiplier': float(mission.get('income_multiplier', 1.0)),
+                    'expense_multiplier': float(mission.get('expense_multiplier', 1.0)),
+                    'can_change_job': mission.get('can_change_job', True),
+                    'can_buy_assets': mission.get('can_buy_assets', True),
+                    'can_take_loans': mission.get('can_take_loans', True),
+                    'can_rent_property': mission.get('can_rent_property', True),
+                    'can_sell_assets': mission.get('can_sell_assets', True),
+                    'can_buy_lifestyle_items': mission.get('can_buy_lifestyle_items', True),
+                    'allowed_asset_types': mission.get('allowed_asset_types'),
+                    'max_loan_amount': float(mission.get('max_loan_amount')) if mission.get('max_loan_amount') else None,
+                    'allowed_loan_types': mission.get('allowed_loan_types'),
+                    'max_monthly_spending': float(mission.get('max_monthly_spending')) if mission.get('max_monthly_spending') else None,
+                }
+            except (ValueError, TypeError) as e:
+                print(f"[Missions] Error parsing constraints for mission {mission.get('id')}: {e}")
+                constraints = {}
+
             available_missions.append({
                 'id': mission['id'],
                 'name': mission['name'],
@@ -111,10 +119,14 @@ def get_available_missions(current_user_id: str):
                 'prerequisite_reasons': prerequisite_reasons
             })
         
+        # Wrapping available_missions in a 'missions' key so apiClient.request's unwrapping 
+        # doesn't lose 'has_active_mission'
         return jsonify({
             'success': True,
-            'data': available_missions,
-            'has_active_mission': has_active_mission
+            'data': {
+                'missions': available_missions,
+                'has_active_mission': has_active_mission
+            }
         }), 200
         
     except Exception as e:

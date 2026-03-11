@@ -129,8 +129,6 @@ def apply_for_loan(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
-        # Check for immediate mentor reactions to large loans
         try:
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,
@@ -143,7 +141,6 @@ def apply_for_loan(current_user_id: str):
             )
             
             if trigger:
-                # Send mentor message to player (with push notification in Phase 4)
                 MentorService.send_mentor_message(
                     player_id=current_user_id,
                     mentor_data=trigger,
@@ -316,3 +313,165 @@ def repay_loan(current_user_id: str, liability_id: str = None):
             'message': str(e)
         }), 500
 
+
+@loan_bp.route('/p2p/available', methods=['GET'])
+@require_auth
+def get_available_p2p_loans(current_user_id: str):
+    """
+    Get available P2P loan offers (excluding own)
+    """
+    try:
+        # Fetch P2P loans that are pending and not posted by the current user
+        response = supabase.table('p2p_loans').select('*').eq('status', 'pending').neq('lender_id', current_user_id).execute()
+        
+        return jsonify({
+            'success': True,
+            'data': response.data
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'OPERATION_FAILED',
+            'message': str(e)
+        }), 500
+
+@loan_bp.route('/p2p/offer', methods=['POST'])
+@require_auth
+def post_p2p_offer(current_user_id: str):
+    """
+    Post a P2P loan offer
+    """
+    try:
+        data = request.json
+        amount = Decimal(str(data.get('amount')))
+        interest_rate = Decimal(str(data.get('interest_rate')))
+        term_months = int(data.get('term_months', 12))
+        purpose = data.get('purpose', 'General Loan')
+        
+        if amount <= 0:
+            return jsonify({'success': False, 'message': 'Amount must be positive'}), 400
+            
+        # 1. Check if user has sufficient funds to offer as a loan
+        current_balance = BalanceService.get_current_balance(current_user_id)
+        if current_balance < amount:
+            return jsonify({
+                'success': False,
+                'error': 'INSUFFICIENT_FUNDS',
+                'message': f'You need ${amount:,.2f} to post this offer, but only have ${current_balance:,.2f}'
+            }), 400
+            
+        # 2. Subtract balance (escrow)
+        BalanceService.subtract_balance(
+            user_id=current_user_id,
+            amount=amount,
+            reason=f"P2P Loan offer posted: {purpose}"
+        )
+        
+        # 3. Create P2P loan record
+        loan_id = str(uuid.uuid4())
+        supabase.table('p2p_loans').insert({
+            'id': loan_id,
+            'lender_id': current_user_id,
+            'amount': float(amount),
+            'interest_rate': float(interest_rate),
+            'term_months': term_months,
+            'purpose': purpose,
+            'status': 'pending',
+            'created_at': datetime.utcnow().isoformat()
+        }).execute()
+        
+        return jsonify({
+            'success': True,
+            'message': 'P2P Loan offer posted successfully.',
+            'loan_id': loan_id
+        }), 201
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'OPERATION_FAILED',
+            'message': str(e)
+        }), 500
+
+@loan_bp.route('/p2p/accept', methods=['POST'])
+@require_auth
+def accept_p2p_loan(current_user_id: str):
+    """
+    Accept a P2P loan offer
+    """
+    try:
+        data = request.json
+        loan_id = data.get('loan_id')
+        
+        if not loan_id:
+            return jsonify({'success': False, 'message': 'loan_id is required'}), 400
+            
+        # 1. Get loan details
+        loan_response = supabase.table('p2p_loans').select('*').eq('id', loan_id).eq('status', 'pending').single().execute()
+        
+        if not loan_response.data:
+            return jsonify({'success': False, 'message': 'Loan offer not found or already occupied'}), 404
+            
+        loan = loan_response.data
+        if loan['lender_id'] == current_user_id:
+            return jsonify({'success': False, 'message': 'You cannot accept your own loan offer'}), 400
+            
+        amount = Decimal(str(loan['amount']))
+        
+        # 2. Update P2P loan record
+        supabase.table('p2p_loans').update({
+            'borrower_id': current_user_id,
+            'status': 'active',
+            'funded_at': datetime.utcnow().isoformat()
+        }).eq('id', loan_id).execute()
+        
+        # 3. Add amount to borrower's balance
+        BalanceService.add_balance(
+            user_id=current_user_id,
+            amount=amount,
+            reason=f"P2P Loan accepted from user"
+        )
+        
+        # 4. Create liability record for borrower
+        liability_id = str(uuid.uuid4())
+        # Calc monthly payment (simple interest for simplicity in this sim)
+        total_interest = amount * (Decimal(str(loan['interest_rate'])) / 100)
+        total_repayment = amount + total_interest
+        monthly_payment = total_repayment / int(loan['term_months'])
+        
+        supabase.table('liabilities').insert({
+            'id': liability_id,
+            'user_id': current_user_id,
+            'name': f"P2P Loan ({loan['purpose']})",
+            'liability_type': 'p2p_loan',
+            'amount': float(amount),
+            'remaining_amount': float(total_repayment),
+            'interest_rate': float(loan['interest_rate']),
+            'monthly_payment': float(monthly_payment),
+            'p2p_loan_id': loan_id
+        }).execute()
+        
+        # Notify lender
+        try:
+            ExpoPushService.send_notification_to_user(
+                supabase_client=supabase,
+                user_id=loan['lender_id'],
+                title='🤝 P2P Loan Accepted',
+                body=f'Your loan offer of ${amount:,.2f} has been accepted!',
+                notification_type='p2p_loan_accepted',
+                data={'loan_id': loan_id}
+            )
+        except: pass
+        
+        return jsonify({
+            'success': True,
+            'message': 'P2P Loan accepted successfully.',
+            'liability_id': liability_id
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'OPERATION_FAILED',
+            'message': str(e)
+        }), 500
