@@ -30,20 +30,29 @@ def get_available_rentals():
 @require_auth
 def get_user_rental(current_user_id: str, user_id: str):
     """Get specific user's active rental"""
-    return get_current_rental(user_id)
+    try:
+        rental = get_current_rental_internal(user_id)
+        return jsonify({'success': True, 'data': rental}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def get_current_rental_internal(user_id):
+    """Internal function to fetch current rental without require_auth injection"""
+    try:
+        # Join with properties to get details
+        response = supabase.table('player_rentals').select('*, rental_properties(*)').eq('player_id', user_id).eq('is_active', True).maybe_single().execute()
+        return response.data
+    except Exception as e:
+        print(f"Error fetching current rental for user {user_id}: {str(e)}")
+        raise e
 
 @rental_bp.route('/current', methods=['GET'])
 @require_auth
 def get_current_rental(current_user_id: str):
     """Get user's current active rental"""
     try:
-        # Join with properties to get details
-        response = supabase.table('player_rentals').select('*, rental_properties(*)').eq('player_id', current_user_id).eq('is_active', True).maybe_single().execute()
-        
-        if not response.data:
-             return jsonify({'success': True, 'data': None}), 200
-             
-        return jsonify({'success': True, 'data': response.data}), 200
+        rental = get_current_rental_internal(current_user_id)
+        return jsonify({'success': True, 'data': rental}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

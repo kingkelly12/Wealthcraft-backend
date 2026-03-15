@@ -24,7 +24,7 @@ def get_available_loans():
     Returns a list of loans where borrower_id is NULL (templates)
     """
     try:
-        response = supabase.table('bank_loans').select('*').is_('borrower_id', 'null').eq('status', 'available').execute()
+        response = supabase.table('bank_loans').select('*').is_('borrower_id', 'null').execute()
         
         return jsonify({
             'success': True,

@@ -295,14 +295,22 @@ def get_marketplace_assets():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def get_user_assets_internal(user_id):
+    """Internal function to fetch user assets without require_auth injection"""
+    try:
+        response = supabase.table('user_assets').select('*').eq('user_id', user_id).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error fetching assets for user {user_id}: {str(e)}")
+        raise e
+
 @asset_bp.route('/user', methods=['GET'])
 @require_auth
 def get_user_assets(current_user_id: str):
     """Get all assets owned by the authenticated user"""
     try:
-        response = supabase.table('user_assets').select('*').eq('user_id', current_user_id).execute()
-        return jsonify({'success': True, 'data': response.data}), 200
-    
+        assets = get_user_assets_internal(current_user_id)
+        return jsonify({'success': True, 'data': assets}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -316,13 +324,21 @@ def get_all_assets():
 @require_auth
 def get_portfolio(current_user_id: str):
     """Get authenticated user's portfolio (alias for /user)"""
-    return get_user_assets(current_user_id)
+    try:
+        assets = get_user_assets_internal(current_user_id)
+        return jsonify({'success': True, 'data': assets}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @asset_bp.route('/portfolio/<user_id>', methods=['GET'])
 @require_auth
 def get_user_portfolio(current_user_id: str, user_id: str):
     """Get specific user's portfolio"""
-    return get_user_assets(user_id)
+    try:
+        assets = get_user_assets_internal(user_id)
+        return jsonify({'success': True, 'data': assets}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @asset_bp.route('/sell/<asset_id>', methods=['POST'])
 @require_auth

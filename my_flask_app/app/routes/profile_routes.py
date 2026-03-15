@@ -69,14 +69,27 @@ def get_net_worth(current_user_id: str):
 def get_profile(user_id: str):
     """Get user profile by user ID"""
     try:
+        from app.services.balance_service import BalanceService
         user_uuid = uuid.UUID(user_id)
         profile = ProfileService.get_profile_by_user_id(user_uuid)
         
         if not profile:
             return jsonify({'error': 'Profile not found'}), 404
         
-        response = ProfileResponse.model_validate(profile.to_dict())
-        return jsonify(response.model_dump()), 200
+        # Fetch balance and inject into response
+        balance = 0
+        try:
+            balance = float(BalanceService.get_current_balance(user_id))
+        except Exception as e:
+            print(f"Failed to fetch balance for profile: {e}")
+            
+        profile_dict = profile.to_dict()
+        profile_dict['account_balance'] = balance
+        
+        return jsonify({
+            'success': True,
+            'data': profile_dict
+        }), 200
     
     except ValueError as e:
         return jsonify({'error': 'Invalid user ID format'}), 400

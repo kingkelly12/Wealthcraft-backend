@@ -75,15 +75,17 @@ def feed(current_user_id: str):
                 .execute()
             all_reactions = all_reactions_res.data
         
-        # Fetch profile info for all unique reactor user_ids
-        reactor_user_ids = list(set(r['user_id'] for r in all_reactions))
-        reactor_profiles = {}
-        if reactor_user_ids:
+        # Fetch profile info for all unique reactor user_ids AND post authors
+        post_author_ids = [p['user_id'] for p in posts]
+        unique_user_ids = list(set(r['user_id'] for r in all_reactions) | set(post_author_ids))
+        
+        user_profiles = {}
+        if unique_user_ids:
             profiles_res = supabase.table('profiles')\
                 .select('user_id, username, profile_picture_url')\
-                .in_('user_id', reactor_user_ids)\
+                .in_('user_id', unique_user_ids)\
                 .execute()
-            reactor_profiles = {
+            user_profiles = {
                 p['user_id']: {
                     'username': p['username'],
                     'profile_picture_url': p.get('profile_picture_url')
@@ -98,7 +100,7 @@ def feed(current_user_id: str):
             if pid not in reactions_by_post:
                 reactions_by_post[pid] = []
             if len(reactions_by_post[pid]) < 5:
-                profile = reactor_profiles.get(r['user_id'], {})
+                profile = user_profiles.get(r['user_id'], {})
                 reactions_by_post[pid].append({
                     'username': profile.get('username', 'Anonymous'),
                     'profile_picture_url': profile.get('profile_picture_url'),
@@ -110,6 +112,8 @@ def feed(current_user_id: str):
         
         feed_data = []
         for p in posts:
+            author_profile = user_profiles.get(p['user_id'], {})
+            
             feed_data.append({
                 'id': p['id'],
                 'content': p['content'],
@@ -118,7 +122,12 @@ def feed(current_user_id: str):
                 'created_at': p['created_at'],
                 'my_reaction': reaction_map.get(p['id'], None),
                 'is_mine': p['user_id'] == current_user_id,
-                'reactors': reactions_by_post.get(p['id'], [])
+                'reactors': reactions_by_post.get(p['id'], []),
+                'author': {
+                    'user_id': p['user_id'],
+                    'username': author_profile.get('username', 'Anonymous'),
+                    'avatar_url': author_profile.get('profile_picture_url')
+                }
             })
             
         return jsonify({
