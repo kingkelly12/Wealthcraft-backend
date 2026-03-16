@@ -10,8 +10,50 @@ from datetime import datetime
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
+import uuid
 
 liability_bp = Blueprint('liability', __name__)
+
+def get_active_liabilities_internal(user_id):
+    """Internal function to fetch active liabilities (luxury + loans)"""
+    try:
+        # 1. Fetch luxury items
+        luxury_res = supabase.table('player_liabilities').select('*, liability_items(*)').eq('player_id', user_id).eq('is_active', True).execute()
+        luxury_items = luxury_res.data or []
+        
+        # 2. Fetch loans
+        loans_res = supabase.table('liabilities').select('*').eq('user_id', user_id).execute()
+        loans = loans_res.data or []
+        
+        # 3. Normalize luxury items
+        normalized_luxury = [{
+            'id': li['id'],
+            'name': li['liability_items']['name'],
+            'amount': li['current_value'] or li['purchase_price'],
+            'monthly_payment': li['monthly_cost'],
+            'image_url': li['liability_items'].get('image_url'),
+            'category': 'luxury',
+            'type': 'lifestyle'
+        } for li in luxury_items if li.get('liability_items')]
+        
+        # 4. Normalize loans (Bank + P2P)
+        normalized_loans = []
+        for loan in loans:
+            l_type = loan.get('liability_type', 'bank_loan')
+            normalized_loans.append({
+                'id': loan['id'],
+                'name': loan['name'] or ('P2P Loan' if l_type == 'p2p_loan' else 'Bank Loan'),
+                'amount': loan['remaining_amount'] or loan['amount'],
+                'monthly_payment': loan['monthly_payment'],
+                'category': 'loan',
+                'type': 'loan',
+                'liability_type': l_type
+            })
+        
+        return normalized_luxury + normalized_loans
+    except Exception as e:
+        print(f"Error fetching active liabilities for user {user_id}: {str(e)}")
+        raise e
 
 
 @liability_bp.route('/purchase', methods=['POST'])
@@ -108,6 +150,8 @@ def purchase_liability(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # Check for immediate mentor reactions to expensive purchases
         try:
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,
@@ -167,7 +211,21 @@ def purchase_liability(current_user_id: str):
 @require_auth
 def get_all_active_liabilities(current_user_id: str):
     """Get all active liabilities (alias for luxury/active)"""
-    return get_active_liabilities(current_user_id)
+    try:
+        liabilities = get_active_liabilities_internal(current_user_id)
+        return jsonify({'success': True, 'data': liabilities}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@liability_bp.route('/user/<user_id>', methods=['GET'])
+@require_auth
+def get_user_liabilities(current_user_id: str, user_id: str):
+    """Get specific user's active liabilities"""
+    try:
+        liabilities = get_active_liabilities_internal(user_id)
+        return jsonify({'success': True, 'data': liabilities}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @liability_bp.route('/', methods=['GET'])
@@ -194,9 +252,13 @@ def get_luxury_items():
 @require_auth
 def purchase_luxury_item(current_user_id: str):
     """Purchase a luxury item (alias or implementation)"""
+    # Assuming there's a purchase logic implementation to reuse or write here
+    # For now, implementing redirect-like logic
     return _purchase_luxury_logic(current_user_id)
 
 def _purchase_luxury_logic(current_user_id: str):
+    # Implementation of purchase logic
+    # (Copied/Refactored from existing if present, or new)
     try:
         data = request.json
         item_id = data.get('item_id')
@@ -231,6 +293,10 @@ def _purchase_luxury_logic(current_user_id: str):
 @require_auth
 def take_liability_loan(current_user_id: str):
     """Take a loan via liability service (Bank Loan Alias)"""
+    # Redirect to loan blueprint logic if possible, or reimplement
+    # Client uses this for 'takeLoan'.
+    # I'll import the logic from loan_routes key function if I can, or just tell client to use /api/loans/apply?
+    # Better to implement here to avoid client changes.
     from app.routes.loan_routes import apply_for_loan
     return apply_for_loan(current_user_id)
 
@@ -248,8 +314,8 @@ def pay_liability_loan(current_user_id: str):
 def get_active_liabilities(current_user_id: str):
     """Get active luxury liabilities"""
     try:
-        response = supabase.table('player_liabilities').select('*, liability_items(*)').eq('player_id', current_user_id).eq('is_active', True).execute()
-        return jsonify({'success': True, 'data': response.data}), 200
+        liabilities = get_active_liabilities_internal(current_user_id)
+        return jsonify({'success': True, 'data': liabilities}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

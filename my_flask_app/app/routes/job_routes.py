@@ -36,6 +36,16 @@ def get_current_jobs(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@job_bp.route('/user/<user_id>', methods=['GET'])
+@require_auth
+def get_user_jobs(current_user_id: str, user_id: str):
+    """Get specific user's current jobs"""
+    try:
+        response = supabase.table('jobs').select('*').eq('user_id', user_id).eq('is_current', True).execute()
+        return jsonify({'success': True, 'data': response.data}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @job_bp.route('/apply', methods=['POST'])
 @require_auth
