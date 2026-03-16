@@ -441,20 +441,78 @@ class MentorService:
         }
 
     @staticmethod
-    def send_mentor_message(player_id: uuid.UUID, mentor_data: Dict, metrics: Dict):
-        """Create and save a mentor interaction"""
+    def send_mentor_message(player_id: uuid.UUID, mentor_data: Dict, metrics: Dict, supabase_client=None):
+        """
+        Create and save a mentor interaction
         
+        Args:
+            player_id: Player receiving the message
+            mentor_data: Dict containing mentor and message (from either daily job or real-time triggers)
+            metrics: Financial metrics snapshot
+            supabase_client: Supabase client for push notifications (optional)
+        """
+        from app.services.push_notification_service import ExpoPushService
+        
+        # Handle both formats:
+        # 1. From daily job: has 'message_template' and 'personalized_message'
+        # 2. From real-time triggers: has 'message' and optionally 'trigger_type'
+        
+        mentor = mentor_data.get('mentor')
+        if not mentor:
+            return None
+        
+        # Determine which format we're dealing with
+        is_real_time = 'message' in mentor_data and 'message_template' not in mentor_data
+        
+        if is_real_time:
+            # Real-time trigger format: create interaction with direct message
+            message_content = mentor_data.get('message')
+            trigger_type = mentor_data.get('trigger_type', 'real_time_trigger')
+            message_template = None
+        else:
+            # Daily job format: use message template
+            message_template = mentor_data.get('message_template')
+            message_content = mentor_data.get('personalized_message')
+            trigger_type = message_template.trigger_type if message_template else 'daily_analysis'
+        
+        # Create interaction record
         interaction = PlayerMentorInteraction(
             player_id=player_id,
-            mentor_id=mentor_data['mentor'].id,
-            message_id=mentor_data['message_template'].id,
-            message_content=mentor_data['personalized_message'],
-            trigger_type=mentor_data['message_template'].trigger_type,
+            mentor_id=mentor.id,
+            message_id=message_template.id if message_template else None,
+            message_content=message_content,
+            trigger_type=trigger_type,
             player_data_snapshot=metrics
         )
         
         db.session.add(interaction)
         db.session.commit()
+        
+        # ============ PHASE 4: PUSH NOTIFICATION ============
+        # Send push notification to player about new mentor message
+        try:
+            # Get supabase client if not provided
+            if supabase_client is None:
+                from app import supabase
+                supabase_client = supabase
+            
+            # Send push notification
+            ExpoPushService.send_notification_to_user(
+                supabase_client=supabase_client,
+                user_id=str(player_id),
+                title=f'💬 {mentor.name} sent you a message',
+                body=message_content[:100] + ('...' if len(message_content) > 100 else ''),
+                notification_type='mentor_message',
+                data={
+                    'interaction_id': str(interaction.id),
+                    'mentor_id': str(mentor.id),
+                    'mentor_name': mentor.name,
+                    'trigger_type': trigger_type
+                }
+            )
+        except Exception as e:
+            # Don't fail the transaction if push notification fails
+            print(f"Failed to send mentor message push notification: {str(e)}")
         
         return interaction
 
@@ -549,6 +607,18 @@ class MentorService:
                     'mentor': mentor,
                     'message': message,
                     'trigger_type': 'panic_selling',
+                    'immediate': True
+                }
+
+        # Buying an asset (first investment)
+        if action == 'buy_asset':
+            mentor = Mentor.query.filter_by(role='strategic').first()
+            if mentor:
+                message = f"Great move {username}! Buying {action_data.get('asset_name')} is your first step toward building a wealth engine. Keep this momentum going."
+                return {
+                    'mentor': mentor,
+                    'message': message,
+                    'trigger_type': 'first_asset_purchase',
                     'immediate': True
                 }
 
