@@ -28,8 +28,11 @@ def get_active_liabilities_internal(user_id):
         # 3. Normalize luxury items
         normalized_luxury = [{
             'id': li['id'],
+            'liability_id': li['liability_id'],
             'name': li['liability_items']['name'],
             'amount': li['current_value'] or li['purchase_price'],
+            'purchase_price': li['purchase_price'],
+            'current_value': li['current_value'],
             'monthly_payment': li['monthly_cost'],
             'image_url': li['liability_items'].get('image_url'),
             'category': 'luxury',
