@@ -5,14 +5,14 @@ flask-cors
 pydantic
 email-validator
 pytest
-apig-wsgi
+apig-wsgi  
 python-dotenv
 psycopg2-binary
 PyJWT
 supabase
-gotrue
 requests
 gunicorn
 gevent
-google-auth>=2.20.0
+google-auth
+google-auth-httplib2
 google-auth-oauthlib
