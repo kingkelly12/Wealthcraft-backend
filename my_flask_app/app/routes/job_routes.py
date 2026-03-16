@@ -13,6 +13,30 @@ import os
 import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
+from app.services.profile_service import ProfileService
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
+
 
 job_bp = Blueprint('job', __name__)
 
@@ -31,7 +55,8 @@ def get_available_jobs():
 def get_current_jobs(current_user_id: str):
     """Get user's current jobs"""
     try:
-        response = supabase.table('jobs').select('*').eq('user_id', current_user_id).eq('is_current', True).execute()
+        user_ids = resolve_user_ids(current_user_id)
+        response = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         return jsonify({'success': True, 'data': response.data}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -41,7 +66,8 @@ def get_current_jobs(current_user_id: str):
 def get_user_jobs(current_user_id: str, user_id: str):
     """Get specific user's current jobs"""
     try:
-        response = supabase.table('jobs').select('*').eq('user_id', user_id).eq('is_current', True).execute()
+        user_ids = resolve_user_ids(user_id)
+        response = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         return jsonify({'success': True, 'data': response.data}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

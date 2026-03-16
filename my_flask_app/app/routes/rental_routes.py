@@ -13,6 +13,30 @@ import os
 import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
+from app.services.profile_service import ProfileService
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
+
 
 rental_bp = Blueprint('rental', __name__)
 
@@ -40,7 +64,8 @@ def get_current_rental_internal(user_id):
     """Internal function to fetch current rental without require_auth injection"""
     try:
         # Join with properties to get details
-        response = supabase.table('player_rentals').select('*, rental_properties(*)').eq('player_id', user_id).eq('is_active', True).maybe_single().execute()
+        user_ids = resolve_user_ids(user_id)
+        response = supabase.table('player_rentals').select('*, rental_properties(*)').in_('player_id', user_ids).eq('is_active', True).maybe_single().execute()
         return response.data
     except Exception as e:
         print(f"Error fetching current rental for user {user_id}: {str(e)}")

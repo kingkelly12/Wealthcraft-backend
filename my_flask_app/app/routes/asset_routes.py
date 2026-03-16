@@ -13,6 +13,30 @@ from app.services.push_notification_service import ExpoPushService
 from app.models.profile import Profile
 from app import db
 import logging
+from app.services.profile_service import ProfileService
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
+
 
 asset_bp = Blueprint('asset', __name__)
 
@@ -298,7 +322,8 @@ def get_marketplace_assets():
 def get_user_assets_internal(user_id):
     """Internal function to fetch user assets without require_auth injection"""
     try:
-        response = supabase.table('user_assets').select('*').eq('user_id', user_id).execute()
+        user_ids = resolve_user_ids(user_id)
+        response = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
         return response.data
     except Exception as e:
         logger.error(f"Error fetching assets for user {user_id}: {str(e)}")

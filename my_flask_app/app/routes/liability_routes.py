@@ -11,33 +11,66 @@ from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
 import uuid
+from app.services.profile_service import ProfileService
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
+
 
 liability_bp = Blueprint('liability', __name__)
 
 def get_active_liabilities_internal(user_id):
     """Internal function to fetch active liabilities (luxury + loans)"""
     try:
+        user_ids = resolve_user_ids(user_id)
         # 1. Fetch luxury items
-        luxury_res = supabase.table('player_liabilities').select('*, liability_items(*)').eq('player_id', user_id).eq('is_active', True).execute()
+        luxury_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
         luxury_items = luxury_res.data or []
         
         # 2. Fetch loans
-        loans_res = supabase.table('liabilities').select('*').eq('user_id', user_id).execute()
+        loans_res = supabase.table('liabilities').select('*').in_('user_id', user_ids).execute()
         loans = loans_res.data or []
         
         # 3. Normalize luxury items
-        normalized_luxury = [{
-            'id': li['id'],
-            'liability_id': li['liability_id'],
-            'name': li['liability_items']['name'],
-            'amount': li['current_value'] or li['purchase_price'],
-            'purchase_price': li['purchase_price'],
-            'current_value': li['current_value'],
-            'monthly_payment': li['monthly_cost'],
-            'image_url': li['liability_items'].get('image_url'),
-            'category': 'luxury',
-            'type': 'lifestyle'
-        } for li in luxury_items if li.get('liability_items')]
+        normalized_luxury = []
+        for li in luxury_items:
+            item = li.get('liability_items')
+            # Handle case where join returns a list
+            if isinstance(item, list) and len(item) > 0:
+                item = item[0]
+            
+            if item:
+                normalized_luxury.append({
+                    'id': li['id'],
+                    'liability_id': li['liability_id'],
+                    'name': item['name'],
+                    'amount': li['current_value'] or li['purchase_price'],
+                    'purchase_price': li['purchase_price'],
+                    'current_value': li['current_value'],
+                    'monthly_payment': li['monthly_cost'],
+                    'image_url': item.get('image_url'),
+                    'category': 'luxury',
+                    'type': 'lifestyle'
+                })
         
         # 4. Normalize loans (Bank + P2P)
         normalized_loans = []
