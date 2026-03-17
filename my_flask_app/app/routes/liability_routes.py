@@ -72,21 +72,24 @@ def get_active_liabilities_internal(user_id):
                     'type': 'lifestyle'
                 })
         
-        # 4. Normalize loans (Bank + P2P)
-        normalized_loans = []
+        # 4. Normalize liabilities from 'liabilities' table (Legacy Luxury + Loans)
+        normalized_other = []
         for loan in loans:
             l_type = loan.get('liability_type', 'bank_loan')
-            normalized_loans.append({
+            is_luxury = l_type == 'luxury'
+            
+            normalized_other.append({
                 'id': loan['id'],
                 'name': loan['name'] or ('P2P Loan' if l_type == 'p2p_loan' else 'Bank Loan'),
                 'amount': loan['remaining_amount'] or loan['amount'],
                 'monthly_payment': loan['monthly_payment'],
-                'category': 'loan',
-                'type': 'loan',
+                'image_url': loan.get('image_url'), # Include image for both if exists
+                'category': 'luxury' if is_luxury else 'loan',
+                'type': 'lifestyle' if is_luxury else 'loan',
                 'liability_type': l_type
             })
         
-        return normalized_luxury + normalized_loans
+        return normalized_luxury + normalized_other
     except Exception as e:
         print(f"Error fetching active liabilities for user {user_id}: {str(e)}")
         raise e
