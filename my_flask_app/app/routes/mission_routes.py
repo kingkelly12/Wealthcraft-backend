@@ -265,7 +265,7 @@ def start_mission(current_user_id: str):
         # Create notification
         supabase.table('notifications').insert({
             'user_id': current_user_id,
-            'type': 'mission',
+            'type': 'system',
             'title': '🎯 Mission Started',
             'message': f'You started the mission: {mission["name"]}',
             'read': False
@@ -461,7 +461,7 @@ def make_decision(current_user_id: str):
         # Create notification
         supabase.table('notifications').insert({
             'user_id': current_user_id,
-            'type': 'mission',
+            'type': 'system',
             'title': '📖 Decision Made',
             'message': f'You chose: {option.get("label", "Option")}',
             'read': False
@@ -521,7 +521,7 @@ def abandon_mission(current_user_id: str):
         # Create notification
         supabase.table('notifications').insert({
             'user_id': current_user_id,
-            'type': 'mission',
+            'type': 'system',
             'title': '❌ Mission Abandoned',
             'message': f'You abandoned the mission: {mission_name}',
             'read': False
