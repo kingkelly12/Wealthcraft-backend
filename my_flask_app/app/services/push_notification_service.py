@@ -264,7 +264,7 @@ class ExpoPushService:
                 return False
             
             # Prepare data payload
-            notification_data = data or {}
+            notification_data = dict(data) if data else {}
             notification_data['type'] = notification_type
             notification_data['timestamp'] = datetime.utcnow().isoformat()
             
