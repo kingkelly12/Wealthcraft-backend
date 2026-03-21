@@ -15,13 +15,28 @@ class BalanceService:
     
     @staticmethod
     def get_current_balance(user_id: str) -> Decimal:
-        """Get the current balance for a user"""
+        """Get the current balance for a user (Lazy Initialization)"""
         try:
             response = supabase.table('user_balances').select('current_balance').eq('user_id', user_id).single().execute()
             if response.data:
                 return Decimal(str(response.data['current_balance']))
             return Decimal('0')
         except Exception as e:
+            # Check for PGRST116 (0 rows returned)
+            error_str = str(e)
+            if 'PGRST116' in error_str or '0 rows' in error_str:
+                try:
+                    # Initialize balance record lazily
+                    supabase.table('user_balances').insert({
+                        'user_id': user_id,
+                        'current_balance': 0.0,
+                        'updated_at': datetime.utcnow().isoformat()
+                    }).execute()
+                    return Decimal('0')
+                except Exception as insert_error:
+                    print(f'Critical error initializing balance: {insert_error}')
+                    raise Exception('Failed to initialize user balance')
+            
             print(f'Error getting balance: {e}')
             raise Exception('Failed to retrieve balance')
     

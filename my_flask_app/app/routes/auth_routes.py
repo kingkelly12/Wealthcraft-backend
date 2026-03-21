@@ -60,15 +60,28 @@ def register():
         user_data = UserCreate(**request.json)
         
         # Register with Supabase
-        new_user = UserService.create_user(user_data)
+        auth_response = UserService.create_user(user_data)
+        user = auth_response.user
+        session = auth_response.session
         
-        # UserResponse schema currently expects DB model, let's return dict directly for now
-        return jsonify({
-            'id': new_user.id,
-            'email': new_user.email,
-            'username': new_user.user_metadata.get('username'),
-            'created_at': new_user.created_at
-        }), 201
+        response_data = {
+            'success': True,
+            'data': {
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'username': user.user_metadata.get('username'),
+                    'created_at': user.created_at
+                }
+            }
+        }
+
+        # Add session data if available (Supabase auto-login after sign-up)
+        if session:
+            response_data['data']['token'] = session.access_token
+            response_data['data']['refresh_token'] = session.refresh_token
+
+        return jsonify(response_data), 201
 
     except ValidationError as e:
         return jsonify(e.errors()), 400

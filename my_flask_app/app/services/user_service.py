@@ -19,7 +19,7 @@ class UserService:
                     }
                 }
             })
-            return res.user
+            return res
         except AuthApiError as e:
             # Pass the error message up to the route handler
             raise ValueError(e.message)
