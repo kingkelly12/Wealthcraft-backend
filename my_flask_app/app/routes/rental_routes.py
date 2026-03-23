@@ -62,14 +62,30 @@ def get_user_rental(current_user_id: str, user_id: str):
 
 def get_current_rental_internal(user_id):
     """Internal function to fetch current rental without require_auth injection"""
+    from app import supabase
+    if supabase is None:
+        print(f"CRITICAL: Supabase client is None when fetching rental for user {user_id}")
+        return None
+
     try:
         # Join with properties to get details
         user_ids = resolve_user_ids(user_id)
-        response = supabase.table('player_rentals').select('*, rental_properties(*)').in_('player_id', user_ids).eq('is_active', True).maybe_single().execute()
+        response = supabase.table('player_rentals')\
+            .select('*, rental_properties(*)')\
+            .in_('player_id', user_ids)\
+            .eq('is_active', True)\
+            .maybe_single()\
+            .execute()
+        
+        if response is None:
+            print(f"WARNING: Supabase execute() returned None for user {user_id}")
+            return None
+            
         return response.data
     except Exception as e:
         print(f"Error fetching current rental for user {user_id}: {str(e)}")
-        raise e
+        # Don't raise, just return None to allow the UI to handle it gracefully
+        return None
 
 @rental_bp.route('/current', methods=['GET'])
 @require_auth
