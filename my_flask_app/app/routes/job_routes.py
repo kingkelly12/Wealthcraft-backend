@@ -106,7 +106,7 @@ def apply_for_job(current_user_id: str):
         # 2. Check current job count (Max 2)
         current_jobs = supabase.table('jobs').select('id', count='exact').eq('user_id', current_user_id).eq('is_current', True).execute()
         
-        if current_jobs.count and current_jobs.count >= 2:
+        if (current_jobs.count or 0) >= 2:
             return jsonify({
                 'success': False,
                 'error': 'JOB_LIMIT_REACHED',
