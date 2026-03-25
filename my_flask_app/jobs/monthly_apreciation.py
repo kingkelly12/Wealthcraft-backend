@@ -9,7 +9,7 @@ Mirrors monthly_depreciation.py but for assets:
   - Ceiling: 200% of purchase price (prevents runaway inflation)
 """
 
-from app import create_app, db
+from app import db
 from app.models.user_asset import UserAsset
 from datetime import date
 from decimal import Decimal
@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Appreciation rates (mirrors depreciation tier structure)
-YEAR_1_MONTHLY_RATE = Decimal('0.005')    # 0.50% monthly ≈ 6% annual
+YEAR_1_MONTHLY_RATE = Decimal('0.005')        # 0.50% monthly ≈ 6% annual
 YEAR_2_PLUS_MONTHLY_RATE = Decimal('0.0025')  # 0.25% monthly ≈ 3% annual
 MAXIMUM_VALUE_MULTIPLIER = Decimal('2.0')     # 200% ceiling of purchase price
 
@@ -74,44 +74,44 @@ def _calculate_appreciation(asset, today):
 
 def run_monthly_appreciation():
     """Run monthly appreciation update for all player assets."""
-    app = create_app()
+    logger.info("Starting monthly asset appreciation...")
 
-    with app.app_context():
-        logger.info("Starting monthly asset appreciation...")
+    try:
+        assets = UserAsset.query.all()
+        today = date.today()
 
-        try:
-            assets = UserAsset.query.all()
-            today = date.today()
+        updated_count = 0
+        total_appreciation = Decimal('0')
 
-            updated_count = 0
-            total_appreciation = Decimal('0')
+        for asset in assets:
+            result = _calculate_appreciation(asset, today)
 
-            for asset in assets:
-                result = _calculate_appreciation(asset, today)
+            if result['appreciation_amount'] > 0:
+                asset.value = Decimal(str(result['new_value']))
+                total_appreciation += Decimal(str(result['appreciation_amount']))
+                updated_count += 1
 
-                if result['appreciation_amount'] > 0:
-                    asset.value = Decimal(str(result['new_value']))
-                    total_appreciation += Decimal(str(result['appreciation_amount']))
-                    updated_count += 1
+        db.session.commit()
 
-            db.session.commit()
+        logger.info(
+            f"Appreciation complete. "
+            f"Updated: {updated_count} assets. "
+            f"Total value increase: ${float(total_appreciation):,.2f}"
+        )
 
-            logger.info(
-                f"Appreciation complete. "
-                f"Updated: {updated_count} assets. "
-                f"Total value increase: ${float(total_appreciation):,.2f}"
-            )
+        return {
+            'updated_count': updated_count,
+            'total_appreciation': float(total_appreciation),
+            'date': today.isoformat()
+        }
 
-            return {
-                'updated_count': updated_count,
-                'total_appreciation': float(total_appreciation),
-                'date': today.isoformat()
-            }
-
-        except Exception as e:
-            logger.error(f"Error running monthly appreciation: {str(e)}")
-            return {'error': str(e)}
+    except Exception as e:
+        logger.error(f"Error running monthly appreciation: {str(e)}")
+        return {'error': str(e)}
 
 
 if __name__ == '__main__':
-    run_monthly_appreciation()
+    from app import create_app
+    app = create_app()
+    with app.app_context():
+        run_monthly_appreciation()

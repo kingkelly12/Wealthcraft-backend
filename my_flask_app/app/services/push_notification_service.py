@@ -294,3 +294,100 @@ class ExpoPushService:
         except Exception as e:
             logger.error(f"Error sending notification to user {user_id}: {str(e)}")
             return False
+
+    @classmethod
+    def send_notifications_to_users(
+        cls,
+        supabase_client,
+        user_notifications: List[Dict],
+        notification_type: str = 'system'
+    ) -> Dict[str, int]:
+        """
+        Batch-send notifications to multiple users efficiently.
+
+        Instead of making one Supabase request per user (N requests), this
+        fetches all push tokens in a SINGLE query and sends all notifications
+        in batches of 100 to the Expo API.
+
+        Args:
+            supabase_client: Supabase client instance
+            user_notifications: List of dicts, each containing:
+                - user_id: str  (required)
+                - title: str    (required)
+                - body: str     (required)
+                - data: Optional[Dict]
+            notification_type: Type added to every notification's data payload
+
+        Returns:
+            Dictionary with counts: {'success': int, 'failed': int, 'skipped': int}
+        """
+        if not user_notifications:
+            return {'success': 0, 'failed': 0, 'skipped': 0}
+
+        # 1. Collect all unique user_ids
+        user_ids = list({n['user_id'] for n in user_notifications})
+
+        # 2. Fetch ALL push tokens in ONE Supabase request
+        try:
+            result = supabase_client.table('profiles').select(
+                'user_id, push_token'
+            ).in_('user_id', user_ids).execute()
+        except Exception as e:
+            logger.error(f"Failed to fetch push tokens in batch: {str(e)}")
+            return {'success': 0, 'failed': len(user_notifications), 'skipped': 0}
+
+        # 3. Build a lookup map: user_id -> push_token
+        token_map = {
+            row['user_id']: row.get('push_token')
+            for row in (result.data or [])
+        }
+
+        # 4. Build the batch payload, skipping users with no/invalid tokens
+        batch_payload = []
+        skipped = 0
+        now = datetime.utcnow().isoformat()
+
+        for notif in user_notifications:
+            user_id = notif['user_id']
+            push_token = token_map.get(user_id)
+
+            if not push_token:
+                logger.info(f"User {user_id} has no push token — skipping")
+                skipped += 1
+                continue
+
+            if not cls.validate_push_token(push_token):
+                logger.warning(f"Invalid push token format for user {user_id} — skipping")
+                skipped += 1
+                continue
+
+            notification_data = dict(notif.get('data') or {})
+            notification_data['type'] = notification_type
+            notification_data['timestamp'] = now
+
+            batch_payload.append({
+                'push_token': push_token,
+                'title': notif['title'],
+                'body': notif['body'],
+                'data': notification_data,
+            })
+
+        if not batch_payload:
+            logger.warning("No valid push tokens found for batch send")
+            return {'success': 0, 'failed': 0, 'skipped': skipped}
+
+        # 5. Send via the existing batch sender
+        result_counts = cls.send_batch_notifications(batch_payload)
+        result_counts['skipped'] = skipped
+
+        # 6. Handle DeviceNotRegistered in bulk
+        #    (send_batch_notifications logs per-ticket errors; we do a best-effort cleanup)
+        #    Advanced: parse receipts to find DeviceNotRegistered tokens and null them here.
+        #    For now, invalid tokens are skipped on future runs until cleaned by the
+        #    single-user send_notification_to_user path which handles DeviceNotRegistered.
+
+        logger.info(
+            f"Batch send complete — success: {result_counts['success']}, "
+            f"failed: {result_counts['failed']}, skipped: {skipped}"
+        )
+        return result_counts

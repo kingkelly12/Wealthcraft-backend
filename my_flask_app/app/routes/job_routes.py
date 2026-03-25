@@ -103,8 +103,9 @@ def apply_for_job(current_user_id: str):
         
         job = job_response.data
         
-        # 2. Check current job count (Max 2)
-        current_jobs = supabase.table('jobs').select('id', count='exact').eq('user_id', current_user_id).eq('is_current', True).execute()
+        # 2. Check current job count (Max 2) - use resolve to handle Auth UID vs Profile ID
+        user_ids = resolve_user_ids(current_user_id)
+        current_jobs = supabase.table('jobs').select('id', count='exact').in_('user_id', user_ids).eq('is_current', True).execute()
         
         if (current_jobs.count or 0) >= 2:
             return jsonify({
@@ -114,7 +115,7 @@ def apply_for_job(current_user_id: str):
             }), 400
         
         # 3. Check for duplicate job
-        existing_jobs = supabase.table('jobs').select('id').eq('user_id', current_user_id).eq('title', job['title']).eq('company', job['company']).eq('is_current', True).execute()
+        existing_jobs = supabase.table('jobs').select('id').in_('user_id', user_ids).eq('title', job['title']).eq('company', job['company']).eq('is_current', True).execute()
         
         if existing_jobs.data and len(existing_jobs.data) > 0:
             return jsonify({
@@ -197,10 +198,13 @@ def apply_for_job(current_user_id: str):
 def quit_job(current_user_id: str, job_id: str):
     """Quit a job"""
     try:
-        # Get job details
-        job_response = supabase.table('jobs').select('*').eq('id', job_id).eq('user_id', current_user_id).single().execute()
+        # Resolve both Auth UID and Profile ID to ensure we find the job
+        user_ids = resolve_user_ids(current_user_id)
         
-        if not job_response.data:
+        # Get job details (use .in_ + maybe_single to avoid 'Resource not found' errors)
+        job_response = supabase.table('jobs').select('*').eq('id', job_id).in_('user_id', user_ids).maybe_single().execute()
+        
+        if not job_response or not job_response.data:
             return jsonify({
                 'success': False,
                 'error': 'JOB_NOT_FOUND',
@@ -209,8 +213,8 @@ def quit_job(current_user_id: str, job_id: str):
         
         job = job_response.data
         
-        # Update job to inactive
-        supabase.table('jobs').update({'is_current': False}).eq('id', job_id).eq('user_id', current_user_id).execute()
+        # Update job to inactive (use .in_ for same reason)
+        supabase.table('jobs').update({'is_current': False}).eq('id', job_id).in_('user_id', user_ids).execute()
         
         # Create notification
         supabase.table('notifications').insert({
