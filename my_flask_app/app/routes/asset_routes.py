@@ -391,15 +391,22 @@ def sell_asset(current_user_id: str, asset_id: str):
         
         asset = asset_response.data
         
-        # 1.5 Get current market price (to calculate true sale value)
-        market_asset_response = supabase.table('assets').select('price').eq('name', asset.get('name')).single().execute()
-        
-        current_price = Decimal(str(asset.get('purchase_price'))) # Default to purchase price if lookup fails
-        if market_asset_response.data:
-             current_price = Decimal(str(market_asset_response.data.get('price')))
-             
+        # 1.5 Calculate true sale value based on asset type
         quantity = Decimal(str(asset.get('quantity', 1)))
-        sale_value = current_price * quantity
+        asset_type = asset.get('asset_type', '')
+        
+        if asset_type in ['stocks', 'crypto']:
+            # For volatile market assets, fetch current global market price
+            market_asset_response = supabase.table('assets').select('price').eq('name', asset.get('name')).single().execute()
+            
+            current_price = Decimal(str(asset.get('purchase_price'))) # Default if lookup fails
+            if market_asset_response.data:
+                 current_price = Decimal(str(market_asset_response.data.get('price')))
+                 
+            sale_value = current_price * quantity
+        else:
+            # For properties and business, use the individually appreciated value from user_assets
+            sale_value = Decimal(str(asset.get('value', asset.get('purchase_price', 0))))
         
         # Calculate profit
         purchase_price = Decimal(str(asset.get('purchase_price', 0)))

@@ -24,59 +24,92 @@ logger = logging.getLogger(__name__)
 
 def simulate_market_fluctuation():
     """
-    Simulate market price changes for user assets and send notifications
-    when price changes exceed thresholds (±5% for stocks, ±10% for crypto)
+    Apply market price changes for global assets and update user portfolios.
+    Sends push notifications for significant movers.
     """
-    logger.info("Starting simulated market fluctuation monitoring...")
+    logger.info("Starting market fluctuation and portfolio update...")
+
+    from app import supabase
 
     try:
-        # Get all user assets
-        assets_result = supabase.table('user_assets').select(
-            'id, user_id, asset_name, asset_type, purchase_price, quantity, value'
-        ).execute()
+        # 1. Fetch global assets that are volatile
+        fluctuating_categories = ['stocks', 'crypto', 'investments']
+        assets_result = supabase.table('assets').select('*').in_('category', fluctuating_categories).execute()
 
         if not assets_result.data:
-            logger.info("No user assets found to monitor")
+            logger.info("No volatile market assets found")
             return
 
-        # Group assets by user to batch notifications
-        user_assets = {}
+        global_changes = {}
         for asset in assets_result.data:
-            user_id = asset['user_id']
-            if user_id not in user_assets:
-                user_assets[user_id] = []
-            user_assets[user_id].append(asset)
+            cat = asset.get('category')
+            current_price = float(asset.get('price', 0))
+            
+            if current_price <= 0:
+                continue
 
-        logger.info(f"Monitoring assets for {len(user_assets)} users")
+            # Random changes
+            if cat == 'crypto':
+                price_change_pct = random.uniform(-10, 10)
+            else:
+                price_change_pct = random.uniform(-5, 5)
 
-        # --- Build notification list (no API calls yet) ---
-        notifications_to_send = []
+            new_price = current_price * (1 + price_change_pct / 100)
+            new_price = max(1.0, float(new_price)) # prevent $0 or negative
 
-        for user_id, assets in user_assets.items():
-            significant_changes = []
+            # Update global asset
+            supabase.table('assets').update({'price': new_price}).eq('id', asset['id']).execute()
 
-            for asset in assets:
-                if asset['asset_type'] == 'stock':
-                    price_change_pct = random.uniform(-5, 5)
-                    threshold = 3.0
-                elif asset['asset_type'] == 'crypto':
-                    price_change_pct = random.uniform(-10, 10)
-                    threshold = 5.0
-                else:
-                    price_change_pct = random.uniform(-2, 2)
-                    threshold = 2.0
+            global_changes[asset['name']] = {
+                'new_price': new_price,
+                'change_pct': price_change_pct,
+                'old_price': current_price,
+                'type': cat
+            }
 
-                if abs(price_change_pct) >= threshold:
-                    current_value = asset.get('value', 0)
-                    value_change = current_value * (price_change_pct / 100)
+        if not global_changes:
+            return
 
-                    significant_changes.append({
-                        'name': asset['asset_name'],
-                        'type': asset['asset_type'],
-                        'change_pct': price_change_pct,
-                        'value_change': value_change
+        # 2. Fetch user portfolios containing these assets
+        affected_types = ['stocks', 'crypto'] 
+        user_assets_result = supabase.table('user_assets').select(
+            'id, user_id, name, asset_type, quantity, value'
+        ).in_('asset_type', affected_types).execute()
+
+        user_updates = {}
+        
+        if user_assets_result.data:
+            for ua in user_assets_result.data:
+                asset_name = ua.get('name')
+                if asset_name in global_changes:
+                    change_data = global_changes[asset_name]
+                    new_price = change_data['new_price']
+                    quantity = float(ua.get('quantity', 1))
+                    new_value = new_price * quantity
+                    
+                    # Update user's specific asset value in database
+                    supabase.table('user_assets').update({'value': new_value}).eq('id', ua['id']).execute()
+
+                    # Record for notifications
+                    user_id = ua['user_id']
+                    if user_id not in user_updates:
+                        user_updates[user_id] = []
+                        
+                    user_updates[user_id].append({
+                        'name': asset_name,
+                        'type': ua.get('asset_type'),
+                        'change_pct': change_data['change_pct'],
+                        'value_change': new_value - float(ua.get('value', 0))
                     })
 
+            logger.info(f"Updated portfolios for {len(user_updates)} users")
+
+        # 3. Build and send notifications
+        notifications_to_send = []
+        for user_id, changes in user_updates.items():
+            # Filter for significant changes, e.g. > 3%
+            significant_changes = [c for c in changes if abs(c['change_pct']) >= 3.0]
+            
             if significant_changes:
                 most_significant = max(significant_changes, key=lambda x: abs(x['change_pct']))
                 emoji = "📈" if most_significant['change_pct'] > 0 else "📉"
@@ -98,17 +131,27 @@ def simulate_market_fluctuation():
                     }
                 })
 
-        # --- Send all notifications in one batch ---
         if notifications_to_send:
-            results = ExpoPushService.send_notifications_to_users(
-                supabase_client=supabase,
-                user_notifications=notifications_to_send,
-                notification_type='market_fluctuation'
-            )
-            logger.info(
-                f"Market monitor complete. "
-                f"Sent: {results['success']}, Failed: {results['failed']}, Skipped: {results['skipped']}"
-            )
+            success_count = 0
+            failed_count = 0
+            for notif in notifications_to_send:
+                try:
+                    res = ExpoPushService.send_notification_to_user(
+                        supabase_client=supabase,
+                        user_id=notif['user_id'],
+                        title=notif['title'],
+                        body=notif['body'],
+                        notification_type='system',
+                        data=notif.get('data')
+                    )
+                    if res:
+                        success_count += 1
+                    else:
+                        failed_count += 1
+                except Exception:
+                    failed_count += 1
+                    
+            logger.info(f"Market monitor complete. Sent: {success_count}, Failed: {failed_count}")
         else:
             logger.info("No significant market changes to notify about")
 

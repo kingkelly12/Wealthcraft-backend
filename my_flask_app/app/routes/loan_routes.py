@@ -11,7 +11,7 @@ from app.schemas.loan_schema import LoanApplicationRequest
 from app import supabase
 from decimal import Decimal
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.services.push_notification_service import ExpoPushService
 
 loan_bp = Blueprint('loan', __name__)
@@ -87,7 +87,7 @@ def apply_for_loan(current_user_id: str):
             'status': 'active',
             'collateral': loan['collateral'],
             'funded_at': datetime.utcnow().isoformat(),
-            'due_date': None # TODO: Calculate due date
+            'due_date': (datetime.utcnow() + timedelta(days=int(loan.get('term', 12)) * 30)).isoformat()
         }).execute()
 
         # 3. Add loan amount to balance
@@ -153,8 +153,8 @@ def apply_for_loan(current_user_id: str):
         return jsonify({
             'success': True,
             'message': f'You have received ${loan_amount:,.2f}.',
-            'liability_id': uuid.UUID(liability_id),
-            'bank_loan_id': uuid.UUID(user_loan_id),
+            'liability_id': liability_id,
+            'bank_loan_id': user_loan_id,
             'new_balance': float(balance_result['new_balance']),
             'loan_amount': float(loan_amount),
             'monthly_payment': float(monthly_payment)

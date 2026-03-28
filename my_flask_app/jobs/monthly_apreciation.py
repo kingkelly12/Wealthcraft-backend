@@ -73,7 +73,7 @@ def _calculate_appreciation(asset, today):
 
 
 def run_monthly_appreciation():
-    """Run monthly appreciation update for all player assets."""
+    """Run monthly appreciation update for non-volatile player assets (e.g. property, business)."""
     logger.info("Starting monthly asset appreciation...")
 
     try:
@@ -82,8 +82,13 @@ def run_monthly_appreciation():
 
         updated_count = 0
         total_appreciation = Decimal('0')
+        
+        excluded_types = ['stocks', 'crypto']
 
         for asset in assets:
+            if asset.asset_type in excluded_types:
+                continue
+
             result = _calculate_appreciation(asset, today)
 
             if result['appreciation_amount'] > 0:
