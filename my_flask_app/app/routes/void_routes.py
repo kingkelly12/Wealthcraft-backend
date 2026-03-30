@@ -189,8 +189,11 @@ def react(current_user_id: str):
                 
                 # SANITY REWARD CHECK (Switching TO 'same')
                 if new_type == 'same':
-                    _reward_sanity(post_res.data['user_id'], current_user_id)
+                    _apply_sanity_impact(post_res.data['user_id'], +1)
                     _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
+                # SANITY PENALTY (Switching TO 'oof')
+                elif new_type == 'oof':
+                    _apply_sanity_impact(post_res.data['user_id'], -1)
 
         else:
             # New Reaction
@@ -205,10 +208,12 @@ def react(current_user_id: str):
             post_res = supabase.table('void_posts').select(col, 'user_id').eq('id', post_id).single().execute()
             post_update[col] = post_res.data.get(col, 0) + 1
             
-            # SANITY REWARD CHECK
-            if new_type == 'same':
-                _reward_sanity(post_res.data['user_id'], current_user_id)
+            # SANITY REWARD/PENALTY CHECK
+            if new_type == 'same' and post_res.data['user_id'] != current_user_id:
+                _apply_sanity_impact(post_res.data['user_id'], +1)
                 _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
+            elif new_type == 'oof' and post_res.data['user_id'] != current_user_id:
+                _apply_sanity_impact(post_res.data['user_id'], -1)
                 
         # Apply updates to post
         if post_update:
@@ -219,35 +224,33 @@ def react(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-def _reward_sanity(poster_id, reactor_id):
+def _apply_sanity_impact(user_id: str, delta: int):
     """
-    Give +1 Sanity to the poster if they receive a 'Same'.
-    Prevent self-validation.
+    Apply a sanity change (positive or negative) to a user.
+    - Positive delta = gain (capped at 100).
+    - Negative delta = loss (capped at 0).
+    - Will not deduct below 0.
     """
-    if poster_id == reactor_id:
-        return # No ego boosting
-        
     try:
-        # Fetch poster's sanity
-        res = supabase.table('profiles').select('sanity').eq('user_id', poster_id).single().execute()
+        res = supabase.table('profiles').select('sanity').eq('user_id', user_id).single().execute()
         current = res.data.get('sanity', 100)
         
-        # +1 Sanity, capped at 100
-        if current < 100:
-            new_val = current + 1
-            supabase.table('profiles').update({'sanity': new_val}).eq('user_id', poster_id).execute()
+        if delta < 0 and current <= 0:
+            return  # Already at 0, don't go below
+        
+        new_val = max(0, min(100, current + delta))
+        supabase.table('profiles').update({'sanity': new_val}).eq('user_id', user_id).execute()
     except:
-        pass # Fail silently, don't block reaction
+        pass  # Fail silently, don't block reaction
 
 
 def _send_consolation_notification(poster_id, reactor_id, post_id):
     """
     Send a "Consolation" push notification to the poster when someone reacts 'Same'.
     
-    Psychology:
     - The notification deliberately withholds WHO reacted.
     - The user must re-enter The Void to see the reactor's face.
-    - Copy sells the FEELING ("You're not alone") not the feature.
+    - sells the FEELING ("You're not alone") not the feature.
     """
     if poster_id == reactor_id:
         return  # No self-notifications

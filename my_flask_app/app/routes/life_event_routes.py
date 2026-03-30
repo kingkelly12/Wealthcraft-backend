@@ -3,15 +3,10 @@ Life event management routes
 Handles life event choices with JWT authentication
 """
 from flask import Blueprint, request, jsonify
-from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
-from app.schemas.life_event_schema import LifeEventChoiceResponse
 from app import supabase
 from decimal import Decimal
-import os
-import random
-from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 
 life_event_bp = Blueprint('life_event', __name__)
@@ -32,36 +27,38 @@ def make_life_event_choice(current_user_id: str):
     """
     try:
         # Validate request
-        data = LifeEventChoiceRequest(**request.json)
+        data = request.json
+        choice_id = data.get('choice_id')
+        event_id = data.get('event_id')
         
         # 1. Get choice details
-        choice_response = supabase.table('life_event_choices').select('*').eq('id', str(data.choice_id)).single().execute()
+        choice_response = supabase.table('life_event_choices').select('*').eq('id', str(choice_id)).single().execute()
         
         if not choice_response.data:
             return jsonify({
                 'success': False,
                 'error': 'CHOICE_NOT_FOUND',
-                'message': f'Choice {data.choice_id} not found'
+                'message': f'Choice {choice_id} not found'
             }), 404
         
         choice = choice_response.data
         
         # 2. Get life event details
-        event_response = supabase.table('life_events').select('*').eq('id', str(data.event_id)).single().execute()
+        event_response = supabase.table('life_events').select('*').eq('id', str(event_id)).single().execute()
         
         if not event_response.data:
             return jsonify({
                 'success': False,
                 'error': 'EVENT_NOT_FOUND',
-                'message': f'Life event {data.event_id} not found'
+                'message': f'Life event {event_id} not found'
             }), 404
         
         event = event_response.data
         
         # 3. Update user_life_event with choice
         supabase.table('user_life_events').update({
-            'choice_id': str(data.choice_id)
-        }).eq('user_id', current_user_id).eq('life_event_id', str(data.event_id)).is_('choice_id', 'null').execute()
+            'choice_id': str(choice_id)
+        }).eq('user_id', current_user_id).eq('life_event_id', str(event_id)).is_('choice_id', 'null').execute()
         
         # 4. Apply balance changes
         net_impact = Decimal(str(choice.get('benefit', 0))) - Decimal(str(choice.get('cost', 0)))
@@ -88,28 +85,30 @@ def make_life_event_choice(current_user_id: str):
         profile_res = supabase.table('profiles').select('sanity').eq('user_id', current_user_id).single().execute()
         current_sanity = profile_res.data.get('sanity', 100)
         
-        # Calculate new sanity
-        impact_sanity = event.get('impact_sanity', 0) 
-        # Ideally choice should have sanity impact too, but for now using event's impact.
-        # Future improvement: Add impact_sanity to life_event_choices table.
+        # Use choice-level sanity impact if set, else fall back to event-level
+        impact_sanity = choice.get('impact_sanity', None)
+        if impact_sanity is None or impact_sanity == 0:
+            impact_sanity = event.get('impact_sanity', 0)
         
         new_sanity = current_sanity + impact_sanity
         burnout_triggered = False
+        game_over = False
         outcome_message = choice.get('outcome_description', 'Choice made')
 
         if new_sanity <= 0:
-            # BURNOUT TRIGGERED
-            burnout_triggered = True
-            new_sanity = 50 # Reset to 50
-            
-            # Apply penalty
-            burnout_cost = Decimal(500)
-            BalanceService.subtract_balance(
-                user_id=current_user_id,
-                amount=burnout_cost,
-                reason="Medical Bill: Burnout Recovery"
-            )
-            outcome_message = f"BURNOUT! You collapsed from stress. Hospital bill: $500. {outcome_message}"
+            # GAME OVER — sanity hits 0, stays at 0 (no auto-reset)
+            # Only apply penalty if this is a new burnout (was above 0 before)
+            if current_sanity > 0:
+                burnout_triggered = True
+                game_over = True
+                burnout_cost = Decimal(500)
+                BalanceService.subtract_balance(
+                    user_id=current_user_id,
+                    amount=burnout_cost,
+                    reason="Medical Bill: Mental Breakdown"
+                )
+                outcome_message = f"GAME OVER! You've lost your mind. Hospital bill: $500. Use recovery actions to regain sanity. {outcome_message}"
+            new_sanity = 0  # clamp to 0, no reset
         
         # Update Profile with new sanity
         supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', current_user_id).execute()
@@ -122,7 +121,8 @@ def make_life_event_choice(current_user_id: str):
             'new_balance': float(balance_result['new_balance']),
             'sanity_change': impact_sanity,
             'new_sanity': new_sanity,
-            'burnout_triggered': burnout_triggered
+            'burnout_triggered': burnout_triggered,
+            'game_over': game_over
         }), 200
         
     except ValidationError as e:
