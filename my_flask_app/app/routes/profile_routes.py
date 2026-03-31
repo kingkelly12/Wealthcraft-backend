@@ -65,6 +65,29 @@ def get_net_worth(current_user_id: str):
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
+@profile_bp.route('/ping', methods=['PUT'])
+@require_auth
+def ping_activity(current_user_id: str):
+    """Lightweight endpoint specifically to update last_active_at"""
+    try:
+        from app import db
+        from app.models.profile import Profile
+        from datetime import datetime
+        
+        user_uuid = uuid.UUID(current_user_id)
+        
+        # We execute a direct update query to avoid loading the whole model and locking
+        Profile.query.filter_by(user_id=user_uuid).update({
+            'last_active_at': datetime.utcnow()
+        })
+        db.session.commit()
+        
+        return jsonify({'success': True, 'message': 'Activity updated'}), 200
+    except Exception as e:
+        from app import db
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @profile_bp.route('/<user_id>', methods=['GET'])
 def get_profile(user_id: str):
     """Get user profile by user ID"""

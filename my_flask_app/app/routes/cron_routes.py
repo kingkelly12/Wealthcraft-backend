@@ -15,6 +15,7 @@ from jobs.monthly_depreciation import run_monthly_depreciation
 from jobs.monthly_apreciation import run_monthly_appreciation
 from jobs.monthly_loan_deductions import process_monthly_deductions
 from jobs.trigger_random_events import trigger_random_events
+from jobs.inactive_users_monitor import run_inactive_users_monitor
 
 cron_bp = Blueprint('cron', __name__)
 
@@ -61,6 +62,16 @@ def cron_random_events():
     try:
         trigger_random_events()
         return jsonify({'success': True, 'message': 'Random events triggered'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@cron_bp.route('/inactive-users-monitor', methods=['POST'])
+@require_cron_secret
+def cron_inactive_users_monitor():
+    """Inactive users monitor — Schedule: 0 10 * * * (10 AM daily)"""
+    try:
+        result = run_inactive_users_monitor()
+        return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

@@ -16,8 +16,6 @@ class Profile(db.Model):
     experience_points = db.Column(db.Integer, default=0)
     profile_picture_url = db.Column(db.Text, default='https://example.com/default-profile.png')
     trading_profits = db.Column(db.Numeric(15, 2), default=0)
-    push_token = db.Column(db.Text, nullable=True)
-    push_token_updated_at = db.Column(db.DateTime(timezone=True), nullable=True)
     income_sources_count = db.Column(db.Integer, default=1)
     monthly_savings = db.Column(db.Numeric(15, 2), default=0)
     engagement_days = db.Column(db.Integer, default=0)
@@ -25,6 +23,8 @@ class Profile(db.Model):
     has_completed_onboarding = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_active_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    last_inactivity_ping_sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     def to_dict(self):
         return {
