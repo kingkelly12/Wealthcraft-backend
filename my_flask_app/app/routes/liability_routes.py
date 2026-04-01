@@ -81,7 +81,7 @@ def get_active_liabilities_internal(user_id):
             normalized_other.append({
                 'id': loan['id'],
                 'name': loan['name'] or ('P2P Loan' if l_type == 'p2p_loan' else 'Bank Loan'),
-                'amount': loan['remaining_amount'] or loan['amount'],
+                'amount': loan.get('remaining_balance') or loan.get('remaining_amount') or loan['amount'],
                 'monthly_payment': loan['monthly_payment'],
                 'image_url': loan.get('image_url'), # Include image for both if exists
                 'category': 'luxury' if is_luxury else 'loan',

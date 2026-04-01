@@ -13,6 +13,7 @@ class Liability(db.Model):
     amount = db.Column(db.Numeric(15, 2), nullable=False)
     interest_rate = db.Column(db.Numeric(5, 2), default=0, nullable=False)
     monthly_payment = db.Column(db.Numeric(15, 2), default=0, nullable=False)
+    remaining_balance = db.Column(db.Numeric(15, 2))
     due_date = db.Column(db.DateTime(timezone=True))
     p2p_loan_id = db.Column(UUID(as_uuid=True))
     created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
@@ -25,6 +26,7 @@ class Liability(db.Model):
             'name': self.name,
             'liability_type': self.liability_type,
             'amount': float(self.amount) if self.amount else 0,
+            'remaining_balance': float(self.remaining_balance) if self.remaining_balance else 0,
             'interest_rate': float(self.interest_rate) if self.interest_rate else 0,
             'monthly_payment': float(self.monthly_payment) if self.monthly_payment else 0
         }

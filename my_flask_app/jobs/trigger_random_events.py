@@ -80,23 +80,21 @@ def trigger_random_events():
             events_triggered += 1
             logger.info(f"Triggered event '{selected_event.title}' for user {profile.username}")
 
-            # Queue notification (don't send yet)
-            if profile.push_token:
-                message_body = (
-                    selected_event.description[:100] + "..."
-                    if len(selected_event.description) > 100
-                    else selected_event.description
-                )
-                notifications_to_send.append({
-                    'user_id': str(user_id),
-                    'title': f"Life Update: {selected_event.title}",
-                    'body': message_body,
-                    'data': {
-                        'screen': f"/life-events/{selected_event.id}",
-                        'eventId': str(selected_event.id),
-                        'userEventId': str(new_user_event.id)
-                    }
-                })
+            message_body = (
+                selected_event.description[:100] + "..."
+                if len(selected_event.description) > 100
+                else selected_event.description
+            )
+            notifications_to_send.append({
+                'user_id': str(user_id),
+                'title': f"Life Update: {selected_event.title}",
+                'body': message_body,
+                'data': {
+                    'screen': f"/life-events/{selected_event.id}",
+                    'eventId': str(selected_event.id),
+                    'userEventId': str(new_user_event.id)
+                }
+            })
 
         except Exception as e:
             db.session.rollback()

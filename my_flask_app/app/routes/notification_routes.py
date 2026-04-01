@@ -42,7 +42,8 @@ def register_push_token(current_user_id: str):
         # Validate request
         data = RegisterTokenRequest(**request.json)
         
-        # Validate push token format
+        # Native Notify uses subID (user_id) directly — no token storage needed in DB.
+        # Validate format for client-side compatibility, then return success.
         if not ExpoPushService.validate_push_token(data.push_token):
             return jsonify({
                 'success': False,
@@ -50,22 +51,9 @@ def register_push_token(current_user_id: str):
                 'message': 'Invalid Expo push token format'
             }), 400
         
-        # Update user's push token in database
-        result = supabase.table('profiles').update({
-            'push_token': data.push_token,
-            'push_token_updated_at': datetime.utcnow().isoformat()
-        }).eq('user_id', current_user_id).execute()
-        
-        if not result.data:
-            return jsonify({
-                'success': False,
-                'error': 'USER_NOT_FOUND',
-                'message': 'User profile not found'
-            }), 404
-        
         return jsonify({
             'success': True,
-            'message': 'Push token registered successfully'
+            'message': 'Push token acknowledged (Native Notify uses user ID — no DB storage needed)'
         }), 200
         
     except ValidationError as e:
@@ -102,22 +90,10 @@ def unregister_push_token(current_user_id: str):
     where the user has logged out.
     """
     try:
-        # Clear push token from database
-        result = supabase.table('profiles').update({
-            'push_token': None,
-            'push_token_updated_at': datetime.utcnow().isoformat()
-        }).eq('user_id', current_user_id).execute()
-        
-        if not result.data:
-            return jsonify({
-                'success': False,
-                'error': 'USER_NOT_FOUND',
-                'message': 'User profile not found'
-            }), 404
-        
+        # Native Notify uses subID (user_id) — no token to clear in DB.
         return jsonify({
             'success': True,
-            'message': 'Push token unregistered successfully'
+            'message': 'Push token unregistered (Native Notify uses user ID — no DB storage needed)'
         }), 200
         
     except Exception as e:
