@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 void_bp = Blueprint('void', __name__)
 
-@void_bp.route('/scream', methods=['POST'])
+@void_bp.route('/scream/', methods=['POST'])
 @require_auth
 def scream(current_user_id: str):
     try:
@@ -34,7 +34,7 @@ def scream(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@void_bp.route('/feed', methods=['GET'])
+@void_bp.route('/feed/', methods=['GET'])
 @require_auth
 def feed(current_user_id: str):
     try:
@@ -42,91 +42,76 @@ def feed(current_user_id: str):
         cursor = request.args.get('cursor')  # ISO timestamp of last post seen
         limit = min(int(request.args.get('limit', 20)), 50)
 
-        query = supabase.table('void_posts').select('*').order('created_at', desc=True)
+        # 1. Fetch Posts with Author Profiles in ONE trip
+        query = supabase.table('void_posts')\
+            .select('*, author:profiles!user_id(username, profile_picture_url)')\
+            .order('created_at', desc=True)
+            
         if cursor:
             query = query.lt('created_at', cursor)
-        # Fetch one extra to determine has_more
+            
         posts_res = query.limit(limit + 1).execute()
-        raw_posts = posts_res.data
+        raw_posts = posts_res.data or []
 
         has_more = len(raw_posts) > limit
         posts = raw_posts[:limit]
+        post_ids = [p['id'] for p in posts]
 
         next_cursor = posts[-1]['created_at'] if posts else None
         
-        # Fetch user's reactions to these posts to show "active" state
-        post_ids = [p['id'] for p in posts]
-        my_reactions = []
-        if post_ids:
-            reactions_res = supabase.table('void_reactions')\
-                .select('post_id, reaction_type')\
-                .eq('user_id', current_user_id)\
-                .in_('post_id', post_ids)\
-                .execute()
-            my_reactions = reactions_res.data
-        
-        # Fetch reactor identities for all posts (latest 5 per post)
+        # 2. Fetch ALL Reactions for these posts (for preview & my_reaction) in ONE trip
+        # Join with profiles to get reactor info immediately
         all_reactions = []
         if post_ids:
             all_reactions_res = supabase.table('void_reactions')\
-                .select('post_id, user_id, reaction_type, created_at')\
+                .select('post_id, user_id, reaction_type, created_at, profiles(username, profile_picture_url)')\
                 .in_('post_id', post_ids)\
                 .order('created_at', desc=True)\
                 .execute()
-            all_reactions = all_reactions_res.data
+            all_reactions = all_reactions_res.data or []
         
-        # Fetch profile info for all unique reactor user_ids AND post authors
-        post_author_ids = [p['user_id'] for p in posts]
-        unique_user_ids = list(set(r['user_id'] for r in all_reactions) | set(post_author_ids))
-        
-        user_profiles = {}
-        if unique_user_ids:
-            profiles_res = supabase.table('profiles')\
-                .select('user_id, username, profile_picture_url')\
-                .in_('user_id', unique_user_ids)\
-                .execute()
-            user_profiles = {
-                p['user_id']: {
-                    'username': p['username'],
-                    'profile_picture_url': p.get('profile_picture_url')
-                }
-                for p in profiles_res.data
-            }
-        
-        # Group reactions by post_id (latest 5 per post)
+        # 3. Organize reactions by post
         reactions_by_post = {}
+        my_reactions = {} # post_id -> reaction_type
+
         for r in all_reactions:
             pid = r['post_id']
+            uid = r['user_id']
+            rtype = r['reaction_type']
+            
+            # Map my reaction
+            if uid == current_user_id:
+                my_reactions[pid] = rtype
+                
+            # Add to preview (latest 5)
             if pid not in reactions_by_post:
                 reactions_by_post[pid] = []
+            
             if len(reactions_by_post[pid]) < 5:
-                profile = user_profiles.get(r['user_id'], {})
+                profile = r.get('profiles', {})
                 reactions_by_post[pid].append({
                     'username': profile.get('username', 'Anonymous'),
                     'profile_picture_url': profile.get('profile_picture_url'),
-                    'reaction_type': r['reaction_type']
+                    'reaction_type': rtype
                 })
-            
-        # Map reactions to posts
-        reaction_map = {r['post_id']: r['reaction_type'] for r in my_reactions}
         
+        # 4. Map everything to feed data
         feed_data = []
         for p in posts:
-            author_profile = user_profiles.get(p['user_id'], {})
-            
+            author = p.get('author') or {}
             feed_data.append({
                 'id': p['id'],
                 'content': p['content'],
                 'oof_count': p['oof_count'],
                 'same_count': p['same_count'],
                 'created_at': p['created_at'],
-                'my_reaction': reaction_map.get(p['id'], None),
+                'my_reaction': my_reactions.get(p['id']),
                 'is_mine': p['user_id'] == current_user_id,
                 'reactors': reactions_by_post.get(p['id'], []),
                 'author': {
                     'user_id': p['user_id'],
-                    'username': author_profile.get('username', 'Anonymous'),
-                    'avatar_url': author_profile.get('profile_picture_url')
+                    'username': author.get('username', 'Anonymous'),
+                    'avatar_url': author.get('profile_picture_url')
                 }
             })
             
@@ -138,9 +123,42 @@ def feed(current_user_id: str):
         }), 200
         
     except Exception as e:
+        logger.error(f"Feed error: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@void_bp.route('/react', methods=['POST'])
+@void_bp.route('/overview/', methods=['GET'])
+@require_auth
+def void_overview(current_user_id: str):
+    """Consolidated endpoint for Void screen mount"""
+    try:
+        # 1. Fetch Profile info (small snippet)
+        profile_res = supabase.table('profiles')\
+            .select('username, profile_picture_url, sanity')\
+            .eq('user_id', current_user_id)\
+            .single().execute()
+        profile = profile_res.data
+        
+        # 2. Fetch first page of Feed (Reuse the optimized feed logic)
+        feed_response = feed(current_user_id)
+        
+        # Check if feed_response is a tuple (jsonify returns Response object, but I'll play it safe)
+        if hasattr(feed_response, 'get_json'):
+            feed_data = feed_response.get_json()
+        else:
+            # If it's a tuple (data, 200)
+            feed_data = feed_response[0].get_json() if hasattr(feed_response[0], 'get_json') else {}
+
+        return jsonify({
+            'success': True,
+            'profile': profile,
+            'feed': feed_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Overview error: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@void_bp.route('/react/', methods=['POST'])
 @require_auth
 def react(current_user_id: str):
     try:
@@ -248,9 +266,10 @@ def _send_consolation_notification(poster_id, reactor_id, post_id):
     """
     Send a "Consolation" push notification to the poster when someone reacts 'Same'.
     
+    Psychology:
     - The notification deliberately withholds WHO reacted.
     - The user must re-enter The Void to see the reactor's face.
-    - sells the FEELING ("You're not alone") not the feature.
+    - Copy sells the FEELING ("You're not alone") not the feature.
     """
     if poster_id == reactor_id:
         return  # No self-notifications
@@ -274,7 +293,7 @@ def _send_consolation_notification(poster_id, reactor_id, post_id):
         # Fail silently — never block the reaction flow
 
 
-@void_bp.route('/scream/<post_id>', methods=['DELETE', 'PUT'])
+@void_bp.route('/scream/<post_id>/', methods=['DELETE', 'PUT'])
 @require_auth
 def manage_scream(current_user_id: str, post_id: str):
     try:

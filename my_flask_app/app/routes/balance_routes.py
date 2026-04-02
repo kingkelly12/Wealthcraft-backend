@@ -18,7 +18,7 @@ def get_balance_root(current_user_id: str):
     return get_current_balance(current_user_id)
 
 
-@balance_bp.route('/history', methods=['GET'])
+@balance_bp.route('/history/', methods=['GET'])
 @require_auth
 def get_balance_history(current_user_id: str):
     """Get balance history (transactions)"""
@@ -34,7 +34,7 @@ def get_balance_history(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@balance_bp.route('/add', methods=['POST'])
+@balance_bp.route('/add/', methods=['POST'])
 @require_admin  # Only admins can add balance (prevents cheating)
 def add_balance(current_user_id: str):
     """
@@ -80,7 +80,7 @@ def add_balance(current_user_id: str):
         }), 500
 
 
-@balance_bp.route('/subtract', methods=['POST'])
+@balance_bp.route('/subtract/', methods=['POST'])
 @require_auth  # Any authenticated user (used internally by purchase endpoints)
 def subtract_balance(current_user_id: str):
     """
@@ -134,7 +134,7 @@ def subtract_balance(current_user_id: str):
         }), 500
 
 
-@balance_bp.route('/current', methods=['GET'])
+@balance_bp.route('/current/', methods=['GET'])
 @require_auth
 def get_current_balance(current_user_id: str):
     """

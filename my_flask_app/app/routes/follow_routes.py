@@ -13,6 +13,7 @@ from app.services.push_notification_service import ExpoPushService
 follow_bp = Blueprint('follow', __name__)
 
 
+@follow_bp.route('/follow/', methods=['POST'])
 @follow_bp.route('/follow', methods=['POST'])
 @require_auth
 def follow_user(current_user_id: str):
@@ -122,7 +123,7 @@ def follow_user(current_user_id: str):
         }), 500
 
 
-@follow_bp.route('/unfollow/<target_user_id>', methods=['POST'])
+@follow_bp.route('/unfollow/<target_user_id>/', methods=['POST'])
 @require_auth
 def unfollow_user(current_user_id: str, target_user_id: str):
     """
@@ -154,7 +155,7 @@ def unfollow_user(current_user_id: str, target_user_id: str):
         }), 500
 
 
-@follow_bp.route('/leaderboard', methods=['GET'])
+@follow_bp.route('/leaderboard/', methods=['GET'])
 @require_auth
 def get_leaderboard(current_user_id: str):
     """
@@ -208,7 +209,7 @@ def get_leaderboard(current_user_id: str):
         }), 500
 
 
-@follow_bp.route('/search', methods=['GET'])
+@follow_bp.route('/search/', methods=['GET'])
 
 def search_users():
     """Search for users"""
@@ -222,7 +223,7 @@ def search_users():
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-@follow_bp.route('/rank/<user_id>', methods=['GET'])
+@follow_bp.route('/rank/<user_id>/', methods=['GET'])
 def get_user_rank(user_id: str):
     """Get specific user's rank"""
     try:

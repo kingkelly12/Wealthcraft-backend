@@ -10,7 +10,56 @@ from app.services.push_notification_service import ExpoPushService
 mission_bp = Blueprint('mission', __name__)
 
 
-@mission_bp.route('/available', methods=['GET'])
+@mission_bp.route('/status/', methods=['GET'])
+@require_auth
+def get_mission_status(current_user_id: str):
+    """
+    Lightweight endpoint to check mission status without heavy joins.
+    """
+    try:
+        # 1. Check for active mission
+        active_response = supabase.table('player_mission_progress').select(
+            'id, mission_id, current_month, integrated_missions(name, duration_months)'
+        ).eq('player_id', current_user_id).eq('is_active', True).execute()
+        
+        has_active = bool(active_response.data)
+        active_summary = None
+        if has_active:
+            progress = active_response.data[0]
+            active_summary = {
+                'id': progress['id'],
+                'mission_id': progress['mission_id'],
+                'name': progress['integrated_missions']['name'],
+                'progress_text': f"Month {progress['current_month']}/{progress['integrated_missions']['duration_months']}"
+            }
+
+        # 2. Get counts for available and history
+        # (Available missions count - we need to know how many missions exist vs completed)
+        all_missions_count = supabase.table('integrated_missions').select('id', count='exact').execute().count or 0
+        completed_count = supabase.table('mission_completion_results').select('id', count='exact').eq('player_id', current_user_id).eq('completed', True).execute().count or 0
+        
+        # 3. Get recent history summary (minimal)
+        recent_history = supabase.table('mission_completion_results').select(
+            'id, completed_at, success_percentage, integrated_missions(name)'
+        ).eq('player_id', current_user_id).order('completed_at', desc=True).limit(2).execute().data or []
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'has_active': has_active,
+                'active_summary': active_summary,
+                'available_count': max(0, all_missions_count - completed_count) if not has_active else 0,
+                'history_summary': {
+                    'total_completed': completed_count,
+                    'recent': recent_history
+                }
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@mission_bp.route('/available/', methods=['GET'])
 @require_auth
 def get_available_missions(current_user_id: str):
     """
@@ -36,10 +85,19 @@ def get_available_missions(current_user_id: str):
         
         profile = profile_response.data
         
-        # Get all missions with their decision points and success criteria
-        missions_response = supabase.table('integrated_missions').select(
-            '*, mission_decision_points(*), mission_success_criteria(*)'
-        ).execute()
+        # Get missions - support compact mode to avoid heavy joins
+        compact = request.args.get('compact', 'false').lower() == 'true'
+        
+        if compact:
+            # Minimal fields for list view
+            missions_response = supabase.table('integrated_missions').select(
+                'id, name, description, short_description, icon, category, difficulty, duration_months'
+            ).execute()
+        else:
+            # Full data with joins
+            missions_response = supabase.table('integrated_missions').select(
+                '*, mission_decision_points(*), mission_success_criteria(*)'
+            ).execute()
         
         if not missions_response.data:
             print(f"[Missions] No missions found in integrated_missions table")
@@ -137,7 +195,7 @@ def get_available_missions(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/start', methods=['POST'])
+@mission_bp.route('/start/', methods=['POST'])
 @require_auth
 def start_mission(current_user_id: str):
     """
@@ -301,7 +359,7 @@ def start_mission(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/active', methods=['GET'])
+@mission_bp.route('/active/', methods=['GET'])
 @require_auth
 def get_active_mission(current_user_id: str):
     """
@@ -367,7 +425,7 @@ def get_active_mission(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/decision', methods=['POST'])
+@mission_bp.route('/decision/', methods=['POST'])
 @require_auth
 def make_decision(current_user_id: str):
     """
@@ -484,7 +542,7 @@ def make_decision(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/abandon', methods=['POST'])
+@mission_bp.route('/abandon/', methods=['POST'])
 @require_auth
 def abandon_mission(current_user_id: str):
     """
@@ -540,7 +598,7 @@ def abandon_mission(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/history', methods=['GET'])
+@mission_bp.route('/history/', methods=['GET'])
 @require_auth
 def get_mission_history(current_user_id: str):
     """
@@ -575,7 +633,7 @@ def get_mission_history(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/check-constraints', methods=['POST'])
+@mission_bp.route('/check-constraints/', methods=['POST'])
 @require_auth
 def check_constraints(current_user_id: str):
     """
@@ -674,7 +732,7 @@ def check_constraints(current_user_id: str):
 # STORY EVENT ENDPOINTS
 # ============================================
 
-@mission_bp.route('/<mission_id>/story-events', methods=['GET'])
+@mission_bp.route('/<mission_id>/story-events/', methods=['GET'])
 @require_auth
 def get_mission_story_events(current_user_id: str, mission_id: str):
     """
@@ -713,7 +771,7 @@ def get_mission_story_events(current_user_id: str, mission_id: str):
         }), 500
 
 
-@mission_bp.route('/active/pending-story-events', methods=['GET'])
+@mission_bp.route('/active/pending-story-events/', methods=['GET'])
 @require_auth
 def get_pending_story_events(current_user_id: str):
     """
@@ -809,13 +867,13 @@ def get_pending_story_events(current_user_id: str):
             'message': str(e)
         }), 500
 
-@mission_bp.route('/quit', methods=['POST'])
+@mission_bp.route('/quit/', methods=['POST'])
 @require_auth
 def quit_mission(current_user_id: str):
     """Alias for abandon mission"""
     return abandon_mission(current_user_id)
 
-@mission_bp.route('/story-events/<event_id>/acknowledge', methods=['POST'])
+@mission_bp.route('/story-events/<event_id>/acknowledge/', methods=['POST'])
 @require_auth
 def acknowledge_story_event_endpoint(current_user_id: str, event_id: str):
     """Acknowledge a story event (mark as viewed)"""
@@ -838,7 +896,7 @@ def acknowledge_story_event_endpoint(current_user_id: str, event_id: str):
         return jsonify({'success': True}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-@mission_bp.route('/story-events/<event_id>/acknowledge', methods=['POST'])
+@mission_bp.route('/story-events/<event_id>/acknowledge/', methods=['POST'])
 @require_auth
 def acknowledge_story_event(current_user_id: str, event_id: str):
     """

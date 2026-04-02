@@ -12,7 +12,7 @@ from app.services.push_notification_service import ExpoPushService
 life_event_bp = Blueprint('life_event', __name__)
 
 
-@life_event_bp.route('/make-choice', methods=['POST'])
+@life_event_bp.route('/make-choice/', methods=['POST'])
 @require_auth
 def make_life_event_choice(current_user_id: str):
     """
@@ -149,7 +149,7 @@ def make_life_event_choice(current_user_id: str):
         }), 500
 
 
-@life_event_bp.route('/<event_id>', methods=['GET'])
+@life_event_bp.route('/<event_id>/', methods=['GET'])
 @require_auth
 def get_life_event_details(current_user_id: str, event_id: str):
     """

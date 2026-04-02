@@ -41,7 +41,7 @@ def resolve_user_ids(user_id):
 job_bp = Blueprint('job', __name__)
 
 
-@job_bp.route('/available', methods=['GET'])
+@job_bp.route('/available/', methods=['GET'])
 def get_available_jobs():
     """Get available jobs from the market"""
     try:
@@ -50,18 +50,40 @@ def get_available_jobs():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@job_bp.route('/current', methods=['GET'])
+@job_bp.route('/current/', methods=['GET'])
 @require_auth
 def get_current_jobs(current_user_id: str):
     """Get user's current jobs"""
     try:
         user_ids = resolve_user_ids(current_user_id)
         response = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
-        return jsonify({'success': True, 'data': response.data}), 200
+        return jsonify({'success': True, 'data': response.data or []}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@job_bp.route('/user/<user_id>', methods=['GET'])
+@job_bp.route('/overview/', methods=['GET'])
+@require_auth
+def get_jobs_overview(current_user_id: str):
+    """Consolidated jobs market and current user jobs"""
+    try:
+        # 1. Available Market
+        market_res = supabase.table('job_market').select('*').execute()
+        
+        # 2. Current User Jobs
+        user_ids = resolve_user_ids(current_user_id)
+        current_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'market': market_res.data or [],
+                'current': current_res.data or []
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@job_bp.route('/user/<user_id>/', methods=['GET'])
 @require_auth
 def get_user_jobs(current_user_id: str, user_id: str):
     """Get specific user's current jobs"""
@@ -73,7 +95,7 @@ def get_user_jobs(current_user_id: str, user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@job_bp.route('/apply', methods=['POST'])
+@job_bp.route('/apply/', methods=['POST'])
 @require_auth
 def apply_for_job(current_user_id: str):
     """
@@ -193,7 +215,7 @@ def apply_for_job(current_user_id: str):
         }), 500
 
 
-@job_bp.route('/quit/<job_id>', methods=['POST'])
+@job_bp.route('/quit/<job_id>/', methods=['POST'])
 @require_auth
 def quit_job(current_user_id: str, job_id: str):
     """Quit a job"""

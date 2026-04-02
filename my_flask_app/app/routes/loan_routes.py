@@ -17,7 +17,7 @@ from app.services.push_notification_service import ExpoPushService
 loan_bp = Blueprint('loan', __name__)
 
 
-@loan_bp.route('/available', methods=['GET'])
+@loan_bp.route('/available/', methods=['GET'])
 def get_available_loans():
     """
     Get available bank loan products
@@ -39,7 +39,7 @@ def get_available_loans():
 
 
 
-@loan_bp.route('/apply', methods=['POST'])
+@loan_bp.route('/apply/', methods=['POST'])
 @require_auth
 def apply_for_loan(current_user_id: str):
     """
@@ -174,7 +174,7 @@ def apply_for_loan(current_user_id: str):
             'message': str(e)
         }), 500
 
-@loan_bp.route('/active', methods=['GET'])
+@loan_bp.route('/active/', methods=['GET'])
 @require_auth
 def get_active_loans(current_user_id: str):
     """
@@ -195,8 +195,8 @@ def get_active_loans(current_user_id: str):
         }), 500
 
 
-@loan_bp.route('/repay', methods=['POST'])
-@loan_bp.route('/repay/<liability_id>', methods=['POST'])
+@loan_bp.route('/repay/', methods=['POST'])
+@loan_bp.route('/repay/<liability_id>/', methods=['POST'])
 @require_auth
 def repay_loan(current_user_id: str, liability_id: str = None):
     """
@@ -356,7 +356,7 @@ def repay_loan(current_user_id: str, liability_id: str = None):
         }), 500
 
 
-@loan_bp.route('/p2p/available', methods=['GET'])
+@loan_bp.route('/p2p/available/', methods=['GET'])
 @require_auth
 def get_available_p2p_loans(current_user_id: str):
     """
@@ -377,7 +377,7 @@ def get_available_p2p_loans(current_user_id: str):
             'message': str(e)
         }), 500
 
-@loan_bp.route('/p2p/offer', methods=['POST'])
+@loan_bp.route('/p2p/offer/', methods=['POST'])
 @require_auth
 def post_p2p_offer(current_user_id: str):
     """
@@ -435,7 +435,7 @@ def post_p2p_offer(current_user_id: str):
             'message': str(e)
         }), 500
 
-@loan_bp.route('/p2p/accept', methods=['POST'])
+@loan_bp.route('/p2p/accept/', methods=['POST'])
 @require_auth
 def accept_p2p_loan(current_user_id: str):
     """

@@ -25,7 +25,7 @@ class TestPushRequest(BaseModel):
     body: Optional[str] = "This is a test push notification from Adulting!"
 
 
-@notification_bp.route('/register-token', methods=['POST'])
+@notification_bp.route('/register-token/', methods=['POST'])
 @require_auth
 def register_push_token(current_user_id: str):
     """
@@ -71,7 +71,7 @@ def register_push_token(current_user_id: str):
         }), 500
 
 
-@notification_bp.route('/update-token', methods=['PUT'])
+@notification_bp.route('/update-token/', methods=['PUT'])
 @require_auth
 def update_push_token(current_user_id: str):
     """
@@ -80,7 +80,7 @@ def update_push_token(current_user_id: str):
     return register_push_token(current_user_id)
 
 
-@notification_bp.route('/unregister-token', methods=['DELETE'])
+@notification_bp.route('/unregister-token/', methods=['DELETE'])
 @require_auth
 def unregister_push_token(current_user_id: str):
     """
@@ -104,7 +104,7 @@ def unregister_push_token(current_user_id: str):
         }), 500
 
 
-@notification_bp.route('/test-push', methods=['POST'])
+@notification_bp.route('/test-push/', methods=['POST'])
 @require_auth
 def test_push_notification(current_user_id: str):
     """
@@ -154,7 +154,7 @@ def test_push_notification(current_user_id: str):
         }), 500
 
 
-@notification_bp.route('/mark-read/<notification_id>', methods=['PUT'])
+@notification_bp.route('/mark-read/<notification_id>/', methods=['PUT'])
 @require_auth
 def mark_notification_read(current_user_id: str, notification_id: str):
     """
@@ -201,7 +201,7 @@ def get_all_notifications(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@notification_bp.route('/unread', methods=['GET'])
+@notification_bp.route('/unread/', methods=['GET'])
 @require_auth
 def get_unread_count(current_user_id: str):
     """Get count of unread notifications"""
@@ -212,7 +212,7 @@ def get_unread_count(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@notification_bp.route('/read-all', methods=['PUT'])
+@notification_bp.route('/read-all/', methods=['PUT'])
 @require_auth
 def mark_all_read(current_user_id: str):
     """Mark all notifications as read"""

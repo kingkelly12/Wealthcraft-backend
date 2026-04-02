@@ -107,7 +107,7 @@ def _notify_mentors_of_move(user_id, move_type, asset_name, amount, profit=None)
         logger.error(f"Failed to notify mentors of move: {str(e)}")
 
 
-@asset_bp.route('/purchase', methods=['POST'])
+@asset_bp.route('/purchase/', methods=['POST'])
 @require_auth
 def purchase_asset(current_user_id: str):
     """
@@ -302,7 +302,7 @@ def purchase_asset(current_user_id: str):
         }), 500
 
 
-@asset_bp.route('/marketplace', methods=['GET'])
+@asset_bp.route('/marketplace/', methods=['GET'])
 def get_marketplace_assets():
     """Get all marketplace assets (public endpoint)"""
     try:
@@ -313,9 +313,42 @@ def get_marketplace_assets():
             query = query.eq('category', category)
         
         response = query.execute()
-        return jsonify({'success': True, 'data': response.data}), 200
+        return jsonify({'success': True, 'data': response.data or []}), 200
     
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@asset_bp.route('/overview/', methods=['GET'])
+@require_auth
+def get_assets_overview(current_user_id: str):
+    """Consolidated marketplace and user portfolio status"""
+    try:
+        # 1. Available Market
+        category = request.args.get('category')
+        query = supabase.table('assets').select('*')
+        if category:
+            query = query.eq('category', category)
+        market_res = query.execute()
+        
+        # 2. User Portfolio
+        portfolio = get_user_assets_internal(current_user_id)
+        
+        # 3. Profile Snippet (Balance/Sanity)
+        profile_res = supabase.table('profiles')\
+            .select('user_id, username, profile_picture_url, sanity, net_worth')\
+            .eq('user_id', current_user_id)\
+            .single().execute()
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'market': market_res.data or [],
+                'portfolio': portfolio or [],
+                'profile': profile_res.data
+            }
+        }), 200
+    except Exception as e:
+        logger.error(f"Overview error: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -329,7 +362,7 @@ def get_user_assets_internal(user_id):
         logger.error(f"Error fetching assets for user {user_id}: {str(e)}")
         raise e
 
-@asset_bp.route('/user', methods=['GET'])
+@asset_bp.route('/user/', methods=['GET'])
 @require_auth
 def get_user_assets(current_user_id: str):
     """Get all assets owned by the authenticated user"""
@@ -345,7 +378,7 @@ def get_all_assets():
     """Get all available assets (public)"""
     return get_marketplace_assets()
 
-@asset_bp.route('/portfolio', methods=['GET'])
+@asset_bp.route('/portfolio/', methods=['GET'])
 @require_auth
 def get_portfolio(current_user_id: str):
     """Get authenticated user's portfolio (alias for /user)"""
@@ -355,7 +388,7 @@ def get_portfolio(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@asset_bp.route('/portfolio/<user_id>', methods=['GET'])
+@asset_bp.route('/portfolio/<user_id>/', methods=['GET'])
 @require_auth
 def get_user_portfolio(current_user_id: str, user_id: str):
     """Get specific user's portfolio"""
@@ -365,7 +398,7 @@ def get_user_portfolio(current_user_id: str, user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@asset_bp.route('/sell/<asset_id>', methods=['POST'])
+@asset_bp.route('/sell/<asset_id>/', methods=['POST'])
 @require_auth
 def sell_asset(current_user_id: str, asset_id: str):
     """

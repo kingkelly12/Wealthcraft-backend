@@ -15,7 +15,7 @@ RECOVERY_ACTIONS = {
     'vacation': {'cost': 1000, 'sanity': 50, 'message': 'You went to Bali. You forgot your password. Bliss.'}
 }
 
-@sanity_bp.route('/recover', methods=['POST'])
+@sanity_bp.route('/recover/', methods=['POST'])
 @require_auth
 def recover_sanity(current_user_id: str):
     try:

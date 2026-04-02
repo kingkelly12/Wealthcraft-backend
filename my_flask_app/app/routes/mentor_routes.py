@@ -16,7 +16,7 @@ import uuid
 mentor_bp = Blueprint('mentor', __name__)
 
 
-@mentor_bp.route('/api/social/mentors', methods=['GET'])
+@mentor_bp.route('/api/social/mentors/', methods=['GET'])
 def get_all_mentors():
     """
     Get all available mentor NPCs
@@ -53,7 +53,7 @@ def get_all_mentors():
         }), 500
 
 
-@mentor_bp.route('/api/social/interactions', methods=['GET'])
+@mentor_bp.route('/api/social/interactions/', methods=['GET'])
 @require_auth
 def get_player_interactions(current_user_id: str):
     """
@@ -119,7 +119,7 @@ def get_player_interactions(current_user_id: str):
         }), 500
 
 
-@mentor_bp.route('/api/social/interactions/<interaction_id>/read', methods=['PUT'])
+@mentor_bp.route('/api/social/interactions/<interaction_id>/read/', methods=['PUT'])
 @require_auth
 def mark_interaction_read(current_user_id: str, interaction_id: str):
     """
@@ -182,7 +182,7 @@ def mark_interaction_read(current_user_id: str, interaction_id: str):
         }), 500
 
 
-@mentor_bp.route('/api/social/interactions/<interaction_id>/action', methods=['POST'])
+@mentor_bp.route('/api/social/interactions/<interaction_id>/action/', methods=['POST'])
 @require_auth
 def mark_advice_followed(current_user_id: str, interaction_id: str):
     """
@@ -290,7 +290,7 @@ def mark_advice_followed(current_user_id: str, interaction_id: str):
         }), 500
 
 
-@mentor_bp.route('/api/mentors/<mentor_id>/interactions', methods=['GET'])
+@mentor_bp.route('/api/mentors/<mentor_id>/interactions/', methods=['GET'])
 @require_auth
 def get_mentor_specific_interactions(current_user_id: str, mentor_id: str):
     """
@@ -374,7 +374,7 @@ def get_mentor_specific_interactions(current_user_id: str, mentor_id: str):
         }), 500
 
 
-@mentor_bp.route('/api/mentors/stats', methods=['GET'])
+@mentor_bp.route('/api/mentors/stats/', methods=['GET'])
 @require_auth
 def get_mentor_stats(current_user_id: str):
     """

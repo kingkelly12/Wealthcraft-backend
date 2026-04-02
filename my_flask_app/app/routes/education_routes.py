@@ -19,7 +19,40 @@ from app import supabase
 education_bp = Blueprint('education', __name__)
 
 
-@education_bp.route('/courses', methods=['GET'])
+@education_bp.route('/overview/', methods=['GET'])
+@require_auth
+def get_education_overview(current_user_id: str):
+    """
+    Consolidated endpoint for Virtual Academy screen.
+    Returns both available courses and user's current progress.
+    """
+    try:
+        # 1. Fetch all available courses
+        courses_res = supabase.table('courses').select('*').order('cost').execute()
+        available_courses = courses_res.data or []
+        
+        # 2. Fetch enrolled courses
+        enrolled_res = supabase.table('user_courses').select('*, courses!inner(*)').eq('user_id', current_user_id).execute()
+        enrolled_courses = enrolled_res.data or []
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'available': available_courses,
+                'enrolled': enrolled_courses
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"[Education Overview] Error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'FETCH_FAILED',
+            'message': str(e)
+        }), 500
+
+
+@education_bp.route('/courses/', methods=['GET'])
 def get_courses():
     """Get available courses"""
     try:
@@ -28,17 +61,18 @@ def get_courses():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@education_bp.route('/enrolled', methods=['GET'])
+@education_bp.route('/enrolled/', methods=['GET'])
 @require_auth
 def get_enrolled_courses(current_user_id: str):
     """Get courses the user is enrolled in"""
     try:
-        response = supabase.table('user_courses').select('*, courses(*)').eq('user_id', current_user_id).execute()
-        return jsonify({'success': True, 'data': response.data}), 200
+        # Fixed join syntax - using courses!inner(*) to fix 400 Bad Request
+        response = supabase.table('user_courses').select('*, courses!inner(*)').eq('user_id', current_user_id).execute()
+        return jsonify({'success': True, 'data': response.data or []}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@education_bp.route('/enroll', methods=['POST'])
+@education_bp.route('/enroll/', methods=['POST'])
 @require_auth
 def enroll_in_course(current_user_id: str):
     """
@@ -138,7 +172,7 @@ def enroll_in_course(current_user_id: str):
         }), 500
 
 
-@education_bp.route('/complete', methods=['POST'])
+@education_bp.route('/complete/', methods=['POST'])
 @require_auth
 def complete_course(current_user_id: str):
     """
@@ -218,7 +252,9 @@ def complete_course(current_user_id: str):
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
-    
+        
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
+        # Check for mentor congratulations on course completion
         try:
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,

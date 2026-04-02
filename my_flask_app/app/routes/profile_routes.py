@@ -8,13 +8,13 @@ profile_bp = Blueprint('profile', __name__)
 
 from app.utils.jwt_helper import require_auth
 
-@profile_bp.route('/me', methods=['GET'])
+@profile_bp.route('/me/', methods=['GET'])
 @require_auth
 def get_current_user_profile(current_user_id: str):
     """Get authenticated user's profile"""
     return get_profile(current_user_id)
 
-@profile_bp.route('/dashboard', methods=['GET'])
+@profile_bp.route('/dashboard/', methods=['GET'])
 @require_auth
 def get_dashboard_data(current_user_id: str):
     """Get dashboard data (profile, balance, etc.)"""
@@ -39,7 +39,86 @@ def get_dashboard_data(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@profile_bp.route('/income', methods=['GET'])
+@profile_bp.route('/overview/', methods=['GET'])
+@require_auth
+def get_comprehensive_dashboard(current_user_id: str):
+    """
+    ULTIMATE CONSOLIDATION: Returns everything for the home/profile screen.
+    Reduces up to 8 separate calls to 1.
+    """
+    try:
+        from app.services.balance_service import BalanceService
+        from app.routes.asset_routes import get_user_assets_internal
+        from app.routes.rental_routes import get_active_rental_internal
+        
+        # Check if we're looking at another user's profile
+        target_user_id = request.args.get('user_id', current_user_id)
+        is_own_profile = (target_user_id == current_user_id)
+        
+        # 1. Profile
+        profile = ProfileService.get_profile_by_user_id(uuid.UUID(target_user_id))
+        if not profile:
+             return jsonify({'success': False, 'error': 'Profile not found'}), 404
+             
+        # 2. Balance (Only shared if public or own)
+        balance = BalanceService.get_current_balance(target_user_id)
+        
+        # 3. Assets
+        assets = get_user_assets_internal(target_user_id)
+        
+        # 4. Liabilities
+        liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').eq('player_id', target_user_id).eq('is_active', True).execute()
+        liabilities = liabilities_res.data or []
+        
+        # 5. Jobs
+        jobs_res = supabase.table('jobs').select('*').eq('user_id', target_user_id).eq('is_active', True).execute()
+        jobs = jobs_res.data or []
+        
+        # 6. Rental
+        rental = get_active_rental_internal(target_user_id)
+
+        # 7. Social Stats (Followers/Following)
+        followers_res = supabase.table('user_follows').select('id', count='exact').eq('following_id', target_user_id).execute()
+        following_res = supabase.table('user_follows').select('id', count='exact').eq('follower_id', target_user_id).execute()
+        
+        # 8. Rank
+        net_worth = profile.net_worth or 0
+        rank_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()
+        rank = (rank_res.count or 0) + 1
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'profile': profile.to_dict() if profile else None,
+                'balance': float(balance),
+                'assets': assets,
+                'liabilities': liabilities,
+                'jobs': jobs,
+                'rental': rental,
+                'stats': {
+                    'followers': followers_res.count or 0,
+                    'following': following_res.count or 0,
+                    'rank': rank
+                }
+            }
+        }), 200
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'profile': profile.to_dict() if profile else None,
+                'balance': float(balance),
+                'assets': assets,
+                'liabilities': liabilities,
+                'jobs': jobs,
+                'rental': rental
+            }
+        }), 200
+    except Exception as e:
+        print(f"[Dashboard Overview] Error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@profile_bp.route('/income/', methods=['GET'])
 @require_auth
 def get_income(current_user_id: str):
     """Get user's monthly income"""
@@ -52,7 +131,7 @@ def get_income(current_user_id: str):
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-@profile_bp.route('/net-worth', methods=['GET'])
+@profile_bp.route('/net-worth/', methods=['GET'])
 @require_auth
 def get_net_worth(current_user_id: str):
     """Get user's net worth"""
@@ -65,7 +144,7 @@ def get_net_worth(current_user_id: str):
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-@profile_bp.route('/ping', methods=['PUT'])
+@profile_bp.route('/ping/', methods=['PUT'])
 @require_auth
 def ping_activity(current_user_id: str):
     """Lightweight endpoint specifically to update last_active_at"""
@@ -88,7 +167,7 @@ def ping_activity(current_user_id: str):
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@profile_bp.route('/<user_id>', methods=['GET'])
+@profile_bp.route('/<user_id>/', methods=['GET'])
 def get_profile(user_id: str):
     """Get user profile by user ID"""
     try:
@@ -137,7 +216,7 @@ def create_profile():
     except Exception as e:
         return jsonify({'error': 'Internal Server Error'}), 500
 
-@profile_bp.route('/<user_id>', methods=['PUT'])
+@profile_bp.route('/<user_id>/', methods=['PUT'])
 def update_profile(user_id: str):
     """Update user profile"""
     try:

@@ -7,7 +7,7 @@ from app.schemas.user_schema import UserCreate, UserResponse
 auth_bp = Blueprint('auth', __name__)
 
 
-@auth_bp.route('/login', methods=['POST'])
+@auth_bp.route('/login/', methods=['POST'])
 def login():
     try:
         data = request.get_json()
@@ -42,7 +42,7 @@ def login():
         print(f"LOGIN ERROR: {e}")
         return jsonify({'error': 'Internal Server Error'}), 500
 
-@auth_bp.route('/logout', methods=['POST'])
+@auth_bp.route('/logout/', methods=['POST'])
 def logout():
     """
     Log out the user.
@@ -53,7 +53,7 @@ def logout():
         'message': 'Logged out successfully'
     }), 200
 
-@auth_bp.route('/register', methods=['POST'])
+@auth_bp.route('/register/', methods=['POST'])
 def register():
     try:
         # Validate input using Pydantic
@@ -93,7 +93,7 @@ def register():
         # Check if it is a requests connection error (Supabase unreachable)
         return jsonify({'error': 'Internal Server Error'}), 500
 
-@auth_bp.route('/google-signin', methods=['POST'])
+@auth_bp.route('/google-signin/', methods=['POST'])
 def google_signin():
     """
     Handle Google OAuth sign-in from mobile app.

@@ -97,6 +97,27 @@ def get_current_rental(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@rental_bp.route('/overview/', methods=['GET'])
+@require_auth
+def get_rentals_overview(current_user_id: str):
+    """Consolidated rental market and user status"""
+    try:
+        # 1. Available Properties
+        market_res = supabase.table('rental_properties').select('*').execute()
+        
+        # 2. Current User Rental
+        current = get_current_rental_internal(current_user_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'market': market_res.data or [],
+                'current': current
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @rental_bp.route('/rent', methods=['POST'])
 @require_auth

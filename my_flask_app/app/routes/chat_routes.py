@@ -16,7 +16,7 @@ from app.services.push_notification_service import ExpoPushService
 chat_bp = Blueprint('chat', __name__)
 
 
-@chat_bp.route('/send', methods=['POST'])
+@chat_bp.route('/send/', methods=['POST'])
 @require_auth
 def send_message(current_user_id: str):
     """

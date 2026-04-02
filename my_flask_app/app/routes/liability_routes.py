@@ -95,7 +95,7 @@ def get_active_liabilities_internal(user_id):
         raise e
 
 
-@liability_bp.route('/purchase', methods=['POST'])
+@liability_bp.route('/purchase/', methods=['POST'])
 @require_auth
 def purchase_liability(current_user_id: str):
     """
@@ -246,7 +246,7 @@ def purchase_liability(current_user_id: str):
         }), 500
 
 
-@liability_bp.route('/active', methods=['GET'])
+@liability_bp.route('/active/', methods=['GET'])
 @require_auth
 def get_all_active_liabilities(current_user_id: str):
     """Get all active liabilities (alias for luxury/active)"""
@@ -256,7 +256,7 @@ def get_all_active_liabilities(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@liability_bp.route('/user/<user_id>', methods=['GET'])
+@liability_bp.route('/user/<user_id>/', methods=['GET'])
 @require_auth
 def get_user_liabilities(current_user_id: str, user_id: str):
     """Get specific user's active liabilities"""
@@ -277,7 +277,48 @@ def get_all_liabilities(current_user_id: str):
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-@liability_bp.route('/luxury', methods=['GET'])
+@liability_bp.route('/luxury/overview/', methods=['GET'])
+@require_auth
+def get_luxury_overview(current_user_id: str):
+    """
+    Consolidated endpoint for Upgrade Lifestyle screen.
+    Returns both available luxury items and user's current luxury assets.
+    """
+    try:
+        from app.services.balance_service import BalanceService
+        
+        # 1. Fetch available items
+        available_res = supabase.table('liability_items').select('*').execute()
+        available_items = available_res.data or []
+        
+        # 2. Fetch active items (using internal helper)
+        # Note: get_active_liabilities_internal includes both luxury and loans. 
+        # For the lifestyle screen, we might only want the 'luxury' category.
+        all_active = get_active_liabilities_internal(current_user_id)
+        active_luxury = [li for li in all_active if li.get('category') == 'luxury']
+        
+        # 3. Get balance
+        balance = BalanceService.get_current_balance(current_user_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'available': available_items,
+                'active': active_luxury,
+                'balance': float(balance)
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"[Luxury Overview] Error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'FETCH_FAILED',
+            'message': str(e)
+        }), 500
+
+
+@liability_bp.route('/luxury/', methods=['GET'])
 def get_luxury_items():
     """Get available luxury items"""
     try:
@@ -287,7 +328,7 @@ def get_luxury_items():
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-@liability_bp.route('/luxury/purchase', methods=['POST'])
+@liability_bp.route('/luxury/purchase/', methods=['POST'])
 @require_auth
 def purchase_luxury_item(current_user_id: str):
     """Purchase a luxury item (alias or implementation)"""
@@ -328,7 +369,7 @@ def _purchase_luxury_logic(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@liability_bp.route('/loan', methods=['POST'])
+@liability_bp.route('/loan/', methods=['POST'])
 @require_auth
 def take_liability_loan(current_user_id: str):
     """Take a loan via liability service (Bank Loan Alias)"""
@@ -339,7 +380,7 @@ def take_liability_loan(current_user_id: str):
     from app.routes.loan_routes import apply_for_loan
     return apply_for_loan(current_user_id)
 
-@liability_bp.route('/pay', methods=['POST'])
+@liability_bp.route('/pay/', methods=['POST'])
 @require_auth
 def pay_liability_loan(current_user_id: str):
     """Pay a loan via liability service"""
@@ -348,7 +389,7 @@ def pay_liability_loan(current_user_id: str):
     from app.routes.loan_routes import repay_loan
     return repay_loan(current_user_id, liability_id)
 
-@liability_bp.route('/luxury/active', methods=['GET'])
+@liability_bp.route('/luxury/active/', methods=['GET'])
 @require_auth
 def get_active_liabilities(current_user_id: str):
     """Get active luxury liabilities"""
@@ -359,7 +400,7 @@ def get_active_liabilities(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@liability_bp.route('/sell/<liability_id>', methods=['POST'])
+@liability_bp.route('/sell/<liability_id>/', methods=['POST'])
 @require_auth
 def sell_liability(current_user_id: str, liability_id: str):
     """Sell a player's liability"""
