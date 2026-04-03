@@ -19,7 +19,7 @@ def get_mission_status(current_user_id: str):
     try:
         # 1. Check for active mission
         active_response = supabase.table('player_mission_progress').select(
-            'id, mission_id, current_month, integrated_missions(name, duration_months)'
+            'id, mission_id, current_month, integrated_missions!mission_id(name, duration_months)'
         ).eq('player_id', current_user_id).eq('is_active', True).execute()
         
         has_active = bool(active_response.data)
@@ -40,7 +40,7 @@ def get_mission_status(current_user_id: str):
         
         # 3. Get recent history summary (minimal)
         recent_history = supabase.table('mission_completion_results').select(
-            'id, completed_at, success_percentage, integrated_missions(name)'
+            'id, completed_at, success_percentage, integrated_missions!mission_id(name)'
         ).eq('player_id', current_user_id).order('completed_at', desc=True).limit(2).execute().data or []
 
         return jsonify({
@@ -96,7 +96,7 @@ def get_available_missions(current_user_id: str):
         else:
             # Full data with joins
             missions_response = supabase.table('integrated_missions').select(
-                '*, mission_decision_points(*), mission_success_criteria(*)'
+                '*, mission_decision_points!mission_id(*), mission_success_criteria!mission_id(*)'
             ).execute()
         
         if not missions_response.data:
@@ -317,7 +317,7 @@ def start_mission(current_user_id: str):
         
         # Get the created progress
         progress_response = supabase.table('player_mission_progress').select(
-            '*, integrated_missions(*)'
+            '*, integrated_missions!mission_id(*)'
         ).eq('id', player_mission_id).single().execute()
         
         # Create notification
@@ -371,7 +371,7 @@ def get_active_mission(current_user_id: str):
         # Get active mission with full details
         # Robust join syntax and execute request
         progress_response = supabase.table('player_mission_progress')\
-            .select('*, integrated_missions(*)')\
+            .select('*, integrated_missions!mission_id(*)')\
             .eq('player_id', current_user_id)\
             .eq('is_active', True)\
             .execute()
@@ -388,12 +388,12 @@ def get_active_mission(current_user_id: str):
         
         # Get success criteria tracking
         tracking_response = supabase.table('player_mission_success_tracking').select(
-            '*, mission_success_criteria(*)'
+            '*, mission_success_criteria!criteria_id(*)'
         ).eq('player_mission_id', progress['id']).execute()
         
         # Get decision points for this mission
         decisions_response = supabase.table('mission_decision_points').select(
-            '*, mission_decision_options(*)'
+            '*, mission_decision_options!decision_point_id(*)'
         ).eq('mission_id', mission_id).execute()
         
         # Get player's decisions
@@ -559,7 +559,7 @@ def abandon_mission(current_user_id: str):
     try:
         # Get active mission
         progress_response = supabase.table('player_mission_progress').select(
-            '*, integrated_missions(*)'
+            '*, integrated_missions!mission_id(*)'
         ).eq('player_id', current_user_id).eq('is_active', True).single().execute()
         
         if not progress_response.data:
@@ -612,12 +612,12 @@ def get_mission_history(current_user_id: str):
     try:
         # Get completion results
         results_response = supabase.table('mission_completion_results').select(
-            '*, integrated_missions(*)'
+            '*, integrated_missions!mission_id(*)'
         ).eq('player_id', current_user_id).order('completed_at', desc=True).execute()
         
         # Also get abandoned missions
         abandoned_response = supabase.table('player_mission_progress').select(
-            '*, integrated_missions(*)'
+            '*, integrated_missions!mission_id(*)'
         ).eq('player_id', current_user_id).not_.is_('abandoned_at', 'null').execute()
         
         return jsonify({
@@ -788,7 +788,7 @@ def get_pending_story_events(current_user_id: str):
     try:
         # Get active mission
         progress_response = supabase.table('player_mission_progress').select(
-            'id, mission_id, current_month, integrated_missions(name, duration_months)'
+            'id, mission_id, current_month, integrated_missions!mission_id(name, duration_months)'
         ).eq('player_id', current_user_id).eq('is_active', True).single().execute()
         
         if not progress_response.data:

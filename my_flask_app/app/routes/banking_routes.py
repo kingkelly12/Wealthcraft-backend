@@ -56,8 +56,8 @@ def get_banking_overview(current_user_id: str):
         liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
         liabilities = liabilities_res.data or []
         
-        # 4. Current Jobs
-        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_active', True).execute()
+        # 2. Active Job
+        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         jobs = jobs_res.data or []
         
         # 5. Recent Transactions
@@ -68,6 +68,18 @@ def get_banking_overview(current_user_id: str):
         bank_loans_res = supabase.table('bank_loans').select('*').is_('borrower_id', 'null').execute()
         bank_loans = bank_loans_res.data or []
         
+        # 1. Profile with balance
+        profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('user_id', user_ids).execute()
+        if not profile_res or not profile_res.data:
+            # Fallback: check by 'id' if 'user_id' check returned nothing
+            profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('id', user_ids).execute()
+            
+        if not profile_res or not profile_res.data:
+            logger.error(f"Banking Overview: Profile not found for user_ids {user_ids}")
+            return jsonify({'success': False, 'error': 'USER_NOT_FOUND', 'message': f'Profile not found for {current_user_id}'}), 404
+        
+        profile = profile_res.data[0]
+        
         # 7. Available P2P Loans
         p2p_loans_res = supabase.table('p2p_loans').select('*').eq('status', 'pending').neq('lender_id', current_user_id).execute()
         p2p_loans = p2p_loans_res.data or []
@@ -75,8 +87,8 @@ def get_banking_overview(current_user_id: str):
         return jsonify({
             'success': True,
             'data': {
-                'profile': profile.to_dict() if profile else None,
-                'account_balance': float(balance),
+                'profile': profile,
+                'account_balance': profile.get('user_balances', [{}])[0].get('current_balance', 0) if profile.get('user_balances') else 0,
                 'portfolio': assets,
                 'liabilities': liabilities,
                 'jobs': jobs,

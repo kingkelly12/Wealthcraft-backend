@@ -61,9 +61,9 @@ def get_education_overview(current_user_id: str):
         available_courses = courses_res.data or []
         
         # 2. Fetch enrolled courses
-        # Explicitly joining courses using robust join syntax
+        # Use explicit join syntax to resolve relationship ambiguity
         enrolled_res = supabase.table('user_courses')\
-            .select('*, courses(*)')\
+            .select('*, courses!course_id(*)')\
             .in_('user_id', user_ids)\
             .execute()
         enrolled_courses = enrolled_res.data or []
@@ -99,9 +99,9 @@ def get_courses():
 def get_enrolled_courses(current_user_id: str):
     """Get courses the user is enrolled in"""
     try:
-        # Robust join syntax
+        # Use explicit join syntax
         response = supabase.table('user_courses')\
-            .select('*, courses(*)')\
+            .select('*, courses!course_id(*)')\
             .eq('user_id', current_user_id)\
             .execute()
         return jsonify({'success': True, 'data': response.data or []}), 200
@@ -225,7 +225,7 @@ def complete_course(current_user_id: str):
         data = CourseCompletionRequest(**request.json)
         
         # 1. Get user course details
-        user_course_response = supabase.table('user_courses').select('*, courses(*)').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
+        user_course_response = supabase.table('user_courses').select('*, courses!course_id(*)').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
         
         if not user_course_response.data:
             return jsonify({
