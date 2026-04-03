@@ -369,9 +369,12 @@ def get_active_mission(current_user_id: str):
     """
     try:
         # Get active mission with full details
-        progress_response = supabase.table('player_mission_progress').select(
-            '*, integrated_missions(*)'
-        ).eq('player_id', current_user_id).eq('is_active', True).execute()
+        # Robust join syntax and execute request
+        progress_response = supabase.table('player_mission_progress')\
+            .select('*, integrated_missions(*)')\
+            .eq('player_id', current_user_id)\
+            .eq('is_active', True)\
+            .execute()
         
         if not progress_response.data:
             return jsonify({

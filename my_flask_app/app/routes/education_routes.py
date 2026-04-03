@@ -32,7 +32,11 @@ def get_education_overview(current_user_id: str):
         available_courses = courses_res.data or []
         
         # 2. Fetch enrolled courses
-        enrolled_res = supabase.table('user_courses').select('*, courses!inner(*)').eq('user_id', current_user_id).execute()
+        # Explicitly joining courses using robust join syntax
+        enrolled_res = supabase.table('user_courses')\
+            .select('*, courses(*)')\
+            .eq('user_id', current_user_id)\
+            .execute()
         enrolled_courses = enrolled_res.data or []
         
         return jsonify({
@@ -66,8 +70,11 @@ def get_courses():
 def get_enrolled_courses(current_user_id: str):
     """Get courses the user is enrolled in"""
     try:
-        # Fixed join syntax - using courses!inner(*) to fix 400 Bad Request
-        response = supabase.table('user_courses').select('*, courses!inner(*)').eq('user_id', current_user_id).execute()
+        # Robust join syntax
+        response = supabase.table('user_courses')\
+            .select('*, courses(*)')\
+            .eq('user_id', current_user_id)\
+            .execute()
         return jsonify({'success': True, 'data': response.data or []}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

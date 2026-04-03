@@ -11,6 +11,7 @@ banking_bp = Blueprint('banking', __name__)
 @banking_bp.route('/overview/', methods=['GET'])
 @require_auth
 def get_banking_overview(current_user_id: str):
+    print(f"[DEBUG] Banking Overview hit for user: {current_user_id}")
     """
     Consolidated endpoint for banking screen initial data.
     Provides profile, assets, liabilities, jobs, transactions, and available loans.

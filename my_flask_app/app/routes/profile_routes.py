@@ -49,7 +49,7 @@ def get_comprehensive_dashboard(current_user_id: str):
     try:
         from app.services.balance_service import BalanceService
         from app.routes.asset_routes import get_user_assets_internal
-        from app.routes.rental_routes import get_active_rental_internal
+        from app.routes.rental_routes import get_current_rental_internal
         
         # Check if we're looking at another user's profile
         target_user_id = request.args.get('user_id', current_user_id)

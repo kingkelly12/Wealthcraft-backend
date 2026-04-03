@@ -34,13 +34,10 @@ def scream(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@void_bp.route('/feed/', methods=['GET'])
-@require_auth
-def feed(current_user_id: str):
+def _get_feed_data_internal(current_user_id: str, cursor=None, limit=20):
+    """Internal helper to fetch feed data without triggering route decorators."""
     try:
-        # --- Cursor-based pagination (The Bottomless Bowl) ---
-        cursor = request.args.get('cursor')  # ISO timestamp of last post seen
-        limit = min(int(request.args.get('limit', 20)), 50)
+        limit = min(int(limit), 50)
 
         # 1. Fetch Posts with Author Profiles in ONE trip
         query = supabase.table('void_posts')\
@@ -60,7 +57,6 @@ def feed(current_user_id: str):
         next_cursor = posts[-1]['created_at'] if posts else None
         
         # 2. Fetch ALL Reactions for these posts (for preview & my_reaction) in ONE trip
-        # Join with profiles to get reactor info immediately
         all_reactions = []
         if post_ids:
             all_reactions_res = supabase.table('void_reactions')\
@@ -115,11 +111,27 @@ def feed(current_user_id: str):
                 }
             })
             
-        return jsonify({
-            'success': True,
+        return {
             'data': feed_data,
             'next_cursor': next_cursor,
             'has_more': has_more
+        }
+    except Exception as e:
+        logger.error(f"Internal feed fetch error: {str(e)}")
+        raise e
+
+@void_bp.route('/feed/', methods=['GET'])
+@require_auth
+def feed(current_user_id: str):
+    try:
+        # --- Cursor-based pagination (The Bottomless Bowl) ---
+        cursor = request.args.get('cursor')  # ISO timestamp of last post seen
+        limit = min(int(request.args.get('limit', 20)), 50)
+
+        result = _get_feed_data_internal(current_user_id, cursor, limit)
+        return jsonify({
+            'success': True,
+            **result
         }), 200
         
     except Exception as e:
@@ -138,16 +150,9 @@ def void_overview(current_user_id: str):
             .single().execute()
         profile = profile_res.data
         
-        # 2. Fetch first page of Feed (Reuse the optimized feed logic)
-        feed_response = feed(current_user_id)
+        # 2. Fetch first page of Feed (Reuse internal logic)
+        feed_data = _get_feed_data_internal(current_user_id)
         
-        # Check if feed_response is a tuple (jsonify returns Response object, but I'll play it safe)
-        if hasattr(feed_response, 'get_json'):
-            feed_data = feed_response.get_json()
-        else:
-            # If it's a tuple (data, 200)
-            feed_data = feed_response[0].get_json() if hasattr(feed_response[0], 'get_json') else {}
-
         return jsonify({
             'success': True,
             'profile': profile,
