@@ -323,6 +323,9 @@ def get_marketplace_assets():
 def get_assets_overview(current_user_id: str):
     """Consolidated marketplace and user portfolio status"""
     try:
+        user_ids = resolve_user_ids(current_user_id)
+        logger.info(f"Assets Overview: fetching data for user_ids {user_ids}")
+        
         # 1. Available Market
         category = request.args.get('category')
         query = supabase.table('assets').select('*')
@@ -336,15 +339,17 @@ def get_assets_overview(current_user_id: str):
         # 3. Profile Snippet (Balance/Sanity)
         profile_res = supabase.table('profiles')\
             .select('user_id, username, profile_picture_url, sanity, net_worth')\
-            .eq('user_id', current_user_id)\
-            .single().execute()
+            .in_('user_id', user_ids)\
+            .execute()
+            
+        profile = profile_res.data[0] if profile_res.data else None
         
         return jsonify({
             'success': True,
             'data': {
                 'market': market_res.data or [],
                 'portfolio': portfolio or [],
-                'profile': profile_res.data
+                'profile': profile
             }
         }), 200
     except Exception as e:

@@ -2,11 +2,39 @@ from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.services.profile_service import ProfileService
 from app.schemas.profile_schema import ProfileCreate, ProfileUpdate, ProfileResponse
+from app.routes.rental_routes import get_current_rental_internal
+from app import supabase
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
 
 profile_bp = Blueprint('profile', __name__)
 
 from app.utils.jwt_helper import require_auth
+from app import supabase
 
 @profile_bp.route('/me/', methods=['GET'])
 @require_auth
@@ -47,42 +75,50 @@ def get_comprehensive_dashboard(current_user_id: str):
     Reduces up to 8 separate calls to 1.
     """
     try:
-        from app.services.balance_service import BalanceService
-        from app.routes.asset_routes import get_user_assets_internal
-        from app.routes.rental_routes import get_current_rental_internal
-        
         # Check if we're looking at another user's profile
         target_user_id = request.args.get('user_id', current_user_id)
-        is_own_profile = (target_user_id == current_user_id)
         
+        user_ids = resolve_user_ids(target_user_id)
+        logger.info(f"Dashboard Overview: fetching data for user_ids {user_ids}")
+
         # 1. Profile
-        profile = ProfileService.get_profile_by_user_id(uuid.UUID(target_user_id))
+        profile = None
+        for uid in user_ids:
+            try:
+                profile = ProfileService.get_profile_by_user_id(uuid.UUID(uid))
+                if profile: break
+            except: continue
+            
         if not profile:
-             return jsonify({'success': False, 'error': 'Profile not found'}), 404
-             
-        # 2. Balance (Only shared if public or own)
+             # Fallback: try to fetch by profile ID directly if user_id lookup failed
+             from app.models.profile import Profile
+             profile = Profile.query.filter((Profile.user_id.in_(user_ids)) | (Profile.id.in_(user_ids))).first()
+
+        # 2. Balance
+        from app.services.balance_service import BalanceService
         balance = BalanceService.get_current_balance(target_user_id)
-        
+
         # 3. Assets
-        assets = get_user_assets_internal(target_user_id)
+        assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
+        assets = assets_res.data or []
         
         # 4. Liabilities
-        liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').eq('player_id', target_user_id).eq('is_active', True).execute()
+        liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
         liabilities = liabilities_res.data or []
         
         # 5. Jobs
-        jobs_res = supabase.table('jobs').select('*').eq('user_id', target_user_id).eq('is_active', True).execute()
+        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_active', True).execute()
         jobs = jobs_res.data or []
         
         # 6. Rental
-        rental = get_active_rental_internal(target_user_id)
+        rental = get_current_rental_internal(target_user_id)
 
         # 7. Social Stats (Followers/Following)
-        followers_res = supabase.table('user_follows').select('id', count='exact').eq('following_id', target_user_id).execute()
-        following_res = supabase.table('user_follows').select('id', count='exact').eq('follower_id', target_user_id).execute()
+        followers_res = supabase.table('user_follows').select('id', count='exact').in_('following_id', user_ids).execute()
+        following_res = supabase.table('user_follows').select('id', count='exact').in_('follower_id', user_ids).execute()
         
         # 8. Rank
-        net_worth = profile.net_worth or 0
+        net_worth = profile.net_worth if profile else 0
         rank_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()
         rank = (rank_res.count or 0) + 1
         
@@ -100,18 +136,6 @@ def get_comprehensive_dashboard(current_user_id: str):
                     'following': following_res.count or 0,
                     'rank': rank
                 }
-            }
-        }), 200
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'profile': profile.to_dict() if profile else None,
-                'balance': float(balance),
-                'assets': assets,
-                'liabilities': liabilities,
-                'jobs': jobs,
-                'rental': rental
             }
         }), 200
     except Exception as e:

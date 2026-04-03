@@ -15,6 +15,32 @@ from datetime import datetime
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
+from app.services.profile_service import ProfileService
+import logging
+
+logger = logging.getLogger(__name__)
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
 
 education_bp = Blueprint('education', __name__)
 
@@ -27,6 +53,9 @@ def get_education_overview(current_user_id: str):
     Returns both available courses and user's current progress.
     """
     try:
+        user_ids = resolve_user_ids(current_user_id)
+        logger.info(f"Education Overview: fetching data for user_ids {user_ids}")
+        
         # 1. Fetch all available courses
         courses_res = supabase.table('courses').select('*').order('cost').execute()
         available_courses = courses_res.data or []
@@ -35,7 +64,7 @@ def get_education_overview(current_user_id: str):
         # Explicitly joining courses using robust join syntax
         enrolled_res = supabase.table('user_courses')\
             .select('*, courses(*)')\
-            .eq('user_id', current_user_id)\
+            .in_('user_id', user_ids)\
             .execute()
         enrolled_courses = enrolled_res.data or []
         

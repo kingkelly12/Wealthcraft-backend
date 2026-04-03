@@ -2,11 +2,34 @@ from flask import Blueprint, request, jsonify
 from app import supabase
 from app.utils.jwt_helper import require_auth
 from app.services.push_notification_service import ExpoPushService
+from app.services.profile_service import ProfileService
 import os
 import uuid
 import logging
 
 logger = logging.getLogger(__name__)
+
+def resolve_user_ids(user_id):
+    """
+    Given a user_id (could be Auth UID or Profile ID),
+    return a list of both possible IDs to ensure robust matching across tables.
+    """
+    try:
+        uuid_obj = uuid.UUID(user_id)
+        # Try finding profile by user_id First
+        profile = ProfileService.get_profile_by_user_id(uuid_obj)
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+        
+        # If not found, try finding by profile ID
+        from app.models.profile import Profile
+        profile = Profile.query.filter_by(id=uuid_obj).first()
+        if profile:
+            return [str(profile.user_id), str(profile.id)]
+            
+        return [user_id]
+    except:
+        return [user_id]
 
 void_bp = Blueprint('void', __name__)
 
@@ -37,6 +60,7 @@ def scream(current_user_id: str):
 def _get_feed_data_internal(current_user_id: str, cursor=None, limit=20):
     """Internal helper to fetch feed data without triggering route decorators."""
     try:
+        user_ids = resolve_user_ids(current_user_id)
         limit = min(int(limit), 50)
 
         # 1. Fetch Posts with Author Profiles in ONE trip
@@ -102,7 +126,7 @@ def _get_feed_data_internal(current_user_id: str, cursor=None, limit=20):
                 'same_count': p['same_count'],
                 'created_at': p['created_at'],
                 'my_reaction': my_reactions.get(p['id']),
-                'is_mine': p['user_id'] == current_user_id,
+                'is_mine': p['user_id'] in user_ids,
                 'reactors': reactions_by_post.get(p['id'], []),
                 'author': {
                     'user_id': p['user_id'],
@@ -143,12 +167,15 @@ def feed(current_user_id: str):
 def void_overview(current_user_id: str):
     """Consolidated endpoint for Void screen mount"""
     try:
+        user_ids = resolve_user_ids(current_user_id)
+        
         # 1. Fetch Profile info (small snippet)
         profile_res = supabase.table('profiles')\
             .select('username, profile_picture_url, sanity')\
-            .eq('user_id', current_user_id)\
-            .single().execute()
-        profile = profile_res.data
+            .in_('user_id', user_ids)\
+            .execute()
+            
+        profile = profile_res.data[0] if profile_res.data else None
         
         # 2. Fetch first page of Feed (Reuse internal logic)
         feed_data = _get_feed_data_internal(current_user_id)

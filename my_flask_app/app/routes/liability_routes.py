@@ -285,19 +285,17 @@ def get_luxury_overview(current_user_id: str):
     Returns both available luxury items and user's current luxury assets.
     """
     try:
-        from app.services.balance_service import BalanceService
+        user_ids = resolve_user_ids(current_user_id)
         
         # 1. Fetch available items
         available_res = supabase.table('liability_items').select('*').execute()
         available_items = available_res.data or []
         
         # 2. Fetch active items (using internal helper)
-        # Note: get_active_liabilities_internal includes both luxury and loans. 
-        # For the lifestyle screen, we might only want the 'luxury' category.
         all_active = get_active_liabilities_internal(current_user_id)
         active_luxury = [li for li in all_active if li.get('category') == 'luxury']
         
-        # 3. Get balance
+        # 3. Get balance (already imported or using Service)
         balance = BalanceService.get_current_balance(current_user_id)
         
         return jsonify({
