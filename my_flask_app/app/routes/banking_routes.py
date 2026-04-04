@@ -40,23 +40,35 @@ def get_banking_overview(current_user_id: str):
         logger.info(f"Banking Overview: fetching data for user_ids {user_ids}")
         
         # 1. Profile & Balance
-        # Try to find profile by any of the IDs
-        profile = None
-        for uid in user_ids:
-            profile = ProfileService.get_profile_by_user_id(uuid.UUID(uid))
-            if profile: break
+        # Use simple select to find profile by user_id OR id
+        profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('user_id', user_ids).execute()
+        if not profile_res or not profile_res.data:
+            profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('id', user_ids).execute()
             
-        balance = BalanceService.get_current_balance(current_user_id)
-        
+        if not profile_res or not profile_res.data:
+             # Last resort: try model query if Supabase failed
+             from app.models.profile import Profile
+             profile_obj = Profile.query.filter((Profile.user_id.in_(user_ids)) | (Profile.id.in_(user_ids))).first()
+             if profile_obj:
+                 profile = profile_obj.to_dict()
+                 # Fetch balance separately if needed
+                 balance = BalanceService.get_current_balance(current_user_id)
+                 profile['user_balances'] = [{'current_balance': float(balance)}]
+             else:
+                 logger.error(f"Banking Overview: Profile not found for user_ids {user_ids}")
+                 return jsonify({'success': False, 'error': 'USER_NOT_FOUND', 'message': f'Profile not found for {current_user_id}'}), 404
+        else:
+            profile = profile_res.data[0]
+
         # 2. Portfolio Assets
         assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
         assets = assets_res.data or []
         
-        # 3. Active Liabilities (Joined)
+        # 3. Active Liabilities
         liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
         liabilities = liabilities_res.data or []
         
-        # 2. Active Job
+        # 4. Active Jobs
         jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         jobs = jobs_res.data or []
         
@@ -68,27 +80,23 @@ def get_banking_overview(current_user_id: str):
         bank_loans_res = supabase.table('bank_loans').select('*').is_('borrower_id', 'null').execute()
         bank_loans = bank_loans_res.data or []
         
-        # 1. Profile with balance
-        profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('user_id', user_ids).execute()
-        if not profile_res or not profile_res.data:
-            # Fallback: check by 'id' if 'user_id' check returned nothing
-            profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('id', user_ids).execute()
-            
-        if not profile_res or not profile_res.data:
-            logger.error(f"Banking Overview: Profile not found for user_ids {user_ids}")
-            return jsonify({'success': False, 'error': 'USER_NOT_FOUND', 'message': f'Profile not found for {current_user_id}'}), 404
-        
-        profile = profile_res.data[0]
-        
         # 7. Available P2P Loans
         p2p_loans_res = supabase.table('p2p_loans').select('*').eq('status', 'pending').neq('lender_id', current_user_id).execute()
         p2p_loans = p2p_loans_res.data or []
         
+        # Account balance extraction
+        account_balance = 0.0
+        if profile.get('user_balances'):
+             try:
+                 account_balance = float(profile.get('user_balances', [{}])[0].get('current_balance', 0))
+             except:
+                 account_balance = 0.0
+
         return jsonify({
             'success': True,
             'data': {
                 'profile': profile,
-                'account_balance': profile.get('user_balances', [{}])[0].get('current_balance', 0) if profile.get('user_balances') else 0,
+                'account_balance': account_balance,
                 'portfolio': assets,
                 'liabilities': liabilities,
                 'jobs': jobs,
