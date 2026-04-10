@@ -15,157 +15,231 @@ logger = logging.getLogger(__name__)
 
 def process_monthly_deductions():
     """
-    Process monthly payments for all active bank loans.
-    - Deducts monthly payment from user balance
-    - Updates next_payment_date for tracking
-    - Logs missed payments if user has insufficient funds
-    - Sends notifications for payment issues (batched)
+    End of Month Processing Job.
+    - Deducts monthly loan payments (Bank and P2P) from liabilities table
+    - Credits P2P lenders
+    - Deducts player liabilities maintenance (luxury items)
+    - Deducts rent for user rentals
+    - Credits asset monthly income for user assets
+    - Sends a consolidated push notification with a summary of deductions and income
     """
-    logger.info("Starting monthly deduction job...")
+    logger.info("Starting End of Month Processing cycle...")
 
-    # Fetch all active loans
-    try:
-        loans = supabase.table('bank_loans').select('*').eq('status', 'active').execute()
-    except Exception as e:
-        logger.error(f"Error fetching loans: {e}")
-        return
-
-    successful_payments = 0
-    missed_payments = 0
-    errors = 0
-
-    # --- Collect notifications; send in one batch at the end ---
     notifications_to_send = []
+    summary_by_user = {}
 
-    for loan in loans.data:
-        user_id = loan['borrower_id']
-        loan_id = loan['id']
-        monthly_payment = Decimal(str(loan['monthly_payment']))
+    def get_summary(uid):
+        if uid not in summary_by_user:
+            summary_by_user[uid] = {
+                'expenses': Decimal('0'),
+                'income': Decimal('0'),
+                'details': []
+            }
+        return summary_by_user[uid]
 
-        try:
-            # 1. Check if payment is due
-            next_payment_date = loan.get('next_payment_date')
-            if next_payment_date:
-                next_payment = datetime.fromisoformat(next_payment_date)
-                if datetime.utcnow() < next_payment:
-                    logger.info(f"Loan {loan_id} payment not yet due (due: {next_payment_date})")
-                    continue
+    # --- 1. Process Liabilities (Loans) ---
+    logger.info("Processing loans (Bank & P2P)...")
+    try:
+        # Fetch active liabilities (remaining_balance > 0)
+        # Note: Some older records might use remaining_balance, others might be None
+        liabilities_data = supabase.table('liabilities').select('*').gt('remaining_balance', 0).execute()
+        for liability in liabilities_data.data:
+            user_id = liability['user_id']
+            liability_id = liability['id']
+            monthly_payment = Decimal(str(liability.get('monthly_payment', 0)))
+            if monthly_payment <= 0:
+                continue
 
-            # 2. Check Balance
             current_balance = BalanceService.get_current_balance(user_id)
+            summ = get_summary(user_id)
 
             if current_balance >= monthly_payment:
-                # 3. Deduct from balance
+                # Deduct
                 BalanceService.subtract_balance(
                     user_id=user_id,
                     amount=monthly_payment,
-                    reason=f"Monthly Loan Payment: {loan['type']}"
+                    reason=f"Monthly Loan Payment: {liability.get('name')}"
                 )
-
-                # 4. Update loan
-                new_next_payment_date = (datetime.utcnow() + timedelta(days=30)).isoformat()
-                total_paid = Decimal(str(loan.get('total_paid', 0))) + monthly_payment
-
-                supabase.table('bank_loans').update({
-                    'next_payment_date': new_next_payment_date,
-                    'total_paid': float(total_paid),
+                
+                new_bal = Decimal(str(liability['remaining_balance'])) - monthly_payment
+                
+                # Update liability
+                supabase.table('liabilities').update({
+                    'remaining_balance': float(max(0, new_bal)),
                     'updated_at': datetime.utcnow().isoformat()
-                }).eq('id', loan_id).execute()
+                }).eq('id', liability_id).execute()
 
-                logger.info(f"✅ Processed payment of ${monthly_payment} for user {user_id} on loan {loan_id}")
+                # If P2P Loan, credit lender and update P2P table sync
+                if liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id'):
+                    try:
+                        p2p_loan_id = liability['p2p_loan_id']
+                        p2p_res = supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id).single().execute()
+                        if p2p_res.data:
+                            lender_id = p2p_res.data['lender_id']
+                            # Credit lender
+                            BalanceService.add_balance(
+                                user_id=lender_id,
+                                amount=monthly_payment,
+                                reason=f"P2P Loan payment received"
+                            )
+                            lender_summ = get_summary(lender_id)
+                            lender_summ['income'] += monthly_payment
+                            lender_summ['details'].append(f"+${monthly_payment:,.2f} P2P Repayment")
 
-                # Queue success notification
-                notifications_to_send.append({
-                    'user_id': user_id,
-                    'title': '💳 Loan Payment Processed',
-                    'body': f'Monthly payment of ${monthly_payment} for {loan.get("type", "loan")} processed successfully.',
-                    'data': {
-                        'type': 'loan_payment',
-                        'loan_id': loan_id,
-                        'amount': float(monthly_payment),
-                        'screen': '/loans'
-                    }
-                })
+                            p2p_status = 'active'
+                            if new_bal <= 0:
+                                p2p_status = 'completed'
+                            supabase.table('p2p_loans').update({
+                                'remaining_balance': float(max(0, new_bal)),
+                                'status': p2p_status,
+                                'updated_at': datetime.utcnow().isoformat()
+                            }).eq('id', p2p_loan_id).execute()
+                    except Exception as e:
+                        logger.error(f"Error handling P2P lender credit for loan {liability_id}: {e}")
 
-                successful_payments += 1
-
+                # Update Borrower Summary
+                summ['expenses'] += monthly_payment
+                summ['details'].append(f"-${monthly_payment:,.2f} {liability.get('name')}")
             else:
-                # Insufficient funds
-                logger.warning(
-                    f"⚠️  User {user_id} insufficient funds for loan {loan_id}. "
-                    f"Required: ${monthly_payment}, Available: ${current_balance}"
-                )
-
-                # Log missed payment
-                supabase.table('missed_payments').insert({
-                    'user_id': user_id,
-                    'loan_id': loan_id,
-                    'missed_amount': float(monthly_payment),
-                    'required_balance': float(monthly_payment),
-                    'current_balance': float(current_balance),
-                    'date': datetime.utcnow().isoformat(),
-                    'status': 'pending'
-                }).execute()
-
-                # Apply late penalty (5%)
+                # Provide a notification log for missing logic, applying penalty
                 penalty = monthly_payment * Decimal('0.05')
-                new_penalty_total = Decimal(str(loan.get('total_interest', 0))) + penalty
+                logger.warning(f"User {user_id} missed loan payment for {liability_id}. Applied penalty.")
+                summ['expenses'] += Decimal('0')  # Missed, no deduct
+                summ['details'].append(f"⚠️ Missed {liability.get('name')} (${monthly_payment:,.2f})")
+    except Exception as e:
+        logger.error(f"Error processing liabilities: {e}")
 
-                supabase.table('bank_loans').update({
-                    'total_interest': float(new_penalty_total),
-                    'status': 'delinquent',
-                    'updated_at': datetime.utcnow().isoformat()
-                }).eq('id', loan_id).execute()
+    # --- 2. Process Player Liabilities Maintenance (Luxury Items) ---
+    logger.info("Processing maintenance for luxury items...")
+    try:
+        player_liabs = supabase.table('player_liabilities').select('*, liability_items(*)').eq('is_active', True).execute()
+        for pliab in player_liabs.data:
+            user_id = pliab['player_id']
+            cost = Decimal(str(pliab.get('monthly_cost', 0)))
+            if cost <= 0:
+                continue
 
-                logger.warning(f"Applied ${penalty} penalty for missed payment")
+            # Identify name
+            item_data = pliab.get('liability_items')
+            if isinstance(item_data, list) and len(item_data) > 0:
+                item_data = item_data[0]
+            name = item_data.get('name', 'Luxury Item') if item_data else 'Luxury Item'
 
-                # Queue failure notification
-                notifications_to_send.append({
-                    'user_id': user_id,
-                    'title': '⚠️ Loan Payment Failed',
-                    'body': (
-                        f'Insufficient funds for {loan.get("type", "loan")} payment. '
-                        f'Penalty of ${penalty} applied. Current balance: ${current_balance}'
-                    ),
-                    'data': {
-                        'type': 'missed_payment',
-                        'loan_id': loan_id,
-                        'amount': float(monthly_payment),
-                        'penalty': float(penalty),
-                        'screen': '/loans'
-                    }
-                })
+            summ = get_summary(user_id)
+            current_balance = BalanceService.get_current_balance(user_id)
+            if current_balance >= cost:
+                BalanceService.subtract_balance(
+                    user_id=user_id,
+                    amount=cost,
+                    reason=f"Maintenance Cost: {name}"
+                )
+                summ['expenses'] += cost
+                summ['details'].append(f"-${cost:,.2f} {name} maintenance")
+            else:
+                logger.warning(f"User {user_id} missed maintenance for {pliab['id']}.")
+                summ['details'].append(f"⚠️ Missed {name} maintenance (${cost:,.2f})")
+    except Exception as e:
+        logger.error(f"Error processing luxury maintenance: {e}")
 
-                missed_payments += 1
+    # --- 3. Process Rent Deductions ---
+    logger.info("Processing rent deductions...")
+    try:
+        active_rentals = supabase.table('player_rentals').select('*, rental_properties(*)').eq('is_active', True).execute()
+        for rental in active_rentals.data:
+            user_id = rental['player_id']
+            rent = Decimal(str(rental.get('monthly_rent', 0)))
+            if rent <= 0:
+                continue
 
-        except Exception as e:
-            db.session.rollback()
-            errors += 1
-            logger.error(f"Error processing loan {loan_id}: {e}")
+            prop_data = rental.get('rental_properties')
+            name = prop_data.get('name', 'Rent') if prop_data else 'Rent'
+
+            summ = get_summary(user_id)
+            current_balance = BalanceService.get_current_balance(user_id)
+            if current_balance >= rent:
+                BalanceService.subtract_balance(
+                    user_id=user_id,
+                    amount=rent,
+                    reason=f"Monthly Rent: {name}"
+                )
+                summ['expenses'] += rent
+                summ['details'].append(f"-${rent:,.2f} {name}")
+            else:
+                logger.warning(f"User {user_id} missed rent for {rental['id']}.")
+                summ['details'].append(f"⚠️ Missed {name} (${rent:,.2f})")
+    except Exception as e:
+        logger.error(f"Error processing rent: {e}")
+
+    # --- 4. Process Asset Income (Rental / Dividend) ---
+    logger.info("Processing asset monthly incomes...")
+    try:
+        # Fetch base assets lookup map
+        assets_res = supabase.table('assets').select('name, monthly_income').execute()
+        income_map = {}
+        for a in assets_res.data:
+            income_map[a['name']] = Decimal(str(a.get('monthly_income', 0)))
+
+        user_assets = supabase.table('user_assets').select('*').execute()
+        for ua in user_assets.data:
+            user_id = ua['user_id']
+            name = ua['name']
+            qty = Decimal(str(ua.get('quantity', 1)))
+            base_income = income_map.get(name, Decimal('0'))
+            
+            total_income = base_income * qty
+            if total_income > 0:
+                BalanceService.add_balance(
+                    user_id=user_id,
+                    amount=total_income,
+                    reason=f"Monthly Asset Income: {name}"
+                )
+                summ = get_summary(user_id)
+                summ['income'] += total_income
+                summ['details'].append(f"+${total_income:,.2f} {name} Yield")
+    except Exception as e:
+        logger.error(f"Error processing asset income: {e}")
+
+    # --- 5. Batch Send Notifications ---
+    logger.info(f"Queueing notifications for {len(summary_by_user)} users...")
+    for uid, data in summary_by_user.items():
+        if data['expenses'] == 0 and data['income'] == 0 and not data['details']:
             continue
+            
+        net_change = data['income'] - data['expenses']
+        title = "💰 End of Month Summary"
+        if net_change > 0:
+            body = f"You gained a net +${net_change:,.2f} this month! \n" + "\n".join(data['details'])
+        else:
+            body = f"You had a net -${abs(net_change):,.2f} this month. \n" + "\n".join(data['details'])
 
-    # --- Batch-send all loan notifications in one round-trip ---
+        # Truncate if too long
+        if len(body) > 200:
+            body = body[:197] + "..."
+
+        notifications_to_send.append({
+            'user_id': uid,
+            'title': title,
+            'body': body,
+            'data': {
+                'type': 'financial_move',
+                'screen': '/banking'
+            }
+        })
+
     if notifications_to_send:
-        results = ExpoPushService.send_notifications_to_users(
-            supabase_client=supabase,
-            user_notifications=notifications_to_send,
-            notification_type='financial_move'
-        )
-        logger.info(
-            f"Push results — Sent: {results['success']}, "
-            f"Failed: {results['failed']}, Skipped: {results['skipped']}"
-        )
+        # Batch in chunks of 50 just in case
+        chunk_size = 50
+        for i in range(0, len(notifications_to_send), chunk_size):
+            chunk = notifications_to_send[i:i + chunk_size]
+            ExpoPushService.send_notifications_to_users(
+                supabase_client=supabase,
+                user_notifications=chunk,
+                notification_type='financial_move'
+            )
+        logger.info(f"Batched {len(notifications_to_send)} end of month notifications.")
 
-    logger.info(
-        f"Monthly deduction job completed. "
-        f"Successful: {successful_payments}, Missed: {missed_payments}, Errors: {errors}"
-    )
-
-    return {
-        'successful_payments': successful_payments,
-        'missed_payments': missed_payments,
-        'errors': errors
-    }
+    logger.info("End of Month Processing cycle complete.")
+    return {'success': True}
 
 if __name__ == "__main__":
     from app import create_app

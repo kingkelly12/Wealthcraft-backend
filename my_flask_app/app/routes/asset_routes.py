@@ -43,70 +43,6 @@ asset_bp = Blueprint('asset', __name__)
 logger = logging.getLogger(__name__)
 
 
-def _notify_mentors_of_move(user_id, move_type, asset_name, amount, profit=None):
-    """
-    Notify all mentors about a student's financial move.
-    
-    Psychology:
-    - Mentors feel responsible for their students' actions.
-    - Competitive copy ("Are you keeping up?") triggers status anxiety.
-    - Loss framing ("panic-sold at a loss") triggers protective instincts.
-    """
-    try:
-        # Get user's username
-        profile_res = supabase.table('profiles').select('username').eq('user_id', user_id).single().execute()
-        username = profile_res.data.get('username', 'Your student') if profile_res.data else 'Your student'
-
-        # Get all followers 
-        followers_res = supabase.table('user_follows').select('follower_id').eq('following_id', user_id).execute()
-        followers = followers_res.data if followers_res.data else []
-
-        if not followers:
-            return
-
-        # Craft notification copy based on move type
-        if move_type == 'buy':
-            title = '\U0001f4ca Student Move'
-            body = f'{username} just invested in {asset_name}. Are you keeping up?'
-        elif move_type == 'sell' and profit is not None and profit >= 0:
-            title = '\U0001f4b0 Student Win'
-            body = f'{username} sold {asset_name} for a ${profit:,.2f} profit. Impressive moves.'
-        else:
-            title = '\U0001f4c9 Student Alert'
-            body = f'{username} panic-sold {asset_name} at a loss. Mentor them?'
-
-        for f in followers:
-            follower_id = f['follower_id']
-            try:
-                # In-app notification
-                supabase.table('notifications').insert({
-                    'user_id': follower_id,
-                    'type': 'student_move',
-                    'title': title,
-                    'message': body,
-                    'related_user_id': user_id,
-                    'read': False
-                }).execute()
-
-                # Push notification
-                ExpoPushService.send_notification_to_user(
-                    supabase_client=supabase,
-                    user_id=follower_id,
-                    title=title,
-                    body=body,
-                    notification_type='student_move',
-                    data={
-                        'type': 'student_move',
-                        'student_id': user_id,
-                        'navigate_to': f'/users/{user_id}'
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify mentor {follower_id}: {str(e)}")
-    except Exception as e:
-        logger.error(f"Failed to notify mentors of move: {str(e)}")
-
-
 @asset_bp.route('/purchase/', methods=['POST'])
 @require_auth
 def purchase_asset(current_user_id: str):
@@ -233,6 +169,15 @@ def purchase_asset(current_user_id: str):
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
+        
+        # Send Mentorship Notification
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='buy_asset',
+            item_name=asset['name'],
+            amount=float(total_price)
+        )
         
         # ============ REAL-TIME MENTOR TRIGGER ============
         # Check if this is first asset purchase (triggers congratulations message)
@@ -499,8 +444,16 @@ def sell_asset(current_user_id: str, asset_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ REAL-TIME MENTOR TRIGGER ============
-        # Check for panic selling (selling large percentage of portfolio)
+        # Send Mentorship Notification
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='sell_asset',
+            item_name=asset.get('name', 'asset'),
+            amount=float(sale_value),
+            profit=float(profit)
+        )
+
         try:
             # Calculate percentage of assets sold (simple: assume this is significant if profit is negative)
             percentage_sold = 1.0 if profit < 0 else 0.3  # Full sale if loss, partial if gain

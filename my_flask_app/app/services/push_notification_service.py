@@ -1,5 +1,6 @@
 """
 Push Notification Service for Native Notify
+
 This service handles sending push notifications to mobile devices via the Native Notify API.
 We act as a drop-in replacement for the previous Expo Push Service so existing routes work out of the box.
 """
@@ -21,7 +22,7 @@ class ExpoPushService:
     @classmethod
     def send_notification_to_user(
         cls,
-        supabase_client,  # Maintained for backwards compatibility with existing route calls
+        supabase_client,
         user_id: str,
         title: str,
         body: str,
@@ -100,3 +101,80 @@ class ExpoPushService:
             f"Native Notify batch send complete — success: {success_count}, failed: {failed_count}"
         )
         return {'success': success_count, 'failed': failed_count, 'skipped': 0}
+
+    @classmethod
+    def notify_followers_of_financial_move(
+        cls,
+        supabase_client,
+        user_id: str,
+        move_type: str,
+        item_name: str,
+        amount: Optional[float] = None,
+        profit: Optional[float] = None
+    ) -> None:
+        """
+        Notify all followers (mentors) about a user's financial move.
+        Provides engaging copy to trigger mentorship intervention or praise.
+        """
+        try:
+            # Get user's username
+            profile_res = supabase_client.table('profiles').select('username').eq('user_id', user_id).single().execute()
+            username = profile_res.data.get('username', 'Your student') if profile_res.data else 'Your student'
+
+            # Get all followers 
+            followers_res = supabase_client.table('user_follows').select('follower_id').eq('following_id', user_id).execute()
+            followers = followers_res.data if followers_res.data else []
+
+            if not followers:
+                return
+
+            # Craft notification copy based on move type
+            if move_type == 'buy_asset':
+                title = '\U0001f4ca Student Move'
+                body = f'{username} just invested in {item_name}. Are you keeping up?'
+            elif move_type == 'buy_liability':
+                title = '🚗 Student Splurge'
+                body = f'{username} just bought {item_name} for ${amount:,.2f}. Will this ruin their budget?'
+            elif move_type == 'take_loan':
+                title = '💳 Student Debt'
+                body = f'{username} took out a {item_name} loan for ${amount:,.2f}. Keep an eye on them.'
+            elif move_type == 'sell_asset' and profit is not None and profit >= 0:
+                title = '\U0001f4b0 Student Win'
+                body = f'{username} sold {item_name} for a ${profit:,.2f} profit. Impressive moves.'
+            elif move_type == 'sell_asset':
+                title = '\U0001f4c9 Student Alert'
+                body = f'{username} panic-sold {item_name} at a loss. Mentor them?'
+            else:
+                title = '💵 Financial Move'
+                body = f'{username} made a financial move involving {item_name}.'
+
+            for f in followers:
+                follower_id = f['follower_id']
+                try:
+                    # In-app notification
+                    supabase_client.table('notifications').insert({
+                        'user_id': follower_id,
+                        'type': 'student_move',
+                        'title': title,
+                        'message': body,
+                        'related_user_id': user_id,
+                        'read': False
+                    }).execute()
+
+                    # Push notification
+                    cls.send_notification_to_user(
+                        supabase_client=supabase_client,
+                        user_id=follower_id,
+                        title=title,
+                        body=body,
+                        notification_type='student_move',
+                        data={
+                            'type': 'student_move',
+                            'student_id': user_id,
+                            'navigate_to': f'/users/{user_id}'
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify mentor {follower_id}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to notify mentors/followers of move: {str(e)}")

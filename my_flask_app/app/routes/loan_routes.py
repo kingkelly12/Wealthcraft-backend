@@ -128,6 +128,15 @@ def apply_for_loan(current_user_id: str):
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
+            
+        # Send Mentorship Notification
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='take_loan',
+            item_name=loan.get('type', 'Bank'),
+            amount=float(loan_amount)
+        )
         
         try:
             trigger = MentorService.check_real_time_triggers(
@@ -460,6 +469,45 @@ def accept_p2p_loan(current_user_id: str):
             
         amount = Decimal(str(loan['amount']))
         
+        # Calculate proposed monthly payment
+        total_interest = amount * (Decimal(str(loan['interest_rate'])) / 100)
+        total_repayment = amount + total_interest
+        monthly_payment = total_repayment / int(loan['term_months'])
+        
+        # PRE-QUALIFICATION CHECKS
+        from app.models.profile import Profile
+        
+        profile = Profile.query.filter_by(user_id=current_user_id).first()
+        if not profile:
+            return jsonify({'success': False, 'message': 'User profile not found'}), 404
+            
+        # 1. Credit Score Check
+        if profile.credit_score < 600:
+            return jsonify({'success': False, 'message': 'Pre-qualification failed: Credit score must be 600 or higher.'}), 400
+            
+        # 2. Monthly Income Check
+        monthly_income = Decimal(str(profile.monthly_income or 0))
+        if monthly_income <= 0:
+            return jsonify({'success': False, 'message': 'Pre-qualification failed: You must have a positive monthly income.'}), 400
+            
+        if monthly_income < (monthly_payment * 3):
+             return jsonify({'success': False, 'message': 'Pre-qualification failed: Your monthly income is insufficient for this loan amount.'}), 400
+             
+        # 3. Debt-to-Income (DTI) Ratio Check
+        # Fetch existing active liabilities
+        existing_liabilities_resp = supabase.table('liabilities').select('monthly_payment').eq('user_id', current_user_id).gt('remaining_balance', 0).execute()
+        
+        total_existing_debt = Decimal('0')
+        if existing_liabilities_resp.data:
+            for liab in existing_liabilities_resp.data:
+                total_existing_debt += Decimal(str(liab.get('monthly_payment', 0)))
+                
+        proposed_total_debt = total_existing_debt + monthly_payment
+        dti_ratio = proposed_total_debt / monthly_income
+        
+        if dti_ratio > Decimal('0.43'):
+            return jsonify({'success': False, 'message': f'Pre-qualification failed: Your Debt-to-Income ratio would be {(dti_ratio*100):.1f}% (max allowed is 43%).'}), 400
+        
         # 2. Update P2P loan record
         supabase.table('p2p_loans').update({
             'borrower_id': current_user_id,
@@ -509,6 +557,15 @@ def accept_p2p_loan(current_user_id: str):
                 data={'loan_id': loan_id}
             )
         except: pass
+        
+        # Send Mentorship Notification
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='take_loan',
+            item_name='P2P ' + loan.get('purpose', ''),
+            amount=float(amount)
+        )
         
         return jsonify({
             'success': True,

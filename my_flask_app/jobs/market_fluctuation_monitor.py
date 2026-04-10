@@ -29,8 +29,6 @@ def simulate_market_fluctuation():
     """
     logger.info("Starting market fluctuation and portfolio update...")
 
-    from app import supabase
-
     try:
         # 1. Fetch global assets that are volatile
         fluctuating_categories = ['stocks', 'crypto', 'investments']
@@ -148,7 +146,8 @@ def simulate_market_fluctuation():
                         success_count += 1
                     else:
                         failed_count += 1
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Error sending push: {e}")
                     failed_count += 1
                     
             logger.info(f"Market monitor complete. Sent: {success_count}, Failed: {failed_count}")
@@ -156,7 +155,9 @@ def simulate_market_fluctuation():
             logger.info("No significant market changes to notify about")
 
     except Exception as e:
-        logger.error(f"Error in market fluctuation monitoring: {str(e)}")
+        import traceback
+        logger.error(f"Critical error in market monitor: {str(e)}\n{traceback.format_exc()}")
+        raise
 
 
 if __name__ == '__main__':

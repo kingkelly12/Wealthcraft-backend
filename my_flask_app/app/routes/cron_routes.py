@@ -44,7 +44,7 @@ def require_cron_secret(f):
 
 # ── Daily Jobs ──────────────────────────────────────────────────
 
-@cron_bp.route('/mentor-analysis/', methods=['POST'])
+@cron_bp.route('/mentor-analysis/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_mentor_analysis():
     """Daily mentor analysis — Schedule: 0 6 * * * (6 AM daily)"""
@@ -55,7 +55,7 @@ def cron_mentor_analysis():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@cron_bp.route('/random-events/', methods=['POST'])
+@cron_bp.route('/random-events/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_random_events():
     """Trigger random life events — Schedule: 0 9 * * * (9 AM daily)"""
@@ -65,7 +65,7 @@ def cron_random_events():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@cron_bp.route('/inactive-users-monitor/', methods=['POST'])
+@cron_bp.route('/inactive-users-monitor/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_inactive_users_monitor():
     """Inactive users monitor — Schedule: 0 10 * * * (10 AM daily)"""
@@ -78,7 +78,7 @@ def cron_inactive_users_monitor():
 
 # ── Hourly Jobs ─────────────────────────────────────────────────
 
-@cron_bp.route('/market-monitor/', methods=['POST'])
+@cron_bp.route('/market-monitor/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_market_monitor():
     """Market fluctuation simulation — Schedule: 0 * * * * (every hour)"""
@@ -91,7 +91,7 @@ def cron_market_monitor():
 
 # ── Monthly Jobs ────────────────────────────────────────────────
 
-@cron_bp.route('/depreciation/', methods=['POST'])
+@cron_bp.route('/depreciation/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_depreciation():
     """Monthly liability depreciation — Schedule: 0 2 1 * * (1st, 2 AM)"""
@@ -102,7 +102,7 @@ def cron_depreciation():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@cron_bp.route('/appreciation/', methods=['POST'])
+@cron_bp.route('/appreciation/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_appreciation():
     """Monthly asset appreciation — Schedule: 0 3 1 * * (1st, 3 AM)"""
@@ -113,7 +113,7 @@ def cron_appreciation():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@cron_bp.route('/loan-deductions/', methods=['POST'])
+@cron_bp.route('/loan-deductions/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_loan_deductions():
     """Monthly loan deductions — Schedule: 0 4 15 * * (15th, 4 AM)"""

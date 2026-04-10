@@ -61,12 +61,16 @@ def get_education_overview(current_user_id: str):
         available_courses = courses_res.data or []
         
         # 2. Fetch enrolled courses
-        # Use explicit join syntax to resolve relationship ambiguity
-        enrolled_res = supabase.table('user_courses')\
-            .select('*, courses!course_id(*)')\
-            .in_('user_id', user_ids)\
-            .execute()
+        # Manually join to bypass missing Postgres foreign key constraint
+        enrolled_res = supabase.table('user_courses').select('*').in_('user_id', user_ids).execute()
         enrolled_courses = enrolled_res.data or []
+        
+        if enrolled_courses:
+            course_ids = [c['course_id'] for c in enrolled_courses]
+            courses_detail_res = supabase.table('courses').select('*').in_('id', course_ids).execute()
+            courses_map = {c['id']: c for c in (courses_detail_res.data or [])}
+            for ec in enrolled_courses:
+                ec['courses'] = courses_map.get(ec['course_id'])
         
         return jsonify({
             'success': True,
@@ -99,12 +103,19 @@ def get_courses():
 def get_enrolled_courses(current_user_id: str):
     """Get courses the user is enrolled in"""
     try:
-        # Use explicit join syntax
-        response = supabase.table('user_courses')\
-            .select('*, courses!course_id(*)')\
-            .eq('user_id', current_user_id)\
-            .execute()
-        return jsonify({'success': True, 'data': response.data or []}), 200
+        # Use manual join syntax
+        response = supabase.table('user_courses').select('*').eq('user_id', current_user_id).execute()
+        enrolled_courses = response.data or []
+        
+        if enrolled_courses:
+            course_ids = [c['course_id'] for c in enrolled_courses]
+            if course_ids:
+                courses_detail_res = supabase.table('courses').select('*').in_('id', course_ids).execute()
+                courses_map = {c['id']: c for c in (courses_detail_res.data or [])}
+                for ec in enrolled_courses:
+                    ec['courses'] = courses_map.get(ec['course_id'])
+                    
+        return jsonify({'success': True, 'data': enrolled_courses}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -289,7 +300,6 @@ def complete_course(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
         # Check for mentor congratulations on course completion
         try:
             trigger = MentorService.check_real_time_triggers(

@@ -189,8 +189,15 @@ def purchase_liability(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
-        # Check for immediate mentor reactions to expensive purchases
+        # Send Mentorship Notification
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='buy_liability',
+            item_name=item['name'],
+            amount=float(purchase_price)
+        )
+
         try:
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,
