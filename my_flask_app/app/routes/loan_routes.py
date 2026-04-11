@@ -111,25 +111,7 @@ def apply_for_loan(current_user_id: str):
             'p2p_loan_id': None # Not a P2P loan
         }).execute()
         
-        # Send push notification
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='💳 Loan Received',
-                body=f'You received ${loan_amount:,.2f} loan at {float(loan["interest_rate"])}% interest',
-                notification_type='loan_received',
-                data={
-                    'loan_id': user_loan_id,
-                    'amount': float(loan_amount),
-                    'monthly_payment': float(monthly_payment),
-                    'interest_rate': float(loan['interest_rate'])
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-            
-        # Send Mentorship Notification
+        # Notify followers about the loan (push to mentors/observers only)
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,

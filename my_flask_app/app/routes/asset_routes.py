@@ -143,7 +143,7 @@ def purchase_asset(current_user_id: str):
             
             result_asset_id = insert_response.data[0]['id'] if insert_response.data else None
         
-        # 7. Create notification
+        # 7. Create in-app notification record (drives the notification bell/feed only, no push)
         supabase.table('notifications').insert({
             'user_id': current_user_id,
             'type': 'financial_move',
@@ -152,25 +152,7 @@ def purchase_asset(current_user_id: str):
             'read': False
         }).execute()
         
-        # Send push notification
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='💰 Asset Purchased',
-                body=f'You purchased {quantity} {asset["name"]} for ${total_price:,.2f}',
-                notification_type='financial_move',
-                data={
-                    'asset_id': result_asset_id,
-                    'amount': float(total_price),
-                    'quantity': quantity,
-                    'transaction_type': 'investment'
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-        
-        # Send Mentorship Notification
+        # Send Mentorship Notification (push to followers only, not to buyer)
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,
@@ -203,16 +185,7 @@ def purchase_asset(current_user_id: str):
         except Exception as e:
             print(f"Failed to trigger mentor response: {str(e)}")
         
-        # ============ NOTIFY MENTORS ============
-        try:
-            _notify_mentors_of_move(
-                user_id=current_user_id,
-                move_type='buy',
-                asset_name=asset['name'],
-                amount=float(total_price)
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify mentors of purchase: {str(e)}")
+        # (already handled before real-time triggers)
         
         return jsonify({
             'success': True,
@@ -454,6 +427,8 @@ def sell_asset(current_user_id: str, asset_id: str):
             profit=float(profit)
         )
 
+        # ============ REAL-TIME MENTOR TRIGGER ============
+        # Check for panic selling (selling large percentage of portfolio)
         try:
             # Calculate percentage of assets sold (simple: assume this is significant if profit is negative)
             percentage_sold = 1.0 if profit < 0 else 0.3  # Full sale if loss, partial if gain
@@ -480,17 +455,7 @@ def sell_asset(current_user_id: str, asset_id: str):
         except Exception as e:
             print(f"Failed to trigger mentor response: {str(e)}")
         
-        # ============ NOTIFY MENTORS ============
-        try:
-            _notify_mentors_of_move(
-                user_id=current_user_id,
-                move_type='sell',
-                asset_name=asset.get('name', 'an asset'),
-                amount=float(sale_value),
-                profit=float(profit)
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify mentors of sale: {str(e)}")
+        # (sell follower notification already sent above)
         
         return jsonify({
             'success': True,

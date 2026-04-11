@@ -130,20 +130,29 @@ class ExpoPushService:
 
             # Craft notification copy based on move type
             if move_type == 'buy_asset':
-                title = '\U0001f4ca Student Move'
+                title = '📊 Student Move'
                 body = f'{username} just invested in {item_name}. Are you keeping up?'
+            elif move_type == 'sell_asset' and profit is not None and profit >= 0:
+                title = '💰 Student Win'
+                body = f'{username} sold {item_name} for a ${profit:,.2f} profit. Impressive moves.'
+            elif move_type == 'sell_asset':
+                title = '📉 Student Alert'
+                body = f'{username} panic-sold {item_name} at a loss. Mentor them?'
             elif move_type == 'buy_liability':
                 title = '🚗 Student Splurge'
                 body = f'{username} just bought {item_name} for ${amount:,.2f}. Will this ruin their budget?'
+            elif move_type == 'sell_liability':
+                title = '🔄 Student Downsized'
+                body = f'{username} just sold their {item_name}. Smart move or forced cut?'
             elif move_type == 'take_loan':
                 title = '💳 Student Debt'
                 body = f'{username} took out a {item_name} loan for ${amount:,.2f}. Keep an eye on them.'
-            elif move_type == 'sell_asset' and profit is not None and profit >= 0:
-                title = '\U0001f4b0 Student Win'
-                body = f'{username} sold {item_name} for a ${profit:,.2f} profit. Impressive moves.'
-            elif move_type == 'sell_asset':
-                title = '\U0001f4c9 Student Alert'
-                body = f'{username} panic-sold {item_name} at a loss. Mentor them?'
+            elif move_type == 'rent_property':
+                title = '🏠 Student Housing Move'
+                body = f'{username} just rented {item_name} at ${amount:,.2f}/month. Watching their burn rate?'
+            elif move_type == 'move_out':
+                title = '📦 Student Relocated'
+                body = f'{username} just moved out of {item_name}. Living situation changed.'
             else:
                 title = '💵 Financial Move'
                 body = f'{username} made a financial move involving {item_name}.'
@@ -171,7 +180,7 @@ class ExpoPushService:
                         data={
                             'type': 'student_move',
                             'student_id': user_id,
-                            'navigate_to': f'/users/{user_id}'
+                            'screen': f'/profile?id={user_id}'
                         }
                     )
                 except Exception as e:

@@ -10,8 +10,10 @@ from datetime import datetime
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
-import uuid
 from app.services.profile_service import ProfileService
+import logging
+
+logger = logging.getLogger(__name__)
 
 def resolve_user_ids(user_id):
     """
@@ -162,7 +164,7 @@ def purchase_liability(current_user_id: str):
             'purchase_date': datetime.utcnow().isoformat()
         }).execute()
         
-        # Create notification
+        # In-app notification only (toast confirms the buy to the user)
         supabase.table('notifications').insert({
             'user_id': current_user_id,
             'type': 'financial_move',
@@ -171,25 +173,7 @@ def purchase_liability(current_user_id: str):
             'read': False
         }).execute()
         
-        # Send push notification
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='🚗 Lifestyle Purchase',
-                body=f'You purchased {item["name"]} for ${purchase_price:,.2f}',
-                notification_type='financial_move',
-                data={
-                    'liability_id': liability_id,
-                    'amount': float(purchase_price),
-                    'monthly_cost': float(monthly_cost),
-                    'transaction_type': 'expense'
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-        
-        # Send Mentorship Notification
+        # Send Mentorship Notification (push to followers only, not to buyer)
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,
@@ -209,7 +193,7 @@ def purchase_liability(current_user_id: str):
             )
             
             if trigger:
-                # Send mentor message to player (with push notification in Phase 4)
+                # Send mentor message to player (with push notification)
                 MentorService.send_mentor_message(
                     player_id=current_user_id,
                     mentor_data=trigger,
@@ -414,6 +398,19 @@ def sell_liability(current_user_id: str, liability_id: str):
         liability_uuid = uuid.UUID(liability_id)
         
         result = LiabilityService.sell_liability(liability_uuid, user_uuid)
+        
+        # Notify followers about the sale
+        try:
+            item_name = result.get('name', 'liability') if isinstance(result, dict) else 'liability'
+            ExpoPushService.notify_followers_of_financial_move(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                move_type='sell_liability',
+                item_name=item_name
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify followers of liability sale: {str(e)}")
+        
         return jsonify({
             'message': 'Liability sold successfully',
             'data': result

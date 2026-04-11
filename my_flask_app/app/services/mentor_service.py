@@ -488,7 +488,6 @@ class MentorService:
         db.session.add(interaction)
         db.session.commit()
         
-        # ============ PHASE 4: PUSH NOTIFICATION ============
         # Send push notification to player about new mentor message
         try:
             # Get supabase client if not provided
@@ -504,8 +503,9 @@ class MentorService:
                 body=message_content[:100] + ('...' if len(message_content) > 100 else ''),
                 notification_type='mentor_message',
                 data={
+                    'type': 'mentor',
                     'interaction_id': str(interaction.id),
-                    'mentor_id': str(mentor.id),
+                    'mentorId': str(mentor.id),
                     'mentor_name': mentor.name,
                     'trigger_type': trigger_type
                 }

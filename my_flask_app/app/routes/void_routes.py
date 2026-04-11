@@ -239,11 +239,17 @@ def react(current_user_id: str):
                 
                 # SANITY REWARD CHECK (Switching TO 'same')
                 if new_type == 'same':
+                    # Recipient reward
                     _apply_sanity_impact(post_res.data['user_id'], +1)
+                    # Reactor reward (Helper's High)
+                    _apply_sanity_impact(current_user_id, +1)
                     _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
                 # SANITY PENALTY (Switching TO 'oof')
                 elif new_type == 'oof':
+                    # Recipient penalty
                     _apply_sanity_impact(post_res.data['user_id'], -1)
+                    # Reactor penalty (the person being rough)
+                    _apply_sanity_impact(current_user_id, -1)
 
         else:
             # New Reaction
@@ -260,10 +266,16 @@ def react(current_user_id: str):
             
             # SANITY REWARD/PENALTY CHECK
             if new_type == 'same' and post_res.data['user_id'] != current_user_id:
+                # Recipient reward
                 _apply_sanity_impact(post_res.data['user_id'], +1)
+                # Reactor reward (Helper's High)
+                _apply_sanity_impact(current_user_id, +1)
                 _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
             elif new_type == 'oof' and post_res.data['user_id'] != current_user_id:
+                # Recipient penalty
                 _apply_sanity_impact(post_res.data['user_id'], -1)
+                # Reactor penalty (the person being rough)
+                _apply_sanity_impact(current_user_id, -1)
                 
         # Apply updates to post
         if post_update:

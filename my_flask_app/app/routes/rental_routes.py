@@ -41,7 +41,7 @@ def resolve_user_ids(user_id):
 rental_bp = Blueprint('rental', __name__)
 
 
-@rental_bp.route('/available', methods=['GET'])
+@rental_bp.route('/available/', methods=['GET'])
 def get_available_rentals():
     """Get available rental properties"""
     try:
@@ -50,7 +50,7 @@ def get_available_rentals():
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
-@rental_bp.route('/user/<user_id>', methods=['GET'])
+@rental_bp.route('/user/<user_id>/', methods=['GET'])
 @require_auth
 def get_user_rental(current_user_id: str, user_id: str):
     """Get specific user's active rental"""
@@ -87,7 +87,7 @@ def get_current_rental_internal(user_id):
         # Don't raise, just return None to allow the UI to handle it gracefully
         return None
 
-@rental_bp.route('/current', methods=['GET'])
+@rental_bp.route('/current/', methods=['GET'])
 @require_auth
 def get_current_rental(current_user_id: str):
     """Get user's current active rental"""
@@ -119,7 +119,7 @@ def get_rentals_overview(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@rental_bp.route('/rent', methods=['POST'])
+@rental_bp.route('/rent/', methods=['POST'])
 @require_auth
 def rent_property(current_user_id: str):
     """
@@ -188,7 +188,7 @@ def rent_property(current_user_id: str):
             'rented_at': datetime.utcnow().isoformat()
         }).execute()
         
-        # 6. Create notification
+        # 6. Create in-app notification record (toast confirms to user, no push)
         supabase.table('notifications').insert({
             'user_id': current_user_id,
             'type': 'financial_move',
@@ -197,22 +197,17 @@ def rent_property(current_user_id: str):
             'read': False
         }).execute()
         
-        # Send push notification
+        # Notify followers (push to mentors/observers only)
         try:
-            ExpoPushService.send_notification_to_user(
+            ExpoPushService.notify_followers_of_financial_move(
                 supabase_client=supabase,
                 user_id=current_user_id,
-                title='🏠 Property Rented',
-                body=f'You have successfully rented {property_data["name"]} for ${monthly_rent:,.2f}/month.',
-                notification_type='financial_move',
-                data={
-                    'rental_id': rental_id,
-                    'amount': float(monthly_rent),
-                    'transaction_type': 'expense'
-                }
+                move_type='rent_property',
+                item_name=property_data['name'],
+                amount=float(monthly_rent)
             )
         except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
+            print(f"Failed to notify followers of rental: {str(e)}")
         
         return jsonify({
             'success': True,
@@ -246,8 +241,8 @@ def rent_property(current_user_id: str):
         }), 500
 
 
-@rental_bp.route('/moveout', methods=['POST'])
-@rental_bp.route('/moveout/<rental_id>', methods=['POST'])
+@rental_bp.route('/moveout/', methods=['POST'])
+@rental_bp.route('/moveout/<rental_id>/', methods=['POST'])
 @require_auth
 def move_out(current_user_id: str, rental_id: str = None):
     """Move out of a rental property"""
@@ -284,7 +279,7 @@ def move_out(current_user_id: str, rental_id: str = None):
             'ended_at': datetime.utcnow().isoformat()
         }).eq('id', rental_id).eq('player_id', current_user_id).execute()
         
-        # Create notification
+        # Create in-app notification record (toast confirms to user, no push)
         supabase.table('notifications').insert({
             'user_id': current_user_id,
             'type': 'financial_move',
@@ -293,18 +288,16 @@ def move_out(current_user_id: str, rental_id: str = None):
             'read': False
         }).execute()
         
-        # Send push notification
+        # Notify followers (push to mentors/observers only)
         try:
-            ExpoPushService.send_notification_to_user(
+            ExpoPushService.notify_followers_of_financial_move(
                 supabase_client=supabase,
                 user_id=current_user_id,
-                title='📦 Moved Out',
-                body=f'You moved out of {property_name}.',
-                notification_type='financial_move',
-                data={'rental_id': rental_id}
+                move_type='move_out',
+                item_name=property_name
             )
         except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
+            print(f"Failed to notify followers of moveout: {str(e)}")
         
         return jsonify({
             'success': True,
