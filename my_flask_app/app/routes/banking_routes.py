@@ -3,9 +3,12 @@ from app import supabase
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.services.profile_service import ProfileService
+import uuid
 import logging
 
 logger = logging.getLogger(__name__)
+
+banking_bp = Blueprint('banking', __name__)
 
 def resolve_user_ids(user_id):
     """
@@ -28,9 +31,6 @@ def resolve_user_ids(user_id):
         return [user_id]
     except:
         return [user_id]
-import uuid
-
-banking_bp = Blueprint('banking', __name__)
 
 @banking_bp.route('/overview/', methods=['GET'])
 @require_auth

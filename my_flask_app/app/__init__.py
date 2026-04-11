@@ -13,6 +13,7 @@ supabase: Client = None
 def create_app(config_name='default'):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+    app.url_map.strict_slashes = False
 
     # Initialize extensions
     db.init_app(app)
@@ -21,7 +22,8 @@ def create_app(config_name='default'):
     # Initialize Supabase
     global supabase
     url = app.config.get('SUPABASE_URL')
-    key = app.config.get('SUPABASE_KEY')
+    # Use service role key if available for system-level access
+    key = app.config.get('SUPABASE_SERVICE_ROLE_KEY') or app.config.get('SUPABASE_KEY')
     if url and key:
         supabase = create_client(url, key)
     
@@ -51,6 +53,7 @@ def create_app(config_name='default'):
     from app.routes.void_routes import void_bp
     from app.routes.mentor_routes import mentor_bp
     from app.routes.cron_routes import cron_bp
+    from app.routes.banking_routes import banking_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -70,6 +73,7 @@ def create_app(config_name='default'):
     app.register_blueprint(void_bp, url_prefix='/api/void')
     app.register_blueprint(mentor_bp)  # No prefix - routes define their own paths
     app.register_blueprint(cron_bp, url_prefix='/api/cron')
+    app.register_blueprint(banking_bp, url_prefix='/api/banking')
 
     
     # Health check endpoint

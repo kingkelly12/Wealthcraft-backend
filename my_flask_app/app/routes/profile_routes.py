@@ -97,6 +97,12 @@ def get_comprehensive_dashboard(current_user_id: str):
         # 2. Balance
         from app.services.balance_service import BalanceService
         balance = BalanceService.get_current_balance(target_user_id)
+        
+        # Standardize balance to float
+        try:
+            balance = float(balance)
+        except:
+            balance = 0.0
 
         # 3. Assets
         assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
@@ -107,7 +113,7 @@ def get_comprehensive_dashboard(current_user_id: str):
         liabilities = liabilities_res.data or []
         
         # 5. Jobs
-        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_active', True).execute()
+        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         jobs = jobs_res.data or []
         
         # 6. Rental
