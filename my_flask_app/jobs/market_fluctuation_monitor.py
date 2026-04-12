@@ -105,6 +105,14 @@ def simulate_market_fluctuation():
         # 3. Build and send notifications
         notifications_to_send = []
         for user_id, changes in user_updates.items():
+            # Sync Net Worth for all affected users so leaderboard reflects market moves
+            try:
+                from app.services.profile_service import ProfileService
+                import uuid
+                ProfileService.recalculate_net_worth(uuid.UUID(user_id))
+            except Exception as e:
+                logger.error(f"Failed to sync net worth for user {user_id}: {e}")
+
             # Filter for significant changes, e.g. > 3%
             significant_changes = [c for c in changes if abs(c['change_pct']) >= 3.0]
             
@@ -123,7 +131,7 @@ def simulate_market_fluctuation():
                     'title': title,
                     'body': body,
                     'data': {
-                        'screen': f"/invest?category={most_significant['type']}",
+                        'screen': "/(tabs)/investments",
                         'category': most_significant['type'],
                         'changes': significant_changes[:3],
                     }
@@ -139,7 +147,7 @@ def simulate_market_fluctuation():
                         user_id=notif['user_id'],
                         title=notif['title'],
                         body=notif['body'],
-                        notification_type='system',
+                        notification_type='market_fluctuation',
                         data=notif.get('data')
                     )
                     if res:

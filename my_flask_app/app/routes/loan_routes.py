@@ -255,6 +255,10 @@ def repay_loan(current_user_id: str, liability_id: str = None):
             reason=f'Loan payment for {loan.get("name", "loan")}'
         )
 
+        # 4. Update loan status calculations
+        new_remaining_balance = remaining_balance - payment_amount
+        is_fully_paid = new_remaining_balance <= 0
+
         # ============ P2P REPAYMENT LOGIC ============
         # If this is a P2P loan, credit the lender
         if loan.get('liability_type') == 'p2p_loan' and loan.get('p2p_loan_id'):
@@ -297,10 +301,7 @@ def repay_loan(current_user_id: str, liability_id: str = None):
             except Exception as p2p_err:
                 print(f"Error handling P2P lender credit: {str(p2p_err)}")
         
-        # 4. Update loan
-        new_remaining_balance = remaining_balance - payment_amount
-        is_fully_paid = new_remaining_balance <= 0
-        
+        # 4. Finalize Liability Record
         if is_fully_paid:
             # Mark loan as completed and delete it
             supabase.table('liabilities').delete().eq('id', liability_id).execute()
@@ -329,6 +330,18 @@ def repay_loan(current_user_id: str, liability_id: str = None):
                 'message': f'You paid ${payment_amount:,.2f} towards your {loan.get("name", "loan")}. Remaining: ${new_remaining_balance:,.2f}',
                 'read': False
             }).execute()
+        
+        # Notify followers about the loan payment
+        try:
+            ExpoPushService.notify_followers_of_financial_move(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                move_type='repay_loan',
+                item_name=loan.get("name", "loan"),
+                amount=float(payment_amount)
+            )
+        except Exception as e:
+            print(f"Failed to notify followers of repayment: {str(e)}")
         
         return jsonify({
             'success': True,
@@ -413,6 +426,15 @@ def post_p2p_offer(current_user_id: str):
             'created_at': datetime.utcnow().isoformat()
         }).execute()
         
+        # Notify followers about the loan offer
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='post_p2p_offer',
+            item_name=purpose,
+            amount=float(amount)
+        )
+        
         return jsonify({
             'success': True,
             'message': 'P2P Loan offer posted successfully.',
@@ -457,18 +479,18 @@ def accept_p2p_loan(current_user_id: str):
         monthly_payment = total_repayment / int(loan['term_months'])
         
         # PRE-QUALIFICATION CHECKS
-        from app.models.profile import Profile
-        
-        profile = Profile.query.filter_by(user_id=current_user_id).first()
-        if not profile:
+        profile_res = supabase.table('profiles').select('*').eq('user_id', current_user_id).single().execute()
+        if not profile_res.data:
             return jsonify({'success': False, 'message': 'User profile not found'}), 404
             
+        profile = profile_res.data
         # 1. Credit Score Check
-        if profile.credit_score < 600:
+        credit_score = profile.get('credit_score', 0)
+        if credit_score < 600:
             return jsonify({'success': False, 'message': 'Pre-qualification failed: Credit score must be 600 or higher.'}), 400
             
         # 2. Monthly Income Check
-        monthly_income = Decimal(str(profile.monthly_income or 0))
+        monthly_income = Decimal(str(profile.get('monthly_income', 0)))
         if monthly_income <= 0:
             return jsonify({'success': False, 'message': 'Pre-qualification failed: You must have a positive monthly income.'}), 400
             

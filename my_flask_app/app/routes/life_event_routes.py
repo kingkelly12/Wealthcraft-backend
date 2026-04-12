@@ -122,6 +122,19 @@ def make_life_event_choice(current_user_id: str):
         if impact_income != 0:
             outcome_message = f"{outcome_message} (Permanent Salary Change: {'+' if impact_income > 0 else ''}${impact_income}/mo)"
 
+        # Notify followers about the life event choice if it had a financial impact
+        if net_impact != 0 or impact_income != 0:
+            try:
+                ExpoPushService.notify_followers_of_financial_move(
+                    supabase_client=supabase,
+                    user_id=current_user_id,
+                    move_type='life_event',
+                    item_name=choice.get('choice_label', 'Choice'),
+                    amount=float(abs(net_impact)) if net_impact != 0 else float(impact_income)
+                )
+            except Exception as e:
+                print(f"Failed to notify followers of life event choice: {str(e)}")
+
         return jsonify({
             'success': True,
             'message': 'Choice processed successfully',

@@ -131,24 +131,14 @@ class LiabilityService:
         sale_value = liability.current_value or liability.purchase_price
         sale_value = Decimal(str(sale_value))
         
-        # Update player balance
-        user_balance = UserBalance.query.filter_by(user_id=player_id).first()
-        if user_balance:
-            user_balance.current_balance = Decimal(str(user_balance.current_balance)) + sale_value
-        else:
-            # Create balance record if it doesn't exist (edge case)
-            user_balance = UserBalance(user_id=player_id, current_balance=sale_value)
-            db.session.add(user_balance)
-        
-        # Log transaction
-        transaction = Transaction(
-            user_id=player_id,
-            type='income',
-            category='liability_sale',
-            amount=float(sale_value),
-            description=f"Sold liability (ID: {str(liability.liability_id)[:8]}...)"
+        # Update player balance via standardized BalanceService
+        # This ensuring Supabase sync, Transaction logging, and Net Worth recalculation
+        from app.services.balance_service import BalanceService
+        balance_result = BalanceService.add_balance(
+            user_id=str(player_id),
+            amount=sale_value,
+            reason=f"Sold liability: {liability.liability_id}"
         )
-        db.session.add(transaction)
         
         # Remove associated monthly deductions
         MonthlyDeduction.query.filter_by(
@@ -166,7 +156,7 @@ class LiabilityService:
             'liability_id': str(liability.id),
             'purchase_price': float(liability.purchase_price),
             'depreciation_loss': float(Decimal(str(liability.purchase_price)) - sale_value),
-            'transaction_id': str(transaction.id)
+            'transaction_id': balance_result.get('transaction_id')
         }
     
     @staticmethod

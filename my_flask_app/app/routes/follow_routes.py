@@ -70,7 +70,7 @@ def follow_user(current_user_id: str):
         # Create notification for followed user — framed as MENTORSHIP
         supabase.table('notifications').insert({
             'user_id': str(data.target_user_id),
-            'type': 'mentorship',
+            'type': 'follow', # Standardized type for frontend handling
             'title': '🎓 New Student',
             'message': 'A player just chose you as their mentor. They\'ll learn from your moves.',
             'related_user_id': current_user_id,
@@ -84,10 +84,11 @@ def follow_user(current_user_id: str):
                 user_id=str(data.target_user_id),
                 title='🎓 You Have a New Student',
                 body='Someone just chose you as their financial mentor. They\'ll learn from your moves.',
-                notification_type='mentorship',
+                notification_type='follow', # Unified type
                 data={
+                    'userId': current_user_id, # Standard key for follow navigation
                     'follower_id': current_user_id,
-                    'navigate_to': f'/users/{current_user_id}'
+                    'screen': f'/profile?id={current_user_id}' # Direct navigation path
                 }
             )
         except Exception as e:

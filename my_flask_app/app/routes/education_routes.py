@@ -187,6 +187,15 @@ def enroll_in_course(current_user_id: str):
             'started_at': datetime.utcnow().isoformat()
         }).execute()
         
+        # Notify followers about the enrollment
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='enroll_course',
+            item_name=course['title'],
+            amount=float(course_cost)
+        )
+        
         return jsonify({
             'success': True,
             'message': f'You have successfully enrolled in {course["title"]}.',
@@ -261,18 +270,13 @@ def complete_course(current_user_id: str):
             'completed_at': datetime.utcnow().isoformat()
         }).eq('id', str(data.user_course_id)).execute()
         
-        # 3. Apply salary boost to profile
-        profile_response = supabase.table('profiles').select('monthly_income').eq('user_id', current_user_id).single().execute()
-        
-        if profile_response.data:
-            current_income = profile_response.data.get('monthly_income', 0)
+        # 3. Apply salary boost to profile (permanent income increase)
+        try:
             salary_boost = Decimal(str(course.get('salary_boost', 0)))
-            new_income = current_income + float(salary_boost)
-            
-            supabase.table('profiles').update({
-                'monthly_income': new_income
-            }).eq('user_id', current_user_id).execute()
-        else:
+            user_uuid = uuid.UUID(current_user_id)
+            ProfileService.update_monthly_income(user_uuid, float(salary_boost))
+        except Exception as e:
+            logger.error(f"Failed to update salary boost for user {current_user_id}: {e}")
             salary_boost = Decimal('0')
         
         # 4. Give completion bonus (2x salary boost)
@@ -322,6 +326,15 @@ def complete_course(current_user_id: str):
                 )
         except Exception as e:
             print(f"Failed to trigger mentor response: {str(e)}")
+        
+        # Notify followers about the course completion
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='complete_course',
+            item_name=course.get('title', 'Course'),
+            amount=float(bonus)
+        )
         
         return jsonify({
             'success': True,

@@ -107,3 +107,12 @@ class ProfileService:
             profile.credit_score = max(300, min(850, credit_score))  # Clamp between 300-850
             db.session.commit()
         return profile
+
+    @staticmethod
+    def update_trading_profits(user_id: uuid.UUID, amount: float) -> Optional[Profile]:
+        """Update user's total trading profits (permanent change)"""
+        profile = Profile.query.filter_by(user_id=user_id).first()
+        if profile:
+            profile.trading_profits = float(profile.trading_profits or 0) + amount
+            db.session.commit()
+        return profile

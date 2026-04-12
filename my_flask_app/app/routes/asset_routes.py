@@ -379,16 +379,13 @@ def sell_asset(current_user_id: str, asset_id: str):
         # 3. Delete the asset
         supabase.table('user_assets').delete().eq('id', asset_id).execute()
         
-        # 3.5 Update Profile (Trading Profits & Net Worth)
+        # 3.5 Update Profile (Trading Profits)
+        # Net Worth is already synced via BalanceService.add_balance above
         try:
-            profile = Profile.query.filter_by(user_id=current_user_id).first()
-            if profile:
-                profile.trading_profits = (profile.trading_profits or 0) + profit
-                profile.net_worth = (profile.net_worth or 0) + profit
-                db.session.commit()
+            user_uuid = uuid.UUID(current_user_id)
+            ProfileService.update_trading_profits(user_uuid, float(profit))
         except Exception as e:
-            print(f"Failed to update profile stats: {e}")
-            db.session.rollback()
+            logger.error(f"Failed to update trading profits for user {current_user_id}: {e}")
         
         # 4. Create notification
         supabase.table('notifications').insert({

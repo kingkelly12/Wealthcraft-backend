@@ -80,8 +80,8 @@ def get_banking_overview(current_user_id: str):
         bank_loans_res = supabase.table('bank_loans').select('*').is_('borrower_id', 'null').execute()
         bank_loans = bank_loans_res.data or []
         
-        # 7. Available P2P Loans
-        p2p_loans_res = supabase.table('p2p_loans').select('*').eq('status', 'pending').neq('lender_id', current_user_id).execute()
+        # 7. Available P2P Loans (with lender username)
+        p2p_loans_res = supabase.table('p2p_loans').select('*, profiles!lender_id(username)').eq('status', 'pending').neq('lender_id', current_user_id).execute()
         p2p_loans = p2p_loans_res.data or []
         
         # Account balance extraction

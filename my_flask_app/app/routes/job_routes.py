@@ -192,6 +192,15 @@ def apply_for_job(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
+        # Notify followers about the new job
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='new_job',
+            item_name=job['title'],
+            amount=float(job['salary'])
+        )
+        
         return jsonify({
             'success': True,
             'message': f'You have been hired as a {job["title"]}!',
@@ -259,6 +268,14 @@ def quit_job(current_user_id: str, job_id: str):
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
+        
+        # Notify followers that the user quit their job
+        ExpoPushService.notify_followers_of_financial_move(
+            supabase_client=supabase,
+            user_id=current_user_id,
+            move_type='quit_job',
+            item_name=job['title']
+        )
         
         return jsonify({
             'success': True,
