@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app import supabase
+import uuid
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 
@@ -80,24 +81,33 @@ def make_life_event_choice(current_user_id: str):
             current_balance = BalanceService.get_current_balance(current_user_id)
             balance_result = {'new_balance': current_balance}
 
-        # 5. Apply Sanity Impact & Check Burnout
-        # Fetch current profile to get sanity
-        profile_res = supabase.table('profiles').select('sanity').eq('user_id', current_user_id).single().execute()
-        current_sanity = profile_res.data.get('sanity', 100)
+        # 5. Apply Sanity & Income Impact & Check Burnout
+        from app.services.profile_service import ProfileService
+        user_uuid = uuid.UUID(current_user_id)
         
-        # Use choice-level sanity impact if set, else fall back to event-level
+        # Income Impact
+        impact_income = choice.get('impact_income', 0)
+        if impact_income == 0:
+             impact_income = event.get('impact_income', 0)
+             
+        if impact_income != 0:
+            ProfileService.update_monthly_income(user_uuid, float(impact_income))
+
+        # Sanity Impact
         impact_sanity = choice.get('impact_sanity', None)
         if impact_sanity is None or impact_sanity == 0:
             impact_sanity = event.get('impact_sanity', 0)
         
-        new_sanity = current_sanity + impact_sanity
+        profile = ProfileService.update_sanity(user_uuid, impact_sanity)
+        new_sanity = profile.sanity if profile else 0
+        current_sanity = new_sanity - impact_sanity # Approximation of old sanity for the check below
+
         burnout_triggered = False
         game_over = False
         outcome_message = choice.get('outcome_description', 'Choice made')
 
         if new_sanity <= 0:
             # GAME OVER — sanity hits 0, stays at 0 (no auto-reset)
-            # Only apply penalty if this is a new burnout (was above 0 before)
             if current_sanity > 0:
                 burnout_triggered = True
                 game_over = True
@@ -108,11 +118,10 @@ def make_life_event_choice(current_user_id: str):
                     reason="Medical Bill: Mental Breakdown"
                 )
                 outcome_message = f"GAME OVER! You've lost your mind. Hospital bill: $500. Use recovery actions to regain sanity. {outcome_message}"
-            new_sanity = 0  # clamp to 0, no reset
         
-        # Update Profile with new sanity
-        supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', current_user_id).execute()
-        
+        if impact_income != 0:
+            outcome_message = f"{outcome_message} (Permanent Salary Change: {'+' if impact_income > 0 else ''}${impact_income}/mo)"
+
         return jsonify({
             'success': True,
             'message': 'Choice processed successfully',
@@ -121,18 +130,14 @@ def make_life_event_choice(current_user_id: str):
             'new_balance': float(balance_result['new_balance']),
             'sanity_change': impact_sanity,
             'new_sanity': new_sanity,
+            'income_change': float(impact_income),
             'burnout_triggered': burnout_triggered,
             'game_over': game_over
         }), 200
         
-    except ValidationError as e:
-        return jsonify({
-            'success': False,
-            'error': 'VALIDATION_ERROR',
-            'message': 'Invalid request data',
-            'details': e.errors()
-        }), 400
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         error_message = str(e)
         
         if 'Insufficient funds' in error_message:

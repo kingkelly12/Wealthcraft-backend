@@ -49,6 +49,57 @@ class ProfileService:
         return profile
 
     @staticmethod
+    def recalculate_net_worth(user_id: uuid.UUID) -> float:
+        """
+        Calculates and updates the cached net_worth core field in the profiles table.
+        This ensures the leaderboard (which reads from profiles.net_worth) is accurate.
+        """
+        from app import supabase
+        from app.services.balance_service import BalanceService
+        
+        try:
+            # 1. Get Balance
+            balance = float(BalanceService.get_current_balance(str(user_id)))
+            
+            # 2. Get Assets
+            assets_res = supabase.table('user_assets').select('value, current_value').eq('user_id', str(user_id)).execute()
+            assets_total = sum(float(a.get('current_value') or a.get('value') or 0) for a in (assets_res.data or []))
+            
+            # 3. Get Liabilities
+            liabilities_res = supabase.table('player_liabilities').select('amount, current_value').eq('player_id', str(user_id)).eq('is_active', True).execute()
+            liabilities_total = sum(float(l.get('current_value') or l.get('amount') or 0) for l in (liabilities_res.data or []))
+            
+            # 4. Final Calculation
+            net_worth = balance + assets_total - liabilities_total
+            
+            # 5. Update Profile
+            ProfileService.update_net_worth(user_id, net_worth)
+            
+            return net_worth
+        except Exception as e:
+            print(f"Failed to recalculate net worth for {user_id}: {e}")
+            return 0.0
+
+    @staticmethod
+    def update_sanity(user_id: uuid.UUID, amount: int) -> Optional[Profile]:
+        """Update user's sanity with clamping between 0-100"""
+        profile = Profile.query.filter_by(user_id=user_id).first()
+        if profile:
+            new_sanity = max(0, min(100, profile.sanity + amount))
+            profile.sanity = new_sanity
+            db.session.commit()
+        return profile
+
+    @staticmethod
+    def update_monthly_income(user_id: uuid.UUID, amount: float) -> Optional[Profile]:
+        """Update user's monthly income (permanent change)"""
+        profile = Profile.query.filter_by(user_id=user_id).first()
+        if profile:
+            profile.monthly_income = float(profile.monthly_income) + amount
+            db.session.commit()
+        return profile
+
+    @staticmethod
     def update_credit_score(user_id: uuid.UUID, credit_score: int) -> Optional[Profile]:
         """Update user's credit score"""
         profile = Profile.query.filter_by(user_id=user_id).first()

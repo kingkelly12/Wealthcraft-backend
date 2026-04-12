@@ -76,6 +76,13 @@ class BalanceService:
                 'created_at': datetime.utcnow().isoformat()
             }).execute()
             
+            # 4. Sync Net Worth for Leaderboard
+            try:
+                from app.services.profile_service import ProfileService
+                ProfileService.recalculate_net_worth(uuid.UUID(user_id))
+            except Exception as sync_error:
+                print(f"Failed to sync net worth during add_balance: {sync_error}")
+
             return {
                 'success': True,
                 'new_balance': new_balance,
@@ -130,6 +137,13 @@ class BalanceService:
                 'created_at': datetime.utcnow().isoformat()
             }).execute()
             
+            # 4. Sync Net Worth for Leaderboard
+            try:
+                from app.services.profile_service import ProfileService
+                ProfileService.recalculate_net_worth(uuid.UUID(user_id))
+            except Exception as sync_error:
+                print(f"Failed to sync net worth during subtract_balance: {sync_error}")
+
             return {
                 'success': True,
                 'new_balance': new_balance,
