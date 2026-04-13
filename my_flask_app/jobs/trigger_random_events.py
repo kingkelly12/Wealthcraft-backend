@@ -29,11 +29,19 @@ def trigger_random_events():
     """
     logger.info("Starting random event trigger job...")
 
-    now = datetime.utcnow()
-    four_days_ago = now - timedelta(days=4)
+    try:
+        now = datetime.utcnow()
+        four_days_ago = now - timedelta(days=4)
 
-    active_profiles = Profile.query.all()
-    logger.info(f"Found {len(active_profiles)} active profiles")
+        # Only get active profiles (last active in last 30 days)
+        active_profiles = Profile.query.filter(
+            Profile.last_active_at >= (now - timedelta(days=30))
+        ).limit(500).all()  # Limit to prevent infinite loops
+        
+        logger.info(f"Found {len(active_profiles)} active profiles")
+    except Exception as e:
+        logger.error(f"Error fetching active profiles: {e}")
+        return {'error': str(e), 'processed': 0}
 
     events_triggered = 0
     errors = 0
@@ -63,7 +71,8 @@ def trigger_random_events():
             available_events = query.all()
             if not available_events:
                 logger.warning("No active life events found in database.")
-                break
+                skipped += 1
+                continue
 
             selected_event = random.choice(available_events)
 
@@ -122,6 +131,13 @@ def trigger_random_events():
     logger.info(
         f"Job Complete. Triggered: {events_triggered}, Skipped (Cooldown): {skipped}, Errors: {errors}"
     )
+    
+    return {
+        'events_triggered': events_triggered,
+        'skipped': skipped,
+        'errors': errors,
+        'messages_sent': len(notifications_to_send)
+    }
 
 if __name__ == '__main__':
     from app import create_app

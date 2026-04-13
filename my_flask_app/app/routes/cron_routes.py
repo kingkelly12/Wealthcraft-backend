@@ -52,7 +52,15 @@ def cron_mentor_analysis():
         result = run_daily_mentor_analysis()
         return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Mentor analysis failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 
 @cron_bp.route('/random-events/', methods=['POST'], strict_slashes=False)
@@ -60,10 +68,18 @@ def cron_mentor_analysis():
 def cron_random_events():
     """Trigger random life events — Schedule: 0 9 * * * (9 AM daily)"""
     try:
-        trigger_random_events()
-        return jsonify({'success': True, 'message': 'Random events triggered'}), 200
+        result = trigger_random_events()
+        return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Random events failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 @cron_bp.route('/inactive-users-monitor/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
@@ -73,7 +89,15 @@ def cron_inactive_users_monitor():
         result = run_inactive_users_monitor()
         return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Inactive users monitor failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 
 # ── Hourly Jobs ─────────────────────────────────────────────────
@@ -86,7 +110,15 @@ def cron_market_monitor():
         simulate_market_fluctuation()
         return jsonify({'success': True, 'message': 'Market monitor executed'}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Market monitor failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 
 # ── Monthly Jobs ────────────────────────────────────────────────
@@ -99,7 +131,15 @@ def cron_depreciation():
         result = run_monthly_depreciation()
         return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Depreciation job failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 
 @cron_bp.route('/appreciation/', methods=['POST'], strict_slashes=False)
@@ -110,7 +150,15 @@ def cron_appreciation():
         result = run_monthly_appreciation()
         return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Appreciation job failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 
 @cron_bp.route('/loan-deductions/', methods=['POST'], strict_slashes=False)
@@ -118,7 +166,54 @@ def cron_appreciation():
 def cron_loan_deductions():
     """Monthly loan deductions — Schedule: 0 4 15 * * (15th, 4 AM)"""
     try:
-        process_monthly_deductions()
-        return jsonify({'success': True, 'message': 'Loan deductions processed'}), 200
+        result = process_monthly_deductions()
+        return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        import logging
+        error_logger = logging.getLogger(__name__)
+        error_logger.error(f"Loan deductions failed: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({
+            'success': False, 
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
+
+
+# ── Diagnostic Endpoint ─────────────────────────────────────────
+
+@cron_bp.route('/health/', methods=['GET', 'POST'], strict_slashes=False)
+@require_cron_secret
+def cron_health():
+    """Diagnostic endpoint to verify cron job infrastructure is operational"""
+    from app import supabase
+    import logging
+    
+    diagnostics = {
+        'supabase_client_initialized': supabase is not None,
+        'cron_secret_configured': bool(current_app.config.get('CRON_SECRET')),
+        'supabase_url_set': bool(current_app.config.get('SUPABASE_URL')),
+        'service_role_key_set': bool(current_app.config.get('SUPABASE_SERVICE_ROLE_KEY')),
+        'regular_key_set': bool(current_app.config.get('SUPABASE_KEY')),
+    }
+    
+    # Test database connection
+    try:
+        if supabase:
+            test_result = supabase.table('assets').select('id').limit(1).execute()
+            diagnostics['database_accessible'] = True
+        else:
+            diagnostics['database_accessible'] = False
+            diagnostics['error'] = 'Supabase client is None'
+    except Exception as e:
+        diagnostics['database_accessible'] = False
+        diagnostics['error'] = str(e)
+    
+    return jsonify({
+        'success': all([
+            diagnostics.get('supabase_client_initialized'),
+            diagnostics.get('cron_secret_configured'),
+            diagnostics.get('database_accessible')
+        ]),
+        'diagnostics': diagnostics
+    }), 200

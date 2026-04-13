@@ -13,6 +13,8 @@ from app.services.push_notification_service import ExpoPushService
 from datetime import datetime
 import logging
 import random
+import time
+import traceback
 
 # Setup logging
 logging.basicConfig(
@@ -22,23 +24,51 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _retry_request(operation, max_retries=3, initial_delay=0.5):
+    """
+    Retry a Supabase operation with exponential backoff.
+    Prevents connection overwhelming and handles temporary failures.
+    """
+    delay = initial_delay
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            return operation()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay}s: {str(e)}")
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"All {max_retries} attempts failed: {str(e)}")
+    
+    raise last_error
+
+
 def simulate_market_fluctuation():
     """
     Apply market price changes for global assets and update user portfolios.
     Sends push notifications for significant movers.
+    Uses throttling and retry logic to avoid overwhelming Supabase connections.
     """
     logger.info("Starting market fluctuation and portfolio update...")
 
     try:
         # 1. Fetch global assets that are volatile
         fluctuating_categories = ['stocks', 'crypto', 'investments']
-        assets_result = supabase.table('assets').select('*').in_('category', fluctuating_categories).execute()
+        assets_result = _retry_request(
+            lambda: supabase.table('assets').select('*').in_('category', fluctuating_categories).execute()
+        )
 
         if not assets_result.data:
             logger.info("No volatile market assets found")
             return
 
         global_changes = {}
+        REQUEST_DELAY = 0.1  # 100ms delay between requests to avoid overwhelming connection
+        
         for asset in assets_result.data:
             cat = asset.get('category')
             current_price = float(asset.get('price', 0))
@@ -55,8 +85,16 @@ def simulate_market_fluctuation():
             new_price = current_price * (1 + price_change_pct / 100)
             new_price = max(1.0, float(new_price)) # prevent $0 or negative
 
-            # Update global asset
-            supabase.table('assets').update({'price': new_price}).eq('id', asset['id']).execute()
+            # Update global asset with retry logic
+            try:
+                _retry_request(
+                    lambda: supabase.table('assets').update({'price': new_price}).eq('id', asset['id']).execute()
+                )
+            except Exception as update_error:
+                logger.error(f"Failed to update asset {asset['id']}: {update_error}")
+                continue
+            
+            time.sleep(REQUEST_DELAY)  # Throttle to avoid connection overwhelm
 
             global_changes[asset['name']] = {
                 'new_price': new_price,
@@ -70,9 +108,11 @@ def simulate_market_fluctuation():
 
         # 2. Fetch user portfolios containing these assets
         affected_types = ['stocks', 'crypto'] 
-        user_assets_result = supabase.table('user_assets').select(
-            'id, user_id, name, asset_type, quantity, value'
-        ).in_('asset_type', affected_types).execute()
+        user_assets_result = _retry_request(
+            lambda: supabase.table('user_assets').select(
+                'id, user_id, name, asset_type, quantity, value'
+            ).in_('asset_type', affected_types).execute()
+        )
 
         user_updates = {}
         
@@ -85,8 +125,16 @@ def simulate_market_fluctuation():
                     quantity = float(ua.get('quantity', 1))
                     new_value = new_price * quantity
                     
-                    # Update user's specific asset value in database
-                    supabase.table('user_assets').update({'value': new_value}).eq('id', ua['id']).execute()
+                    # Update user's specific asset value in database with retry logic
+                    try:
+                        _retry_request(
+                            lambda: supabase.table('user_assets').update({'value': new_value}).eq('id', ua['id']).execute()
+                        )
+                    except Exception as update_error:
+                        logger.error(f"Failed to update user asset {ua['id']}: {update_error}")
+                        continue
+                    
+                    time.sleep(REQUEST_DELAY)  # Throttle requests
 
                     # Record for notifications
                     user_id = ua['user_id']
@@ -110,8 +158,9 @@ def simulate_market_fluctuation():
                 from app.services.profile_service import ProfileService
                 import uuid
                 ProfileService.recalculate_net_worth(uuid.UUID(user_id))
+                time.sleep(0.2)  # Throttle to prevent connection overwhelm during batch operations
             except Exception as e:
-                logger.error(f"Failed to sync net worth for user {user_id}: {e}")
+                logger.error(f"Failed to sync net worth for user {user_id}: {e}", exc_info=True)
 
             # Filter for significant changes, e.g. > 3%
             significant_changes = [c for c in changes if abs(c['change_pct']) >= 3.0]

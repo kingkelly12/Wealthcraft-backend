@@ -7,7 +7,6 @@ Run this daily via cron or task scheduler
 from app import db, supabase
 from app.services.mentor_service import MentorService
 from app.models.profile import Profile
-from app.models.user import User
 from datetime import datetime, timedelta
 import logging
 
@@ -22,31 +21,30 @@ def run_daily_mentor_analysis():
     """Run daily financial analysis for all active players"""
     logger.info("Starting daily mentor analysis...")
 
-    # Get all active users (logged in within last 30 days)
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    active_users = User.query.filter(
-        User.last_login >= thirty_days_ago
-    ).all()
-
-    logger.info(f"Found {len(active_users)} active users")
+    try:
+        # Get all active users (last active within last 30 days)
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        active_profiles = Profile.query.filter(
+            Profile.last_active_at >= thirty_days_ago
+        ).all()
+        
+        logger.info(f"Found {len(active_profiles)} active users")
+    except Exception as e:
+        logger.error(f"Error fetching active profiles: {e}")
+        return {'error': str(e), 'processed': 0}
 
     messages_sent = 0
     errors = 0
 
-    for user in active_users:
+    for profile in active_profiles:
         try:
-            # Get profile
-            profile = Profile.query.filter_by(user_id=user.id).first()
-            if not profile:
-                continue
-
             # Analyze finances
-            metrics = MentorService.analyze_player_finances(user.id)
+            metrics = MentorService.analyze_player_finances(profile.user_id)
             if not metrics:
                 continue
 
             # Check triggers
-            triggers = MentorService.check_triggers(user.id, metrics)
+            triggers = MentorService.check_triggers(profile.user_id, metrics)
 
             # Sort by priority (highest first)
             triggers.sort(key=lambda x: x['priority'], reverse=True)
@@ -54,14 +52,14 @@ def run_daily_mentor_analysis():
             # Send top 1-2 messages (don't overwhelm)
             for trigger in triggers[:2]:
                 mentor_data = MentorService.generate_personalized_message(
-                    user.id,
+                    profile.user_id,
                     trigger,
                     profile.username
                 )
 
                 if mentor_data:
                     MentorService.send_mentor_message(
-                        user.id,
+                        profile.user_id,
                         mentor_data,
                         metrics,
                         supabase_client=supabase
@@ -73,7 +71,7 @@ def run_daily_mentor_analysis():
 
         except Exception as e:
             errors += 1
-            logger.error(f"Error processing user {user.id}: {str(e)}")
+            logger.error(f"Error processing profile {profile.username}: {str(e)}")
             continue
 
     logger.info(
@@ -84,7 +82,7 @@ def run_daily_mentor_analysis():
     return {
         'messages_sent': messages_sent,
         'errors': errors,
-        'users_processed': len(active_users)
+        'users_processed': len(active_profiles)
     }
 
 if __name__ == '__main__':

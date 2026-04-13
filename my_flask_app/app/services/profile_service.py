@@ -56,18 +56,19 @@ class ProfileService:
         """
         from app import supabase
         from app.services.balance_service import BalanceService
+        import time
         
         try:
             # 1. Get Balance
             balance = float(BalanceService.get_current_balance(str(user_id)))
             
-            # 2. Get Assets
-            assets_res = supabase.table('user_assets').select('value, current_value').eq('user_id', str(user_id)).execute()
-            assets_total = sum(float(a.get('current_value') or a.get('value') or 0) for a in (assets_res.data or []))
+            # 2. Get Assets - only select 'value' column (current_value doesn't exist in schema)
+            assets_res = supabase.table('user_assets').select('value').eq('user_id', str(user_id)).execute()
+            assets_total = sum(float(a.get('value') or 0) for a in (assets_res.data or []))
             
-            # 3. Get Liabilities
-            liabilities_res = supabase.table('player_liabilities').select('amount, current_value').eq('player_id', str(user_id)).eq('is_active', True).execute()
-            liabilities_total = sum(float(l.get('current_value') or l.get('amount') or 0) for l in (liabilities_res.data or []))
+            # 3. Get Liabilities - use 'current_value' column (how much liability is currently owed)
+            liabilities_res = supabase.table('player_liabilities').select('current_value').eq('player_id', str(user_id)).eq('is_active', True).execute()
+            liabilities_total = sum(float(l.get('current_value') or 0) for l in (liabilities_res.data or []))
             
             # 4. Final Calculation
             net_worth = balance + assets_total - liabilities_total
@@ -77,7 +78,9 @@ class ProfileService:
             
             return net_worth
         except Exception as e:
-            print(f"Failed to recalculate net worth for {user_id}: {e}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to recalculate net worth for {user_id}: {e}", exc_info=True)
             return 0.0
 
     @staticmethod
