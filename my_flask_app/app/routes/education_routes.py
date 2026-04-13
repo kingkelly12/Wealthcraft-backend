@@ -51,26 +51,19 @@ def get_education_overview(current_user_id: str):
     """
     Consolidated endpoint for Virtual Academy screen.
     Returns both available courses and user's current progress.
+    Optimized to minimize API calls (2 queries instead of 3).
     """
     try:
         user_ids = resolve_user_ids(current_user_id)
         logger.info(f"Education Overview: fetching data for user_ids {user_ids}")
         
-        # 1. Fetch all available courses
+        # 1. Fetch all available courses (sorted by cost)
         courses_res = supabase.table('courses').select('*').order('cost').execute()
         available_courses = courses_res.data or []
         
-        # 2. Fetch enrolled courses
-        # Manually join to bypass missing Postgres foreign key constraint
-        enrolled_res = supabase.table('user_courses').select('*').in_('user_id', user_ids).execute()
+        # 2. Fetch enrolled courses - GET COURSES DETAILS IN ONE JOIN (avoid separate query)
+        enrolled_res = supabase.table('user_courses').select('*, courses(*)').in_('user_id', user_ids).execute()
         enrolled_courses = enrolled_res.data or []
-        
-        if enrolled_courses:
-            course_ids = [c['course_id'] for c in enrolled_courses]
-            courses_detail_res = supabase.table('courses').select('*').in_('id', course_ids).execute()
-            courses_map = {c['id']: c for c in (courses_detail_res.data or [])}
-            for ec in enrolled_courses:
-                ec['courses'] = courses_map.get(ec['course_id'])
         
         return jsonify({
             'success': True,
@@ -81,7 +74,7 @@ def get_education_overview(current_user_id: str):
         }), 200
         
     except Exception as e:
-        print(f"[Education Overview] Error: {str(e)}")
+        logger.error(f"[Education Overview] Error: {str(e)}", exc_info=True)
         return jsonify({
             'success': False,
             'error': 'FETCH_FAILED',
@@ -101,22 +94,15 @@ def get_courses():
 @education_bp.route('/enrolled/', methods=['GET'])
 @require_auth
 def get_enrolled_courses(current_user_id: str):
-    """Get courses the user is enrolled in"""
+    """Get courses the user is enrolled in - includes course details via join"""
     try:
-        # Use manual join syntax
-        response = supabase.table('user_courses').select('*').eq('user_id', current_user_id).execute()
+        # Use join to get course details in one query instead of two
+        response = supabase.table('user_courses').select('*, courses(*)').eq('user_id', current_user_id).execute()
         enrolled_courses = response.data or []
-        
-        if enrolled_courses:
-            course_ids = [c['course_id'] for c in enrolled_courses]
-            if course_ids:
-                courses_detail_res = supabase.table('courses').select('*').in_('id', course_ids).execute()
-                courses_map = {c['id']: c for c in (courses_detail_res.data or [])}
-                for ec in enrolled_courses:
-                    ec['courses'] = courses_map.get(ec['course_id'])
                     
         return jsonify({'success': True, 'data': enrolled_courses}), 200
     except Exception as e:
+        logger.error(f"[Get Enrolled Courses] Error: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @education_bp.route('/enroll/', methods=['POST'])
@@ -304,6 +290,7 @@ def complete_course(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
         # Check for mentor congratulations on course completion
         try:
             trigger = MentorService.check_real_time_triggers(

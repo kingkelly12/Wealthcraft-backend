@@ -183,7 +183,7 @@ def rent_property(current_user_id: str):
             'id': rental_id,
             'player_id': current_user_id,
             'property_id': str(data.property_id),
-            'monthly_rent': float(monthly_rent),
+            'monthly_rent': int(monthly_rent),
             'is_active': True,
             'rented_at': datetime.utcnow().isoformat()
         }).execute()

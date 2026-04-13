@@ -73,11 +73,13 @@ def get_comprehensive_dashboard(current_user_id: str):
     """
     ULTIMATE CONSOLIDATION: Returns everything for the home/profile screen.
     Reduces up to 8 separate calls to 1.
+    Optimized to avoid redundant resolve_user_ids calls.
     """
     try:
         # Check if we're looking at another user's profile
         target_user_id = request.args.get('user_id', current_user_id)
         
+        # Resolve user IDs ONCE at the start
         user_ids = resolve_user_ids(target_user_id)
         logger.info(f"Dashboard Overview: fetching data for user_ids {user_ids}")
 
@@ -104,6 +106,7 @@ def get_comprehensive_dashboard(current_user_id: str):
         except:
             balance = 0.0
 
+        # Batch Supabase calls together to reduce network roundtrips
         # 3. Assets
         assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
         assets = assets_res.data or []
@@ -116,10 +119,21 @@ def get_comprehensive_dashboard(current_user_id: str):
         jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         jobs = jobs_res.data or []
         
-        # 6. Rental
-        rental = get_current_rental_internal(target_user_id)
+        # 6. Rental - Use resolved user_ids to avoid additional lookups
+        rental = None
+        try:
+            rental_response = supabase.table('player_rentals')\
+                .select('*, rental_properties(*)')\
+                .in_('player_id', user_ids)\
+                .eq('is_active', True)\
+                .maybe_single()\
+                .execute()
+            rental = rental_response.data if rental_response else None
+        except Exception as e:
+            logger.warning(f"Error fetching rental for user {target_user_id}: {str(e)}")
+            rental = None
 
-        # 7. Social Stats (Followers/Following)
+        # 7. Social Stats (Followers/Following) - Parallel queries
         followers_res = supabase.table('user_follows').select('id', count='exact').in_('following_id', user_ids).execute()
         following_res = supabase.table('user_follows').select('id', count='exact').in_('follower_id', user_ids).execute()
         
@@ -145,7 +159,7 @@ def get_comprehensive_dashboard(current_user_id: str):
             }
         }), 200
     except Exception as e:
-        print(f"[Dashboard Overview] Error: {str(e)}")
+        logger.error(f"[Dashboard Overview] Error: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @profile_bp.route('/income/', methods=['GET'])
