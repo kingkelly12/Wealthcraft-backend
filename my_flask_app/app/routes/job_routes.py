@@ -166,16 +166,20 @@ def apply_for_job(current_user_id: str):
             reason=f'Job salary advance for {job["title"]} at {job["company"]}'
         )
         
-        # 6. Create notification
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'New Job!',
-            'message': f'You are now a {job["title"]} at {job["company"]}. Received ${job["salary"]:,.2f} advance.',
-            'read': False
-        }).execute()
+        # 6. Send push notification to followers
+        # (User gets immediate toast feedback from API response)
+        try:
+            ExpoPushService.notify_followers_of_financial_move(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                move_type='new_job',
+                item_name=job['title'],
+                amount=float(job['salary'])
+            )
+        except Exception as e:
+            print(f"Failed to notify followers of new job: {str(e)}")
         
-        # Send push notification
+        # Also send direct push to user for immediate alert
         try:
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,
@@ -247,16 +251,19 @@ def quit_job(current_user_id: str, job_id: str):
         # Update job to inactive (use .in_ for same reason)
         supabase.table('jobs').update({'is_current': False}).eq('id', job_id).in_('user_id', user_ids).execute()
         
-        # Create notification
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'Quit Job',
-            'message': f'You quit your job as {job["title"]}',
-            'read': False
-        }).execute()
+        # Send push notification to followers
+        # (User gets immediate toast feedback from API response)
+        try:
+            ExpoPushService.notify_followers_of_financial_move(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                move_type='quit_job',
+                item_name=job['title']
+            )
+        except Exception as e:
+            print(f"Failed to notify followers of quit job: {str(e)}")
         
-        # Send push notification
+        # Also send direct push to user for immediate alert
         try:
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,

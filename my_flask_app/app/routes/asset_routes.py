@@ -143,16 +143,8 @@ def purchase_asset(current_user_id: str):
             
             result_asset_id = insert_response.data[0]['id'] if insert_response.data else None
         
-        # 7. Create in-app notification record (drives the notification bell/feed only, no push)
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'Asset Purchased',
-            'message': f'You purchased {quantity} {asset["name"]} for ${total_price:,.2f}',
-            'read': False
-        }).execute()
-        
-        # Send Mentorship Notification (push to followers only, not to buyer)
+        # 7. Notify followers of asset purchase
+        # (User gets immediate toast feedback from API response)
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,
@@ -387,16 +379,20 @@ def sell_asset(current_user_id: str, asset_id: str):
         except Exception as e:
             logger.error(f"Failed to update trading profits for user {current_user_id}: {e}")
         
-        # 4. Create notification
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'Asset Sold',
-            'message': f'You sold {asset.get("name", "your asset")} for ${sale_value:,.2f} (Profit: ${profit:,.2f})',
-            'read': False
-        }).execute()
+        # 4. Send push notification to followers
+        # (User gets immediate toast feedback from API response)
+        try:
+            ExpoPushService.notify_followers_of_financial_move(
+                supabase_client=supabase,
+                user_id=current_user_id,
+                move_type='sell_asset',
+                item_name=asset.get('name', 'your asset'),
+                amount=float(sale_value)
+            )
+        except Exception as e:
+            print(f"Failed to notify followers of asset sale: {str(e)}")
         
-        # Send push notification
+        # Also send direct push to user for immediate alert
         try:
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,

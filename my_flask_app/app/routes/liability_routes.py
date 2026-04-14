@@ -164,16 +164,8 @@ def purchase_liability(current_user_id: str):
             'purchase_date': datetime.utcnow().isoformat()
         }).execute()
         
-        # In-app notification only (toast confirms the buy to the user)
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'Lifestyle Purchase',
-            'message': f'You purchased {item["name"]} for ${purchase_price:,.2f}',
-            'read': False
-        }).execute()
-        
-        # Send Mentorship Notification (push to followers only, not to buyer)
+        # Notify followers of liability purchase
+        # (User gets immediate toast feedback from API response)
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,

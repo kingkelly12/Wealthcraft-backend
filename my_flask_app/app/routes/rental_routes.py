@@ -183,21 +183,13 @@ def rent_property(current_user_id: str):
             'id': rental_id,
             'player_id': current_user_id,
             'property_id': str(data.property_id),
-            'monthly_rent': int(monthly_rent),
+            'monthly_rent': int(monthly_rent),  # Match database INTEGER type, not float
             'is_active': True,
             'rented_at': datetime.utcnow().isoformat()
         }).execute()
         
-        # 6. Create in-app notification record (toast confirms to user, no push)
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'Property Rented',
-            'message': f'You have successfully rented {property_data["name"]} for ${monthly_rent:,.2f}/month.',
-            'read': False
-        }).execute()
-        
-        # Notify followers (push to mentors/observers only)
+        # 6. Notify followers of rental
+        # (User gets immediate toast feedback from API response)
         try:
             ExpoPushService.notify_followers_of_financial_move(
                 supabase_client=supabase,
@@ -279,16 +271,8 @@ def move_out(current_user_id: str, rental_id: str = None):
             'ended_at': datetime.utcnow().isoformat()
         }).eq('id', rental_id).eq('player_id', current_user_id).execute()
         
-        # Create in-app notification record (toast confirms to user, no push)
-        supabase.table('notifications').insert({
-            'user_id': current_user_id,
-            'type': 'financial_move',
-            'title': 'Moved Out',
-            'message': f'You moved out of {property_name}.',
-            'read': False
-        }).execute()
-        
-        # Notify followers (push to mentors/observers only)
+        # Notify followers of move-out
+        # (User gets immediate toast feedback from API response)
         try:
             ExpoPushService.notify_followers_of_financial_move(
                 supabase_client=supabase,

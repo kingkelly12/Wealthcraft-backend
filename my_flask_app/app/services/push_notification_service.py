@@ -181,18 +181,8 @@ class ExpoPushService:
             for f in followers:
                 follower_id = f['follower_id']
                 try:
-                    # In-app notification
-                    supabase_client.table('notifications').insert({
-                        'user_id': follower_id,
-                        'type': 'student_move',
-                        'title': title,
-                        'message': body,
-                        'related_user_id': user_id,
-                        'read': False
-                    }).execute()
-
-                    # Push notification
-                    cls.send_notification_to_user(
+                    # PUSH notification first (primary delivery method for followers)
+                    push_success = cls.send_notification_to_user(
                         supabase_client=supabase_client,
                         user_id=follower_id,
                         title=title,
@@ -204,6 +194,19 @@ class ExpoPushService:
                             'screen': f'/profile?id={user_id}'
                         }
                     )
+                    
+                    # Only create in-app notification if push fails or as backup
+                    # This prevents duplicate notifications
+                    if not push_success:
+                        logger.warning(f"Push failed for follower {follower_id}, creating in-app backup")
+                        supabase_client.table('notifications').insert({
+                            'user_id': follower_id,
+                            'type': 'student_move',
+                            'title': title,
+                            'message': body,
+                            'related_user_id': user_id,
+                            'read': False
+                        }).execute()
                 except Exception as e:
                     logger.error(f"Failed to notify mentor {follower_id}: {str(e)}")
         except Exception as e:
