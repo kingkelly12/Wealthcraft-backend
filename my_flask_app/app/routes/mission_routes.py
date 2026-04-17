@@ -339,7 +339,8 @@ def start_mission(current_user_id: str):
                 notification_type='mission',
                 data={
                     'mission_id': mission_id,
-                    'player_mission_id': player_mission_id
+                    'player_mission_id': player_mission_id,
+                    'screen': '/missions'
                 }
             )
         except Exception as e:

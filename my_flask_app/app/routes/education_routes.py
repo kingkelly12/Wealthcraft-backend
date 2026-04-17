@@ -62,7 +62,7 @@ def get_education_overview(current_user_id: str):
         available_courses = courses_res.data or []
         
         # 2. Fetch enrolled courses - GET COURSES DETAILS IN ONE JOIN (avoid separate query)
-        enrolled_res = supabase.table('user_courses').select('*, courses(*)').in_('user_id', user_ids).execute()
+        enrolled_res = supabase.table('user_courses').select('*, courses!course_id(*)').in_('user_id', user_ids).execute()
         enrolled_courses = enrolled_res.data or []
         
         return jsonify({
@@ -97,7 +97,7 @@ def get_enrolled_courses(current_user_id: str):
     """Get courses the user is enrolled in - includes course details via join"""
     try:
         # Use join to get course details in one query instead of two
-        response = supabase.table('user_courses').select('*, courses(*)').eq('user_id', current_user_id).execute()
+        response = supabase.table('user_courses').select('*, courses!course_id(*)').eq('user_id', current_user_id).execute()
         enrolled_courses = response.data or []
                     
         return jsonify({'success': True, 'data': enrolled_courses}), 200
@@ -284,13 +284,13 @@ def complete_course(current_user_id: str):
                 data={
                     'course_id': course['id'],
                     'salary_boost': float(salary_boost),
-                    'bonus': float(bonus)
+                    'bonus': float(bonus),
+                    'screen': '/education'
                 }
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
         # Check for mentor congratulations on course completion
         try:
             trigger = MentorService.check_real_time_triggers(

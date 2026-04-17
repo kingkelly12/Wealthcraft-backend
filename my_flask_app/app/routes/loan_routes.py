@@ -295,7 +295,7 @@ def repay_loan(current_user_id: str, liability_id: str = None):
                                 title='💰 P2P Payment Received',
                                 body=f'You received a payment of ${payment_amount:,.2f} on your active loan offer.',
                                 notification_type='p2p_payment_received',
-                                data={'loan_id': p2p_loan_id, 'amount': float(payment_amount)}
+                                data={'loan_id': p2p_loan_id, 'amount': float(payment_amount), 'screen': '/loans'}
                             )
                         except: pass
             except Exception as p2p_err:
@@ -558,7 +558,7 @@ def accept_p2p_loan(current_user_id: str):
                 title='🤝 P2P Loan Accepted',
                 body=f'Your loan offer of ${amount:,.2f} has been accepted!',
                 notification_type='p2p_loan_accepted',
-                data={'loan_id': loan_id}
+                data={'loan_id': loan_id, 'screen': '/loans'}
             )
         except: pass
         

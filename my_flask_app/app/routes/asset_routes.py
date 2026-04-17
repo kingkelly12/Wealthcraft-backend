@@ -404,7 +404,8 @@ def sell_asset(current_user_id: str, asset_id: str):
                     'asset_id': asset_id,
                     'amount': float(sale_value),
                     'profit': float(profit),
-                    'transaction_type': 'asset_sale'
+                    'transaction_type': 'asset_sale',
+                    'screen': '/portfolio'
                 }
             )
         except Exception as e:

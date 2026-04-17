@@ -54,6 +54,7 @@ def create_app(config_name='default'):
     from app.routes.mentor_routes import mentor_bp
     from app.routes.cron_routes import cron_bp
     from app.routes.banking_routes import banking_bp
+    from app.routes.dashboard_routes import dashboard_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -74,6 +75,7 @@ def create_app(config_name='default'):
     app.register_blueprint(mentor_bp)  # No prefix - routes define their own paths
     app.register_blueprint(cron_bp, url_prefix='/api/cron')
     app.register_blueprint(banking_bp, url_prefix='/api/banking')
+    app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
 
     
     # Health check endpoint

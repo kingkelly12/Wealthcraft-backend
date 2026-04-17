@@ -83,18 +83,28 @@ def send_message(current_user_id: str):
             'read': False
         }).execute()
         
-        # Send push notification to recipient
+        # Send push notification to recipient with sender's name
         try:
+            # Get sender's name for push notification
+            sender_profile = supabase.table('profiles').select('username').eq('user_id', current_user_id).execute()
+            sender_name = 'Someone'
+            if sender_profile.data and len(sender_profile.data) > 0:
+                sender_name = sender_profile.data[0].get('username', 'Someone')
+            
+            # Create message preview (first 50 chars)
+            message_preview = content[:50] + ('...' if len(content) > 50 else '')
+            
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,
                 user_id=str(data.recipient_id),
-                title='💬 New Message',
-                body='You have a new message',
-                notification_type='chat',
+                title=f'💬 Message from {sender_name}',
+                body=f'{message_preview}',
+                notification_type='message',
                 data={
                     'sender_id': current_user_id,
+                    'sender_name': sender_name,
                     'message_id': message_id,
-                    'navigate_to': f'/chat/{current_user_id}'
+                    'screen': f'/chat/{current_user_id}'
                 }
             )
         except Exception as e:

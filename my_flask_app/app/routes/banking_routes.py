@@ -85,13 +85,17 @@ def get_banking_overview(current_user_id: str):
         p2p_loans_res = supabase.table('p2p_loans').select('*, profiles!p2p_loans_lender_id_fkey(username)').eq('status', 'pending').neq('lender_id', current_user_id).execute()
         p2p_loans = p2p_loans_res.data or []
         
-        # Account balance extraction
-        account_balance = 0.0
-        if profile.get('user_balances'):
-             try:
-                 account_balance = float(profile.get('user_balances', [{}])[0].get('current_balance', 0))
-             except:
-                 account_balance = 0.0
+        # Account balance - use BalanceService for reliability
+        try:
+            account_balance = float(BalanceService.get_current_balance(current_user_id))
+        except:
+            # Fallback: try profile.user_balances if BalanceService fails
+            account_balance = 0.0
+            if profile.get('user_balances'):
+                try:
+                    account_balance = float(profile.get('user_balances', [{}])[0].get('current_balance', 0))
+                except:
+                    account_balance = 0.0
 
         return jsonify({
             'success': True,

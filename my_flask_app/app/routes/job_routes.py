@@ -190,7 +190,8 @@ def apply_for_job(current_user_id: str):
                 data={
                     'job_id': job_id,
                     'amount': float(job['salary']),
-                    'transaction_type': 'income'
+                    'transaction_type': 'income',
+                    'screen': '/jobs'
                 }
             )
         except Exception as e:
@@ -271,7 +272,7 @@ def quit_job(current_user_id: str, job_id: str):
                 title='👋 Quit Job',
                 body=f'You quit your job as {job["title"]}',
                 notification_type='financial_move',
-                data={'job_id': job_id}
+                data={'job_id': job_id, 'screen': '/jobs'}
             )
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
