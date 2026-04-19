@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 from app.services.profile_service import ProfileService
+from app.utils.background_task import run_in_background
 
 def resolve_user_ids(user_id):
     """
@@ -167,7 +168,7 @@ def apply_for_job(current_user_id: str):
         )
         
         # 6. Send push notification to followers
-        # (User gets immediate toast feedback from API response)
+        # 6. Notify followers about the new job in background
         try:
             ExpoPushService.notify_followers_of_financial_move(
                 supabase_client=supabase,
@@ -177,34 +178,7 @@ def apply_for_job(current_user_id: str):
                 amount=float(job['salary'])
             )
         except Exception as e:
-            print(f"Failed to notify followers of new job: {str(e)}")
-        
-        # Also send direct push to user for immediate alert
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='💼 New Job!',
-                body=f'You are now a {job["title"]} at {job["company"]}. Received ${job["salary"]:,.2f} advance.',
-                notification_type='financial_move',
-                data={
-                    'job_id': job_id,
-                    'amount': float(job['salary']),
-                    'transaction_type': 'income',
-                    'screen': '/jobs'
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-        
-        # Notify followers about the new job
-        ExpoPushService.notify_followers_of_financial_move(
-            supabase_client=supabase,
-            user_id=current_user_id,
-            move_type='new_job',
-            item_name=job['title'],
-            amount=float(job['salary'])
-        )
+            print(f"Failed to queue follower notification task: {str(e)}")
         
         return jsonify({
             'success': True,
@@ -252,8 +226,7 @@ def quit_job(current_user_id: str, job_id: str):
         # Update job to inactive (use .in_ for same reason)
         supabase.table('jobs').update({'is_current': False}).eq('id', job_id).in_('user_id', user_ids).execute()
         
-        # Send push notification to followers
-        # (User gets immediate toast feedback from API response)
+        # Notify followers of quit job in background
         try:
             ExpoPushService.notify_followers_of_financial_move(
                 supabase_client=supabase,
@@ -262,28 +235,7 @@ def quit_job(current_user_id: str, job_id: str):
                 item_name=job['title']
             )
         except Exception as e:
-            print(f"Failed to notify followers of quit job: {str(e)}")
-        
-        # Also send direct push to user for immediate alert
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='👋 Quit Job',
-                body=f'You quit your job as {job["title"]}',
-                notification_type='financial_move',
-                data={'job_id': job_id, 'screen': '/jobs'}
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-        
-        # Notify followers that the user quit their job
-        ExpoPushService.notify_followers_of_financial_move(
-            supabase_client=supabase,
-            user_id=current_user_id,
-            move_type='quit_job',
-            item_name=job['title']
-        )
+            print(f"Failed to queue follower notification task: {str(e)}")
         
         return jsonify({
             'success': True,

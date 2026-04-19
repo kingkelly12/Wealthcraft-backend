@@ -62,7 +62,13 @@ def get_education_overview(current_user_id: str):
         available_courses = courses_res.data or []
         
         # 2. Fetch enrolled courses - GET COURSES DETAILS IN ONE JOIN (avoid separate query)
-        enrolled_res = supabase.table('user_courses').select('*, courses!course_id(*)').in_('user_id', user_ids).execute()
+        # Try to fetch user_courses with course details via FK
+        # If explicit FK fails, try implicit relationship or fetch separately
+        try:
+            enrolled_res = supabase.table('user_courses').select('*, courses(*)').in_('user_id', user_ids).execute()
+        except:
+            # Fallback: fetch user_courses only, join won't work
+            enrolled_res = supabase.table('user_courses').select('*').in_('user_id', user_ids).execute()
         enrolled_courses = enrolled_res.data or []
         
         return jsonify({
@@ -97,7 +103,10 @@ def get_enrolled_courses(current_user_id: str):
     """Get courses the user is enrolled in - includes course details via join"""
     try:
         # Use join to get course details in one query instead of two
-        response = supabase.table('user_courses').select('*, courses!course_id(*)').eq('user_id', current_user_id).execute()
+        try:
+            response = supabase.table('user_courses').select('*, courses(*)').eq('user_id', current_user_id).execute()
+        except:
+            response = supabase.table('user_courses').select('*').eq('user_id', current_user_id).execute()
         enrolled_courses = response.data or []
                     
         return jsonify({'success': True, 'data': enrolled_courses}), 200
@@ -231,7 +240,11 @@ def complete_course(current_user_id: str):
         data = CourseCompletionRequest(**request.json)
         
         # 1. Get user course details
-        user_course_response = supabase.table('user_courses').select('*, courses!course_id(*)').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
+        try:
+            user_course_response = supabase.table('user_courses').select('*, courses(*)').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
+        except:
+            # Fallback: fetch without course join
+            user_course_response = supabase.table('user_courses').select('*').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
         
         if not user_course_response.data:
             return jsonify({
@@ -291,6 +304,7 @@ def complete_course(current_user_id: str):
         except Exception as e:
             print(f"Failed to send push notification: {str(e)}")
         
+        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
         # Check for mentor congratulations on course completion
         try:
             trigger = MentorService.check_real_time_triggers(

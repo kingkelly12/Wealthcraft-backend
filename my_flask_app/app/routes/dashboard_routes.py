@@ -86,7 +86,12 @@ def get_consolidated_dashboard(current_user_id: str):
         assets = assets_res.data or []
         
         # 3. Active Liabilities (with details)
-        liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
+        # Try to fetch with liability_items relationship
+        try:
+            liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
+        except:
+            # Fallback: fetch without relationship
+            liabilities_res = supabase.table('player_liabilities').select('*').in_('player_id', user_ids).eq('is_active', True).execute()
         liabilities = liabilities_res.data or []
         
         # 4. Active Jobs

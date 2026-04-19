@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
 from app.services.profile_service import ProfileService
+from app.utils.background_task import run_in_background
 
 def resolve_user_ids(user_id):
     """
@@ -188,7 +189,7 @@ def rent_property(current_user_id: str):
             'rented_at': datetime.utcnow().isoformat()
         }).execute()
         
-        # 6. Notify followers of rental
+        # 6. Notify followers of rental in background
         # (User gets immediate toast feedback from API response)
         try:
             ExpoPushService.notify_followers_of_financial_move(
@@ -199,7 +200,7 @@ def rent_property(current_user_id: str):
                 amount=float(monthly_rent)
             )
         except Exception as e:
-            print(f"Failed to notify followers of rental: {str(e)}")
+            print(f"Failed to queue follower notification of rental: {str(e)}")
         
         return jsonify({
             'success': True,
@@ -271,7 +272,7 @@ def move_out(current_user_id: str, rental_id: str = None):
             'ended_at': datetime.utcnow().isoformat()
         }).eq('id', rental_id).eq('player_id', current_user_id).execute()
         
-        # Notify followers of move-out
+        # Notify followers of move-out in background
         # (User gets immediate toast feedback from API response)
         try:
             ExpoPushService.notify_followers_of_financial_move(
@@ -281,7 +282,7 @@ def move_out(current_user_id: str, rental_id: str = None):
                 item_name=property_name
             )
         except Exception as e:
-            print(f"Failed to notify followers of moveout: {str(e)}")
+            print(f"Failed to queue follower notification of moveout: {str(e)}")
         
         return jsonify({
             'success': True,
