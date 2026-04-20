@@ -552,13 +552,14 @@ def accept_p2p_loan(current_user_id: str):
         
         # Notify lender
         try:
+            borrower_username = profile.get('username', 'Someone')
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,
                 user_id=loan['lender_id'],
                 title='🤝 P2P Loan Accepted',
-                body=f'Your loan offer of ${amount:,.2f} has been accepted!',
+                body=f'{borrower_username} has accepted your loan offer of ${amount:,.2f}!',
                 notification_type='p2p_loan_accepted',
-                data={'loan_id': loan_id, 'screen': '/loans'}
+                data={'loan_id': loan_id, 'screen': f'/profile/{current_user_id}'}
             )
         except: pass
         
