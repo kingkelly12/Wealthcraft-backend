@@ -37,6 +37,14 @@ def process_monthly_deductions():
             }
         return summary_by_user[uid]
 
+    logger.info("Fetching profiles data for dynamic calculations...")
+    try:
+        profiles_res = supabase.table('profiles').select('user_id, monthly_income, created_at, sanity').execute()
+        profiles_map = {p['user_id']: p for p in profiles_res.data}
+    except Exception as e:
+        logger.error(f"Error fetching profiles: {e}")
+        profiles_map = {}
+
     # --- 1. Process Liabilities (Loans) ---
     logger.info("Processing loans (Bank & P2P)...")
     try:
@@ -170,7 +178,56 @@ def process_monthly_deductions():
     except Exception as e:
         logger.error(f"Error processing rent: {e}")
 
-    # --- 4. Process Asset Income (Rental / Dividend) ---
+    # --- 4. Process Base Living Costs (Food, Utilities, WiFi) ---
+    logger.info("Processing base living costs with inflation...")
+    try:
+        current_date_dt = datetime.utcnow()
+        for user_id, profile in profiles_map.items():
+            monthly_income = Decimal(str(profile.get('monthly_income') or 0))
+            if monthly_income <= 0:
+                continue
+                
+            base_cost = monthly_income * Decimal('0.20')
+            
+            created_at_str = profile.get('created_at')
+            years_active = 0.0
+            if created_at_str:
+                try:
+                    # Parse ISO string safely
+                    time_part = created_at_str.split('+')[0]
+                    if '.' in time_part:
+                        created_dt = datetime.strptime(time_part[:19], "%Y-%m-%dT%H:%M:%S")
+                    else:
+                        created_dt = datetime.strptime(time_part, "%Y-%m-%dT%H:%M:%S")
+                    days_active = (current_date_dt - created_dt).days
+                    years_active = max(0.0, days_active / 365.25)
+                except Exception:
+                    pass
+            
+            # Cap years active reasonably
+            years_active = min(float(years_active), 20.0)
+            
+            inflation_multiplier = Decimal(str((1.05) ** years_active))
+            actual_living_cost = base_cost * inflation_multiplier
+            
+            summ = get_summary(user_id)
+            current_balance = BalanceService.get_current_balance(user_id)
+            
+            if current_balance >= actual_living_cost:
+                BalanceService.subtract_balance(
+                    user_id=user_id,
+                    amount=actual_living_cost,
+                    reason="Living Costs (Food & WiFi)"
+                )
+                summ['expenses'] += actual_living_cost
+                summ['details'].append(f"-${actual_living_cost:,.2f} Living Costs")
+            else:
+                logger.warning(f"User {user_id} missed living costs.")
+                summ['details'].append(f"⚠️ Missed Living Costs (${actual_living_cost:,.2f})")
+    except Exception as e:
+        logger.error(f"Error processing living costs: {e}")
+
+    # --- 5. Process Asset Income (Rental / Dividend) ---
     logger.info("Processing asset monthly incomes...")
     try:
         # Fetch base assets lookup map
@@ -199,18 +256,36 @@ def process_monthly_deductions():
     except Exception as e:
         logger.error(f"Error processing asset income: {e}")
 
-    # --- 5. Batch Send Notifications ---
-    logger.info(f"Queueing notifications for {len(summary_by_user)} users...")
+    # --- 6. Batch Send Notifications & Evaluate Sanity Penalties ---
+    logger.info(f"Checking financial stress and queueing notifications for {len(summary_by_user)} users...")
     for uid, data in summary_by_user.items():
         if data['expenses'] == 0 and data['income'] == 0 and not data['details']:
             continue
             
+        profile = profiles_map.get(uid, {})
+        monthly_income = Decimal(str(profile.get('monthly_income') or 0))
+        current_sanity = int(profile.get('sanity', 100))
+        
+        is_stressed = False
+        if monthly_income > 0 and data['expenses'] > (monthly_income * Decimal('0.60')):
+            is_stressed = True
+            new_sanity = max(0, current_sanity - 10)
+            try:
+                supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', uid).execute()
+            except Exception as e:
+                logger.error(f"Failed to deduct sanity for {uid}: {e}")
+            
         net_change = data['income'] - data['expenses']
-        title = "💰 End of Month Summary"
-        if net_change > 0:
-            body = f"You gained a net +${net_change:,.2f} this month! \n" + "\n".join(data['details'])
+        
+        if is_stressed:
+            title = "🚨 Financial Stress!"
+            body = f"Expenses exceeded 60% of income. Sanity dropped (-10).\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(data['details'])
         else:
-            body = f"You had a net -${abs(net_change):,.2f} this month. \n" + "\n".join(data['details'])
+            title = "💰 End of Month Summary"
+            if net_change > 0:
+                body = f"You gained a net +${net_change:,.2f} this month! \n\n" + "\n".join(data['details'])
+            else:
+                body = f"You had a net -${abs(net_change):,.2f} this month. \n\n" + "\n".join(data['details'])
 
         # Truncate if too long
         if len(body) > 200:
