@@ -33,6 +33,9 @@ def resolve_user_ids(user_id):
 
 void_bp = Blueprint('void', __name__)
 
+from app.services.ai_service import AIService
+from app.services.mentor_service import MentorService
+
 @void_bp.route('/scream/', methods=['POST'])
 @require_auth
 def scream(current_user_id: str):
@@ -45,16 +48,35 @@ def scream(current_user_id: str):
         
         if len(content) > 280:
             return jsonify({'success': False, 'message': 'Scream too long. Max 280 chars.'}), 400
+
+        # AI Analysis
+        player_uuid = uuid.UUID(current_user_id)
+        profile = ProfileService.get_profile_by_user_id(player_uuid)
+        
+        # Build context
+        metrics = MentorService.analyze_player_finances(player_uuid)
+        metrics['sanity'] = profile.sanity if profile and hasattr(profile, 'sanity') else 100
+        metrics['username'] = profile.username if profile else 'Player'
+        
+        ai_analysis = AIService.analyze_void_scream(content, metrics)
             
         # Post to Supabase
         res = supabase.table('void_posts').insert({
             'user_id': current_user_id,
-            'content': content
+            'content': content,
+            'ai_analysis': ai_analysis
         }).execute()
         
-        return jsonify({'success': True, 'message': 'Scream released into the void.'}), 201
+        return jsonify({
+            'success': True, 
+            'message': 'Scream released into the void.',
+            'data': {
+                'ai_analysis': ai_analysis
+            }
+        }), 201
         
     except Exception as e:
+        logger.error(f"Error in scream route: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 def _get_feed_data_internal(current_user_id: str, cursor=None, limit=20):

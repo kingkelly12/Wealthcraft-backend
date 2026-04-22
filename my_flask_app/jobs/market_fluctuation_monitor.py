@@ -186,6 +186,29 @@ def simulate_market_fluctuation():
                     }
                 })
 
+        # 4. Generate AI Market News
+        try:
+            from app.services.ai_service import AIService
+            # We use a subset of significant changes to avoid overwhelming the prompt
+            news_context = {name: data for name, data in global_changes.items() if abs(data['change_pct']) >= 1.0}
+            if news_context:
+                ai_news = AIService.generate_market_news(news_context)
+                
+                # Store headlines in database
+                for h in ai_news.get('headlines', []):
+                    supabase.table('market_news').insert({
+                        'headline': h['title'],
+                        'body': h['body'],
+                        'sentiment': h['sentiment'],
+                        'asset_name': h['asset_name'],
+                        'price_change_pct': news_context.get(h['asset_name'], {}).get('change_pct', 0),
+                        'analyst_tip': ai_news.get('analyst_tip', {}).get('message')
+                    }).execute()
+                
+                logger.info(f"Generated {len(ai_news.get('headlines', []))} AI market headlines")
+        except Exception as e:
+            logger.error(f"Failed to generate AI market news: {e}")
+
         if notifications_to_send:
             success_count = 0
             failed_count = 0

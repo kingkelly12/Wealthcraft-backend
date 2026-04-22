@@ -7,17 +7,12 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'you-will-never-guess'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     database_url = os.environ.get('DATABASE_URL')
-    
-    # Validate and normalize database URL
     if database_url:
         database_url = database_url.strip()  # Remove leading/trailing whitespace
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    else:
-        # DATABASE_URL is required in production
-        raise ValueError('DATABASE_URL environment variable is required. It must be set on Render.')
     
-    SQLALCHEMY_DATABASE_URI = database_url
+    SQLALCHEMY_DATABASE_URI = database_url or 'sqlite:///app.db'
     
     # CORS Configuration
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
@@ -26,6 +21,7 @@ class Config:
     SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET')
     SUPABASE_URL = os.environ.get('SUPABASE_URL')
     SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+    SUPABASE_SERVICE_ROLE_KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 
     if not SUPABASE_JWT_SECRET:
          raise ValueError('SUPABASE_JWT_SECRET environment variable is required')
@@ -33,6 +29,15 @@ class Config:
         raise ValueError('SUPABASE_URL environment variable is required')
     if not SUPABASE_KEY:
         raise ValueError('SUPABASE_KEY environment variable is required')
+    
+    # Google OAuth Configuration
+    GOOGLE_WEB_CLIENT_ID = os.environ.get('GOOGLE_WEB_CLIENT_ID')
+    if not GOOGLE_WEB_CLIENT_ID:
+        raise ValueError('GOOGLE_WEB_CLIENT_ID environment variable is required')
+
+    # Gemini AI Configuration
+    GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+    # Note: GEMINI_API_KEY is optional — app will fall back to template messages if not set
     
     # API Configuration
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max request size

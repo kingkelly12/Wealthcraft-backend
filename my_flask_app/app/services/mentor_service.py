@@ -451,8 +451,6 @@ class MentorService:
             metrics: Financial metrics snapshot
             supabase_client: Supabase client for push notifications (optional)
         """
-        from app.services.push_notification_service import ExpoPushService
-        
         # Handle both formats:
         # 1. From daily job: has 'message_template' and 'personalized_message'
         # 2. From real-time triggers: has 'message' and optionally 'trigger_type'
@@ -475,6 +473,11 @@ class MentorService:
             message_content = mentor_data.get('personalized_message')
             trigger_type = message_template.trigger_type if message_template else 'daily_analysis'
         
+        # AI metadata if provided
+        ai_metadata = mentor_data.get('ai_metadata', {})
+        is_player_message = mentor_data.get('is_player_message', False)
+        parent_interaction_id = mentor_data.get('parent_interaction_id')
+
         # Create interaction record
         interaction = PlayerMentorInteraction(
             player_id=player_id,
@@ -482,37 +485,43 @@ class MentorService:
             message_id=message_template.id if message_template else None,
             message_content=message_content,
             trigger_type=trigger_type,
-            player_data_snapshot=metrics
+            player_data_snapshot=metrics,
+            is_player_message=is_player_message,
+            parent_interaction_id=parent_interaction_id,
+            ai_metadata=ai_metadata
         )
         
         db.session.add(interaction)
         db.session.commit()
         
-        # Send push notification to player about new mentor message
-        try:
-            # Get supabase client if not provided
-            if supabase_client is None:
-                from app import supabase
-                supabase_client = supabase
-            
-            # Send push notification
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase_client,
-                user_id=str(player_id),
-                title=f'💬 {mentor.name} sent you a message',
-                body=message_content[:100] + ('...' if len(message_content) > 100 else ''),
-                notification_type='mentor_message',
-                data={
-                    'type': 'mentor',
-                    'interaction_id': str(interaction.id),
-                    'mentorId': str(mentor.id),
-                    'mentor_name': mentor.name,
-                    'trigger_type': trigger_type
-                }
-            )
-        except Exception as e:
-            # Don't fail the transaction if push notification fails
-            print(f"Failed to send mentor message push notification: {str(e)}")
+        # Send push notification to player about new mentor message (if not from player)
+        if not is_player_message:
+            try:
+                # Get supabase client if not provided
+                if supabase_client is None:
+                    from app import supabase
+                    supabase_client = supabase
+                
+                from app.services.push_notification_service import ExpoPushService
+                
+                # Send push notification
+                ExpoPushService.send_notification_to_user(
+                    supabase_client=supabase_client,
+                    user_id=str(player_id),
+                    title=f'💬 {mentor.name} sent you a message',
+                    body=message_content[:100] + ('...' if len(message_content) > 100 else ''),
+                    notification_type='mentor_message',
+                    data={
+                        'type': 'mentor',
+                        'interaction_id': str(interaction.id),
+                        'mentorId': str(mentor.id),
+                        'mentor_name': mentor.name,
+                        'trigger_type': trigger_type
+                    }
+                )
+            except Exception as e:
+                # Don't fail the transaction if push notification fails
+                print(f"Failed to send mentor message push notification: {str(e)}")
         
         return interaction
 

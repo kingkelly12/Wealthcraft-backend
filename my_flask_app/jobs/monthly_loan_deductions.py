@@ -257,6 +257,10 @@ def process_monthly_deductions():
         logger.error(f"Error processing asset income: {e}")
 
     # --- 6. Batch Send Notifications & Evaluate Sanity Penalties ---
+    from app.services.ai_service import AIService
+    from app.services.mentor_service import MentorService
+    import uuid
+
     logger.info(f"Checking financial stress and queueing notifications for {len(summary_by_user)} users...")
     for uid, data in summary_by_user.items():
         if data['expenses'] == 0 and data['income'] == 0 and not data['details']:
@@ -267,9 +271,21 @@ def process_monthly_deductions():
         current_sanity = int(profile.get('sanity', 100))
         
         is_stressed = False
+        ai_stress_message = None
+        
         if monthly_income > 0 and data['expenses'] > (monthly_income * Decimal('0.60')):
             is_stressed = True
             new_sanity = max(0, current_sanity - 10)
+            
+            # AI Analysis for Stress
+            try:
+                metrics = MentorService.analyze_player_finances(uuid.UUID(uid))
+                metrics['sanity'] = current_sanity
+                stress_analysis = AIService.analyze_financial_stress(profile.get('username', 'Player'), metrics)
+                ai_stress_message = stress_analysis.get('message')
+            except Exception as e:
+                logger.error(f"Failed to generate AI stress message for {uid}: {e}")
+
             try:
                 supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', uid).execute()
             except Exception as e:
@@ -279,7 +295,7 @@ def process_monthly_deductions():
         
         if is_stressed:
             title = "🚨 Financial Stress!"
-            body = f"Expenses exceeded 60% of income. Sanity dropped (-10).\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(data['details'])
+            body = f"{ai_stress_message or 'Expenses exceeded 60% of income. Sanity dropped (-10).'}\n\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(data['details'])
         else:
             title = "💰 End of Month Summary"
             if net_change > 0:

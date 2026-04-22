@@ -96,7 +96,9 @@ def get_player_interactions(current_user_id: str):
                 'action_taken': interaction.action_taken,
                 'action_taken_at': interaction.action_taken_at.isoformat() if interaction.action_taken_at else None,
                 'points_earned': interaction.points_earned or 0,
-                'relationship_score': interaction.relationship_score or 0
+                'relationship_score': interaction.relationship_score or 0,
+                'is_player_message': interaction.is_player_message or False,
+                'ai_metadata': interaction.ai_metadata or {}
             })
         
         return jsonify({
