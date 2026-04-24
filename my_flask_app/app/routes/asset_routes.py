@@ -254,12 +254,20 @@ def get_assets_overview(current_user_id: str):
             
         profile = profile_res.data[0] if profile_res.data else None
         
+        # 4. Market News (Latest 5 headlines)
+        news_res = supabase.table('market_news')\
+            .select('*')\
+            .order('created_at', desc=True)\
+            .limit(5)\
+            .execute()
+        
         return jsonify({
             'success': True,
             'data': {
                 'market': market_res.data or [],
                 'portfolio': portfolio or [],
-                'profile': profile
+                'profile': profile,
+                'news': news_res.data or []
             }
         }), 200
     except Exception as e:

@@ -97,6 +97,14 @@ def get_banking_overview(current_user_id: str):
                 except:
                     account_balance = 0.0
 
+        # 8. Economy News (AI)
+        news_res = supabase.table('market_news')\
+            .select('*')\
+            .eq('category', 'banking')\
+            .order('created_at', desc=True)\
+            .limit(3)\
+            .execute()
+        
         return jsonify({
             'success': True,
             'data': {
@@ -107,7 +115,8 @@ def get_banking_overview(current_user_id: str):
                 'jobs': jobs,
                 'transactions': transactions,
                 'bank_offers': bank_loans,
-                'p2p_offers': p2p_loans
+                'p2p_offers': p2p_loans,
+                'news': news_res.data or []
             }
         }), 200
         

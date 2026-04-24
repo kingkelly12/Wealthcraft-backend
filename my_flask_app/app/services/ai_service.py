@@ -10,6 +10,7 @@ Falls back gracefully to the existing template system if Gemini is unavailable.
 import json
 import logging
 import uuid
+import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -17,28 +18,48 @@ from flask import current_app
 
 logger = logging.getLogger(__name__)
 
-# ── Gemini Client (lazy-loaded) ────────────────────────────────────────────────
-_gemini_client = None
+# ── Gemini Configuration ──────────────────────────────────────────────────────
 
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={key}"
 
-def _get_gemini_client():
-    """Lazy-init the Gemini client so we only import when actually needed."""
-    global _gemini_client
-    if _gemini_client is not None:
-        return _gemini_client
-
+def _call_gemini_api(prompt: str, system_instruction: Optional[str] = None) -> Optional[str]:
+    """
+    Directly call the Gemini REST API via requests.
+    This avoids SDK version conflicts on Python 3.8.
+    """
     api_key = current_app.config.get('GEMINI_API_KEY')
     if not api_key:
-        logger.warning("GEMINI_API_KEY not set — AI features will use template fallback")
+        logger.warning("GEMINI_API_KEY not set — falling back to templates")
         return None
 
+    model = AIService.MODEL_NAME
+    url = GEMINI_API_URL.format(model=model, key=api_key)
+
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    if system_instruction:
+        payload["system_instruction"] = {
+            "parts": [{"text": system_instruction}]
+        }
+
     try:
-        from google import genai
-        _gemini_client = genai.Client(api_key=api_key)
-        logger.info("Gemini AI client initialized successfully")
-        return _gemini_client
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Extract text from response structure
+        candidates = data.get('candidates', [])
+        if not candidates:
+            logger.error(f"Gemini returned no candidates: {data}")
+            return None
+            
+        return candidates[0].get('content', {}).get('parts', [{}])[0].get('text')
     except Exception as e:
-        logger.error(f"Failed to initialize Gemini client: {e}")
+        logger.error(f"Gemini API request failed: {e}")
         return None
 
 
@@ -209,13 +230,6 @@ class AIService:
 
         Returns structured dict matching the JSON contract, or None on failure.
         """
-        from app.utils.ai_cache import get_cached_response, set_cached_response, make_cache_key
-        from app import supabase
-
-        client = _get_gemini_client()
-        if not client:
-            return AIService._fallback_response(mentor_role, username, metrics)
-
         # Build system prompt with live financial data
         system_prompt = MENTOR_SYSTEM_PROMPTS.get(mentor_role, MENTOR_SYSTEM_PROMPTS['strategic'])
         financial_context = AIService._build_financial_context(username, metrics)
@@ -242,12 +256,11 @@ class AIService:
         )
 
         try:
-            response = client.models.generate_content(
-                model=AIService.MODEL_NAME,
-                contents=full_prompt,
-            )
+            response_text = _call_gemini_api(full_prompt)
+            if not response_text:
+                return AIService._fallback_response(mentor_role, username, metrics)
             
-            parsed = AIService._parse_json_response(response.text)
+            parsed = AIService._parse_json_response(response_text)
             if not parsed:
                 return AIService._fallback_response(mentor_role, username, metrics)
 
@@ -276,10 +289,6 @@ class AIService:
         Returns:
             Dict containing mood, message, and a gamified challenge
         """
-        client = _get_gemini_client()
-        if not client:
-            return AIService._get_void_fallback(content)
-
         try:
             # Build context
             username = player_context.get('username', 'Player')
@@ -294,15 +303,11 @@ class AIService:
             
             Based on this scream and their financial state, provide your analysis as THE VOID."""
 
-            response = client.models.generate_content(
-                model=AIService.MODEL_NAME,
-                config={
-                    'system_instruction': MENTOR_SYSTEM_PROMPTS['void'],
-                },
-                contents=prompt
-            )
+            response_text = _call_gemini_api(prompt, system_instruction=MENTOR_SYSTEM_PROMPTS['void'])
+            if not response_text:
+                return AIService._get_void_fallback(content)
             
-            parsed = AIService._parse_json_response(response.text)
+            parsed = AIService._parse_json_response(response_text)
             if not parsed:
                 return AIService._get_void_fallback(content)
 
@@ -330,10 +335,6 @@ class AIService:
         """
         Specialized analysis for high financial stress triggered by monthly deductions.
         """
-        client = _get_gemini_client()
-        if not client:
-            return AIService._get_void_fallback("Financial pressure mounting.")
-
         try:
             metrics_str = AIService._build_financial_context(username, metrics)
             prompt = f"""CONTEXT: The player {username} is drowning in expenses. Their monthly debt and costs have exceeded 60% of their income.
@@ -343,15 +344,11 @@ class AIService:
             
             Provide a short, cryptic, and unsettling analysis of their failure as THE VOID."""
 
-            response = client.models.generate_content(
-                model=AIService.MODEL_NAME,
-                config={
-                    'system_instruction': MENTOR_SYSTEM_PROMPTS['void'],
-                },
-                contents=prompt
-            )
+            response_text = _call_gemini_api(prompt, system_instruction=MENTOR_SYSTEM_PROMPTS['void'])
+            if not response_text:
+                return AIService._get_void_fallback("Financial pressure mounting.")
             
-            parsed = AIService._parse_json_response(response.text)
+            parsed = AIService._parse_json_response(response_text)
             return parsed or AIService._get_void_fallback("The pressure is real.")
             
         except Exception as e:
@@ -367,10 +364,6 @@ class AIService:
             asset_changes: Dict of {asset_name: {change_pct, type, new_price}}
             player_context: Optional snapshot of player's portfolio for personalized tips
         """
-        client = _get_gemini_client()
-        if not client:
-            return AIService._get_market_news_fallback(asset_changes)
-
         try:
             # Format asset changes for prompt
             changes_str = "\n".join([
@@ -412,15 +405,11 @@ class AIService:
               }
             }"""
 
-            response = client.models.generate_content(
-                model=AIService.MODEL_NAME,
-                config={
-                    'system_instruction': system_prompt,
-                },
-                contents=prompt
-            )
+            response_text = _call_gemini_api(prompt, system_instruction=system_prompt)
+            if not response_text:
+                return AIService._get_market_news_fallback(asset_changes)
             
-            parsed = AIService._parse_json_response(response.text)
+            parsed = AIService._parse_json_response(response_text)
             return parsed or AIService._get_market_news_fallback(asset_changes)
 
         except Exception as e:
@@ -511,10 +500,6 @@ class AIService:
         if cached:
             return cached
 
-        client = _get_gemini_client()
-        if not client:
-            return AIService._fallback_greeting(mentor_role, username, metrics)
-
         system_prompt = MENTOR_SYSTEM_PROMPTS.get(mentor_role, MENTOR_SYSTEM_PROMPTS['strategic'])
         financial_context = AIService._build_financial_context(username, metrics)
 
@@ -528,18 +513,13 @@ class AIService:
         )
 
         try:
-            response = client.models.generate_content(
-                model=AIService.MODEL_NAME,
-                contents=prompt,
-            )
+            response_text = _call_gemini_api(prompt)
+            if not response_text:
+                return AIService._fallback_greeting(mentor_role, username, metrics)
 
-            raw_text = response.text.strip()
-            if raw_text.startswith("```"):
-                lines = raw_text.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                raw_text = "\n".join(lines).strip()
-
-            parsed = json.loads(raw_text)
+            parsed = AIService._parse_json_response(response_text)
+            if not parsed:
+                return AIService._fallback_greeting(mentor_role, username, metrics)
             result = {
                 'message': parsed.get('message', f"Hey {username}!"),
                 'tone': parsed.get('tone', 'encouraging'),

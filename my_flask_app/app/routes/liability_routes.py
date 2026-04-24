@@ -281,12 +281,21 @@ def get_luxury_overview(current_user_id: str):
         # 3. Get balance (already imported or using Service)
         balance = BalanceService.get_current_balance(current_user_id)
         
+        # 4. Lifestyle News (AI)
+        news_res = supabase.table('market_news')\
+            .select('*')\
+            .eq('category', 'lifestyle')\
+            .order('created_at', desc=True)\
+            .limit(3)\
+            .execute()
+        
         return jsonify({
             'success': True,
             'data': {
                 'available': available_items,
                 'active': active_luxury,
-                'balance': float(balance)
+                'balance': float(balance),
+                'news': news_res.data or []
             }
         }), 200
         

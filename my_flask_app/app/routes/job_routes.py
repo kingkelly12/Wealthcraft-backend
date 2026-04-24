@@ -74,11 +74,20 @@ def get_jobs_overview(current_user_id: str):
         user_ids = resolve_user_ids(current_user_id)
         current_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         
+        # 3. Job Market News
+        news_res = supabase.table('market_news')\
+            .select('*')\
+            .eq('category', 'jobs')\
+            .order('created_at', desc=True)\
+            .limit(3)\
+            .execute()
+        
         return jsonify({
             'success': True,
             'data': {
                 'market': market_res.data or [],
-                'current': current_res.data or []
+                'current': current_res.data or [],
+                'news': news_res.data or []
             }
         }), 200
     except Exception as e:

@@ -109,11 +109,20 @@ def get_rentals_overview(current_user_id: str):
         # 2. Current User Rental
         current = get_current_rental_internal(current_user_id)
         
+        # 3. Real Estate News (AI)
+        news_res = supabase.table('market_news')\
+            .select('*')\
+            .eq('category', 'rentals')\
+            .order('created_at', desc=True)\
+            .limit(3)\
+            .execute()
+        
         return jsonify({
             'success': True,
             'data': {
                 'market': market_res.data or [],
-                'current': current
+                'current': current,
+                'news': news_res.data or []
             }
         }), 200
     except Exception as e:

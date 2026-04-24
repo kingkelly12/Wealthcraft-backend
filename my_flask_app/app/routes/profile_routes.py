@@ -160,7 +160,13 @@ def get_comprehensive_dashboard(current_user_id: str):
                     'followers': followers_res.count or 0,
                     'following': following_res.count or 0,
                     'rank': rank
-                }
+                },
+                'news': supabase.table('market_news')\
+                    .select('*')\
+                    .eq('category', 'profile')\
+                    .order('created_at', desc=True)\
+                    .limit(3)\
+                    .execute().data or []
             }
         }), 200
     except Exception as e:

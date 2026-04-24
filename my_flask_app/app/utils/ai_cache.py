@@ -10,14 +10,14 @@ import json
 import logging
 from datetime import datetime, timedelta
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Optional, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
 # ── In-memory TTL cache ────────────────────────────────────────────────────────
 # Simple dict-based cache with expiry timestamps (avoids threading complexity on
 # Lambda / single-threaded Cloud Run workers).
-_memory_cache: dict[str, tuple[Any, datetime]] = {}
+_memory_cache: Dict[str, Tuple[Any, datetime]] = {}
 
 
 def _memory_get(key: str) -> Optional[Any]:

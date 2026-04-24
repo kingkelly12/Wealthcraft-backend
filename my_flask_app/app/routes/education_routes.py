@@ -71,11 +71,20 @@ def get_education_overview(current_user_id: str):
             enrolled_res = supabase.table('user_courses').select('*').in_('user_id', user_ids).execute()
         enrolled_courses = enrolled_res.data or []
         
+        # 3. Academy Insights (AI)
+        news_res = supabase.table('market_news')\
+            .select('*')\
+            .eq('category', 'education')\
+            .order('created_at', desc=True)\
+            .limit(3)\
+            .execute()
+        
         return jsonify({
             'success': True,
             'data': {
                 'available': available_courses,
-                'enrolled': enrolled_courses
+                'enrolled': enrolled_courses,
+                'insights': news_res.data or []
             }
         }), 200
         
