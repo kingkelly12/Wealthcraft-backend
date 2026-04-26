@@ -43,10 +43,9 @@ worker_connections = 1000
 # =====================================================
 
 # Bind to this address
-# OPTIONS:
-#   - '0.0.0.0:5000': Listen on all network interfaces (production)
-#   - '127.0.0.1:5000': Only localhost (development)
-bind = '0.0.0.0:5000'
+# Render dynamically assigns a port via the PORT environment variable.
+port = os.environ.get('PORT', 5000)
+bind = f'0.0.0.0:{port}'
 
 # Backlog - number of pending connections
 # WHY: If all workers are busy, queue up to 2048 connections
