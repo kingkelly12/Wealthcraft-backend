@@ -146,6 +146,14 @@ def get_comprehensive_dashboard(current_user_id: str):
         net_worth = profile.net_worth if profile else 0
         rank_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()
         rank = (rank_res.count or 0) + 1
+
+        # 9. Education (Enrolled & Completed Courses)
+        try:
+            education_res = supabase.table('user_courses').select('*, courses(*)').in_('user_id', user_ids).execute()
+            education = education_res.data or []
+        except:
+            education_res = supabase.table('user_courses').select('*').in_('user_id', user_ids).execute()
+            education = education_res.data or []
         
         return jsonify({
             'success': True,
@@ -156,6 +164,7 @@ def get_comprehensive_dashboard(current_user_id: str):
                 'liabilities': liabilities,
                 'jobs': jobs,
                 'rental': rental,
+                'education': education,
                 'stats': {
                     'followers': followers_res.count or 0,
                     'following': following_res.count or 0,

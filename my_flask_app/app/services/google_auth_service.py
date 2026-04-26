@@ -5,7 +5,7 @@ from app.models.user import User
 from datetime import datetime, timedelta
 import os
 import jwt
-from gotrue.errors import AuthApiError
+from supabase_auth.errors import AuthApiError
 
 class GoogleAuthService:
     """Service to handle Google OAuth authentication"""
