@@ -1,0 +1,45 @@
+{
+  "components": [
+    {
+      "dependencies": [
+        "log-streaming-darwin-arm",
+        "log-streaming-darwin-x86_64",
+        "log-streaming-linux-arm",
+        "log-streaming-linux-x86_64",
+        "log-streaming-windows-x86_64"
+      ],
+      "details": {
+        "description": "Provides log streaming services.",
+        "display_name": "Log Streaming"
+      },
+      "gdu_only": false,
+      "id": "log-streaming",
+      "is_configuration": false,
+      "is_hidden": false,
+      "is_required": false,
+      "platform": {
+        "architectures": [
+          "arm",
+          "x86_64"
+        ],
+        "operating_systems": [
+          "LINUX",
+          "MACOSX",
+          "WINDOWS"
+        ]
+      },
+      "platform_required": false,
+      "version": {
+        "build_number": 0,
+        "version_string": "0.3.2"
+      }
+    }
+  ],
+  "revision": 20260410153504,
+  "schema_version": {
+    "no_update": false,
+    "url": "https://dl.google.com/dl/cloudsdk/channels/rapid/google-cloud-sdk.tar.gz",
+    "version": 3
+  },
+  "version": "565.0.0"
+}

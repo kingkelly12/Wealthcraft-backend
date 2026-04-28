@@ -13,6 +13,7 @@ supabase
 gotrue
 requests
 gunicorn
+gevent
 google-auth
 google-auth-oauthlib
 

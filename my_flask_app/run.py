@@ -4,7 +4,12 @@ from app import create_app, db
 # Import models so they are registered with SQLAlchemy
 from app import models
 
-app = create_app(os.getenv('FLASK_CONFIG') or 'default')
+# 🚀 Cloud Run Detection: Use production config in Cloud Run environment
+# Cloud Run sets K_SERVICE environment variable automatically
+is_cloud_run = os.getenv('K_SERVICE') is not None
+flask_config = os.getenv('FLASK_CONFIG') or ('production' if is_cloud_run else 'default')
+
+app = create_app(flask_config)
 
 @app.shell_context_processor
 def make_shell_context():

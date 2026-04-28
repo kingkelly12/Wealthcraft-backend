@@ -1,0 +1,72 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables (NEVER include .env in Docker)
+.env
+.env.local
+.env.*.local
+
+# Documentation
+README.md
+DEPLOYMENT_SUMMARY.md
+LAMBDA_DEPLOYMENT_GUIDE.md
+LAMBDA_QUICK_REFERENCE.md
+MENTOR_SETUP.md
+NEXT_STEPS.md
+PRODUCTION_SERVER_GUIDE.md
+
+# Local development
+instance/
+*.db
+*.sqlite
+.pytest_cache
+
+# Node (if using build tools)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# OS files
+Thumbs.db
+.DS_Store

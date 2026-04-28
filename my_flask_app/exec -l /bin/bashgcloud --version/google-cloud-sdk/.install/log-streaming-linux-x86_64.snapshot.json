@@ -1,0 +1,43 @@
+{
+  "components": [
+    {
+      "data": {
+        "contents_checksum": "0c6f0268c809cde268da73a4f81767e1729560da371d0714d3f7770751b89634",
+        "source": "",
+        "type": "tar"
+      },
+      "dependencies": [
+        "log-streaming"
+      ],
+      "details": {
+        "description": "Provides log streaming services.",
+        "display_name": "Log Streaming (Platform Specific)"
+      },
+      "gdu_only": false,
+      "id": "log-streaming-linux-x86_64",
+      "is_configuration": false,
+      "is_hidden": true,
+      "is_required": false,
+      "platform": {
+        "architectures": [
+          "x86_64"
+        ],
+        "operating_systems": [
+          "LINUX"
+        ]
+      },
+      "platform_required": false,
+      "version": {
+        "build_number": 20260123145558,
+        "version_string": "0.3.2"
+      }
+    }
+  ],
+  "revision": 20260410153504,
+  "schema_version": {
+    "no_update": false,
+    "url": "https://dl.google.com/dl/cloudsdk/channels/rapid/google-cloud-sdk.tar.gz",
+    "version": 3
+  },
+  "version": "565.0.0"
+}
