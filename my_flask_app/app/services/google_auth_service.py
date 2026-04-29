@@ -2,6 +2,8 @@ from google.auth.transport import requests
 from google.oauth2 import id_token
 from app import supabase, db
 from app.models.user import User
+from app.models.profile import Profile
+from app.models.user_balance import UserBalance
 from datetime import datetime, timedelta
 import os
 import jwt
@@ -16,16 +18,6 @@ class GoogleAuthService:
     def verify_and_create_user(id_token_str: str, email: str = None):
         """
         Verify Google ID token and create/retrieve user.
-        
-        Args:
-            id_token_str: Google ID token from mobile app
-            email: Optional email fallback (from token metadata)
-            
-        Returns:
-            tuple: (user, access_token, refresh_token)
-            
-        Raises:
-            ValueError: If token verification fails or auth fails
         """
         try:
             # Verify the ID token with Google
@@ -36,46 +28,36 @@ class GoogleAuthService:
             )
             
             # Extract verified user info from token
-            google_id = idinfo.get('sub')  # Unique Google ID
+            google_id = idinfo.get('sub')
             google_email = idinfo.get('email')
             given_name = idinfo.get('given_name', '')
             family_name = idinfo.get('family_name', '')
             picture = idinfo.get('picture', '')
             
-            # Use email from verified token, fallback to provided email
             email_to_use = google_email or email
             
             if not email_to_use:
                 raise ValueError('Email not provided in token')
             
-            # Check if user exists by google_id first (most secure)
+            # Check if user exists by google_id
             user = User.query.filter_by(google_id=google_id).first()
             
             if user:
-                # User exists, return their session
                 return GoogleAuthService._create_supabase_session(user)
             
-            # Check if email exists (existing account)
+            # Check if email exists
             user = User.query.filter_by(email=email_to_use).first()
             
             if user:
-                # User exists with this email, link their Google account
                 user.google_id = google_id
-                if not user.first_name:
-                    user.first_name = given_name
-                if not user.last_name:
-                    user.last_name = family_name
-                if not user.profile_picture_url:
-                    user.profile_picture_url = picture
-                user.updated_at = datetime.utcnow()
+                if not user.first_name: user.first_name = given_name
+                if not user.last_name: user.last_name = family_name
+                if not user.profile_picture_url: user.profile_picture_url = picture
                 db.session.commit()
-                
                 return GoogleAuthService._create_supabase_session(user)
             
             # Create new user
             username = email_to_use.split('@')[0]
-            
-            # Ensure username is unique
             username = GoogleAuthService._get_unique_username(username)
             
             user = User(
@@ -84,16 +66,26 @@ class GoogleAuthService:
                 first_name=given_name,
                 last_name=family_name,
                 profile_picture_url=picture,
-                google_id=google_id,
-                created_at=datetime.utcnow()
+                google_id=google_id
             )
             
             db.session.add(user)
+            db.session.flush() # Get user.id (UUID)
+            
+            # CREATE PROFILE for new user
+            profile = Profile(
+                user_id=user.id,
+                username=username,
+                profile_picture_url=picture or 'https://example.com/default-profile.png'
+            )
+            db.session.add(profile)
+            
             db.session.commit()
             
             return GoogleAuthService._create_supabase_session(user)
         
         except Exception as e:
+            db.session.rollback()
             print(f"Google Token Verification Error: {str(e)}")
             raise ValueError(f'Token verification failed: {str(e)}')
     
