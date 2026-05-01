@@ -150,6 +150,7 @@ def _get_feed_data_internal(current_user_id: str, cursor=None, limit=20):
                 'my_reaction': my_reactions.get(p['id']),
                 'is_mine': p['user_id'] in user_ids,
                 'reactors': reactions_by_post.get(p['id'], []),
+                'ai_analysis': p.get('ai_analysis'),
                 'author': {
                     'user_id': p['user_id'],
                     'username': author.get('username', 'Anonymous'),

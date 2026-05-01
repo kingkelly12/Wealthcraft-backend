@@ -65,21 +65,24 @@ def get_consolidated_dashboard(current_user_id: str):
         user_ids = resolve_user_ids(current_user_id)
         logger.info(f"Dashboard: fetching consolidated data for user_ids {user_ids}")
         
-        # 1. Profile & Balance (single query with JOIN)
-        profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('user_id', user_ids).execute()
+        # 1. Profile & Balance
+        profile_res = supabase.table('profiles').select('*').in_('user_id', user_ids).execute()
         if not profile_res.data:
-            profile_res = supabase.table('profiles').select('*, user_balances(current_balance)').in_('id', user_ids).execute()
+            profile_res = supabase.table('profiles').select('*').in_('id', user_ids).execute()
         
         if not profile_res.data:
             return jsonify({'success': False, 'error': 'USER_NOT_FOUND', 'message': f'Profile not found'}), 404
         
         profile = profile_res.data[0]
+        
+        # 2. Account Balance
+        balance_res = supabase.table('user_balances').select('current_balance').in_('user_id', user_ids).execute()
         account_balance = 0.0
-        if profile.get('user_balances'):
+        if balance_res.data:
             try:
-                account_balance = float(profile.get('user_balances', [{}])[0].get('current_balance', 0))
+                account_balance = float(balance_res.data[0].get('current_balance', 0))
             except:
-                account_balance = 0.0
+                pass
         
         # 2. Assets
         assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
@@ -111,16 +114,19 @@ def get_consolidated_dashboard(current_user_id: str):
         completed_count = len(completed_missions_res.data) if completed_missions_res.data else 0
         
         # 7. Top 5 Leaderboard Players (sorted by net_worth descending)
-        leaderboard_res = supabase.rpc(
-            'get_top_players',
-            {'limit_count': 5}
-        ).execute()
-        
-        # Fallback if RPC doesn't exist: fetch directly from profiles
-        if not leaderboard_res.data or leaderboard_res.error:
+        try:
+            leaderboard_res = supabase.rpc(
+                'get_top_players',
+                {'limit_count': 5}
+            ).execute()
+            top_players = leaderboard_res.data or []
+        except Exception as rpc_err:
+            logger.warning(f"Leaderboard RPC failed, using fallback: {str(rpc_err)}")
+            # Fallback: fetch directly from profiles table
             leaderboard_res = supabase.table('profiles').select('id, user_id, username, net_worth, profile_picture_url').order('net_worth', desc=True).limit(5).execute()
+            top_players = leaderboard_res.data or []
         
-        top_players = leaderboard_res.data or []
+        # Add rank to players
         
         # Add rank to players
         top_players_with_rank = []

@@ -21,6 +21,11 @@ class PlayerMentorInteraction(db.Model):
     relationship_score = db.Column(db.Integer, default=0)  # Running total with this mentor
     created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow)
 
+    # ── AI Chat columns ────────────────────────────────────────────────────
+    is_player_message = db.Column(db.Boolean, default=False)  # True = player sent this, False = mentor/system
+    parent_interaction_id = db.Column(UUID(as_uuid=True), db.ForeignKey('player_mentor_interactions.id'))  # Links AI response to the player message that triggered it
+    ai_metadata = db.Column(JSONB, default={})  # Stores tone, suggested_actions, model info
+
     def to_dict(self):
         return {
             'id': str(self.id),
@@ -32,5 +37,7 @@ class PlayerMentorInteraction(db.Model):
             'read_at': self.read_at.isoformat() if self.read_at else None,
             'action_taken': self.action_taken,
             'points_earned': self.points_earned,
-            'relationship_score': self.relationship_score
+            'relationship_score': self.relationship_score,
+            'is_player_message': self.is_player_message or False,
+            'ai_metadata': self.ai_metadata or {},
         }
