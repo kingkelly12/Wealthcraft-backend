@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from flask import current_app
@@ -547,7 +547,7 @@ class AIService:
         from app.models.player_mentor_interaction import PlayerMentorInteraction
         from app import db
 
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
         count = PlayerMentorInteraction.query.filter(
             PlayerMentorInteraction.player_id == uuid.UUID(player_id),

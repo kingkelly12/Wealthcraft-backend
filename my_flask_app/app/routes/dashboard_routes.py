@@ -88,32 +88,34 @@ def get_consolidated_dashboard(current_user_id: str):
         assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
         assets = assets_res.data or []
         
-        # 3. Active Liabilities (with details)
-        # Try to fetch with liability_items relationship
-        try:
-            liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
-        except:
-            # Fallback: fetch without relationship
-            liabilities_res = supabase.table('player_liabilities').select('*').in_('player_id', user_ids).eq('is_active', True).execute()
-        liabilities = liabilities_res.data or []
+        # 3. Active Liabilities (luxury items)
+        liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
+        luxury_liabilities = liabilities_res.data or []
         
-        # 4. Active Jobs
+        # 4. Active Loans (liabilities table)
+        loans_res = supabase.table('liabilities').select('*').in_('user_id', user_ids).execute()
+        loans = loans_res.data or []
+        
+        # Combine all liabilities
+        all_liabilities = luxury_liabilities + loans
+        
+        # 5. Active Jobs
         jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         jobs = jobs_res.data or []
         
-        # 5. Active Rentals
+        # 6. Active Rentals
         rental_res = supabase.table('player_rentals').select('*, rental_properties(*)').in_('player_id', user_ids).eq('is_active', True).execute()
         rental = rental_res.data[0] if (rental_res.data and len(rental_res.data) > 0) else None
         
-        # 6. Missions Status
+        # 7. Missions Status
         mission_progress_res = supabase.table('player_mission_progress').select('id, mission_id, current_month, integrated_missions!mission_id(name, duration_months)').in_('player_id', user_ids).eq('is_active', True).execute()
         active_missions = mission_progress_res.data or []
         
-        # Count completed missions
+        # 8. Completed Missions Count
         completed_missions_res = supabase.table('mission_completion_results').select('id').in_('player_id', user_ids).eq('completed', True).execute()
         completed_count = len(completed_missions_res.data) if completed_missions_res.data else 0
         
-        # 7. Top 5 Leaderboard Players (sorted by net_worth descending)
+        # 9. Top 5 Leaderboard Players (sorted by net_worth descending)
         try:
             leaderboard_res = supabase.rpc(
                 'get_top_players',
@@ -146,7 +148,7 @@ def get_consolidated_dashboard(current_user_id: str):
                 'profile': profile,
                 'account_balance': account_balance,
                 'portfolio': assets,
-                'liabilities': liabilities,
+                'liabilities': all_liabilities,
                 'jobs': jobs,
                 'rental': rental,
                 'missions': {
