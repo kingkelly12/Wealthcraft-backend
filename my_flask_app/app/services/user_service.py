@@ -1,5 +1,5 @@
 from app import supabase
-from supabase_auth.errors import AuthApiError
+from gotrue.errors import AuthApiError
 
 class UserService:
     @staticmethod

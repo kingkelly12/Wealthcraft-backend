@@ -7,7 +7,7 @@ from app.models.user_balance import UserBalance
 from datetime import datetime, timedelta
 import os
 import jwt
-from supabase_auth.errors import AuthApiError
+from gotrue.errors import AuthApiError
 
 class GoogleAuthService:
     """Service to handle Google OAuth authentication"""
