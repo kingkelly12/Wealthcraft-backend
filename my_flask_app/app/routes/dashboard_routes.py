@@ -154,7 +154,7 @@ def get_consolidated_dashboard(current_user_id: str):
         # 11. Market News (latest 10 headlines for MarketNewsTicker)
         try:
             news_res = supabase.table('market_news').select(
-                'id, headline, body, analyst_tip, category, created_at'
+                'id, headline, body, analyst_tip, category, created_at, sentiment'
             ).order('created_at', desc=True).limit(10).execute()
             news = news_res.data or []
         except Exception as news_err:

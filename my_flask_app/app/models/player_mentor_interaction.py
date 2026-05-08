@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from app import db
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
@@ -13,13 +13,13 @@ class PlayerMentorInteraction(db.Model):
     message_content = db.Column(db.Text, nullable=False)  # Personalized message
     trigger_type = db.Column(db.String(50), nullable=False)
     player_data_snapshot = db.Column(JSONB, default={})  # Financial data at time of message
-    sent_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    sent_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     read_at = db.Column(db.DateTime(timezone=True))
     action_taken = db.Column(db.Boolean, default=False)
     action_taken_at = db.Column(db.DateTime(timezone=True))
     points_earned = db.Column(db.Integer, default=0)
     relationship_score = db.Column(db.Integer, default=0)  # Running total with this mentor
-    created_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # ── AI Chat columns ────────────────────────────────────────────────────
     is_player_message = db.Column(db.Boolean, default=False)  # True = player sent this, False = mentor/system

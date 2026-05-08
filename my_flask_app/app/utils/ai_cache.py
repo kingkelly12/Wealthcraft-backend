@@ -8,7 +8,7 @@ Two-layer caching strategy:
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Optional, Dict, Tuple
 
@@ -25,19 +25,19 @@ def _memory_get(key: str) -> Optional[Any]:
     if not entry:
         return None
     value, expires_at = entry
-    if datetime.utcnow() > expires_at:
+    if datetime.now(timezone.utc) > expires_at:
         del _memory_cache[key]
         return None
     return value
 
 
 def _memory_set(key: str, value: Any, ttl_seconds: int = 3600) -> None:
-    _memory_cache[key] = (value, datetime.utcnow() + timedelta(seconds=ttl_seconds))
+    _memory_cache[key] = (value, datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds))
 
 
 def _memory_clear_expired() -> None:
     """Purge stale entries to keep memory bounded."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expired = [k for k, (_, exp) in _memory_cache.items() if now > exp]
     for k in expired:
         del _memory_cache[k]
@@ -73,10 +73,11 @@ def get_cached_response(key: str, supabase_client=None) -> Optional[dict]:
             if res.data:
                 row = res.data[0]
                 expires_at = datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00'))
-                if datetime.utcnow().replace(tzinfo=expires_at.tzinfo) < expires_at:
+                now = datetime.now(timezone.utc)
+                if now < expires_at:
                     payload = row['response']
                     # Warm memory cache (remaining TTL)
-                    remaining = (expires_at - datetime.utcnow().replace(tzinfo=expires_at.tzinfo)).seconds
+                    remaining = (expires_at - now).seconds
                     _memory_set(key, payload, ttl_seconds=remaining)
                     return payload
         except Exception as e:
@@ -95,7 +96,7 @@ def set_cached_response(key: str, value: dict, ttl_seconds: int = 86400,
 
     if supabase_client:
         try:
-            expires_at = (datetime.utcnow() + timedelta(seconds=ttl_seconds)).isoformat()
+            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
             supabase_client.table('ai_response_cache').upsert({
                 'cache_key': key,
                 'response': value,

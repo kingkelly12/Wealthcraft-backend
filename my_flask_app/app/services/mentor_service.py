@@ -8,7 +8,7 @@ from app.models.liability import Liability
 from app.models.user_balance import UserBalance
 from typing import Dict, List, Optional
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 class MentorService:
     """Service for analyzing player financial data and generating mentor advice"""
@@ -75,12 +75,12 @@ class MentorService:
         income_stagnant_months = 0
         if current_jobs:
             oldest_job = min(current_jobs, key=lambda j: j.start_date)
-            months_in_job = (datetime.utcnow() - oldest_job.start_date).days / 30
+            months_in_job = (datetime.now(timezone.utc) - oldest_job.start_date).days / 30
             # If same job for 6+ months with no salary change, it's stagnant
             income_stagnant_months = int(months_in_job) if months_in_job >= 6 else 0
         
         # 5. Expense ratio (from transactions in last 30 days)
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
         recent_expenses = Transaction.query.filter(
             Transaction.user_id == player_id,
             Transaction.type == 'expense',
@@ -99,10 +99,10 @@ class MentorService:
         cash_flow = total_income_actual - total_expenses
         
         # 7. Inactivity (days since last update)
-        days_inactive = (datetime.utcnow() - profile.updated_at).days if profile.updated_at else 0
+        days_inactive = (datetime.now(timezone.utc) - profile.updated_at).days if profile.updated_at else 0
         
         # 8. Account age (for consistent progress tracking)
-        account_age_months = (datetime.utcnow() - profile.created_at).days / 30 if profile.created_at else 0
+        account_age_months = (datetime.now(timezone.utc) - profile.created_at).days / 30 if profile.created_at else 0
         
         # === NEW METRICS FROM DATABASE FIELDS ===
         
@@ -534,7 +534,7 @@ class MentorService:
             return None
 
         interaction.action_taken = True
-        interaction.action_taken_at = datetime.utcnow()
+        interaction.action_taken_at = datetime.now(timezone.utc)
         interaction.points_earned = points
         interaction.relationship_score += points
 
