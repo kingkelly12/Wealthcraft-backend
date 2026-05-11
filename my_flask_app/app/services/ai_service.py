@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ── Gemini Configuration ──────────────────────────────────────────────────────
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={key}"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 def _call_gemini_api(prompt: str, system_instruction: Optional[str] = None) -> Optional[str]:
     """
@@ -379,20 +379,26 @@ class AIService:
             {changes_str}
             {player_str}
             
-            Based on these moves, generate 3-5 fictional news headlines and a market mood.
-            Also include a personalized "Analyst Tip" from Coach Chen."""
+            Based on these precise price moves, generate 3-5 highly realistic fictional news headlines. 
+            Invent macroeconomic catalysts for these moves (e.g., earnings reports, government bills, wars, pandemics, industrial accidents, supply chain issues).
+            Then, provide a detailed, educational 'analyst_tip' that teaches the player WHY the market reacted this way and WHAT specific financial move they should consider making."""
 
-            system_prompt = """You are the Market Narrative Engine for the game "Adulting".
-            Your goal is to make simulated price changes feel like a living economy.
-            Generate headlines that explain market moves (e.g., tech earnings, regulatory news, global events).
-            Be creative but keep it within a financial simulation context.
+            system_prompt = """You are an experienced, educational stock market broker and the Market Narrative Engine for the simulation game "Adulting".
+            Your goal is to teach the player how real-world events affect stock markets.
+            When explaining price moves, invent realistic global events:
+            - Public Company Announcements (Earnings misses/beats, CEO scandals, M&A)
+            - Legislative/Regulatory (New bills passed, deregulation, tax hikes, subsidies)
+            - Geopolitical/Macro (Wars, trade embargoes, global pandemics, inflation data)
+            - Black Swan Events (Industrial accidents, cyber attacks, terror attacks)
+            
+            Your 'analyst_tip' MUST be educational. Break down the cause-and-effect of the news and provide actionable trading advice (e.g., "Tech stocks drop on chip shortages. Consider buying the dip or holding cash until volatility settles.").
             
             Return JSON only:
             {
               "headlines": [
                 {
                   "title": "Headline string",
-                  "body": "Brief explanation",
+                  "body": "Brief explanation connecting the price move to a specific macro/global event.",
                   "sentiment": "bullish|bearish|neutral",
                   "asset_name": "Related Asset Name"
                 }
@@ -400,7 +406,7 @@ class AIService:
               "market_mood": "cautiously_optimistic|volatile|bullish|etc",
               "market_mood_emoji": "📈",
               "analyst_tip": {
-                "message": "Strategy tip based on moves",
+                "message": "Educational breakdown of the market forces at play, followed by concrete strategy advice.",
                 "mentor": "Coach Chen"
               }
             }"""

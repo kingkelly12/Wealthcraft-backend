@@ -8,7 +8,7 @@ Note: This uses simulated price changes, not real-world market data.
 Run this job every hour via cron/scheduler.
 """
 
-from app import supabase
+import app
 from app.services.push_notification_service import ExpoPushService
 from datetime import datetime
 import logging
@@ -59,7 +59,7 @@ def simulate_market_fluctuation():
         # 1. Fetch global assets that are volatile
         fluctuating_categories = ['stocks', 'crypto', 'investments']
         assets_result = _retry_request(
-            lambda: supabase.table('assets').select('*').in_('category', fluctuating_categories).execute()
+            lambda: app.supabase.table('assets').select('*').in_('category', fluctuating_categories).execute()
         )
 
         if not assets_result.data:
@@ -88,7 +88,7 @@ def simulate_market_fluctuation():
             # Update global asset with retry logic
             try:
                 _retry_request(
-                    lambda: supabase.table('assets').update({'price': new_price}).eq('id', asset['id']).execute()
+                    lambda: app.supabase.table('assets').update({'price': new_price}).eq('id', asset['id']).execute()
                 )
             except Exception as update_error:
                 logger.error(f"Failed to update asset {asset['id']}: {update_error}")
@@ -109,7 +109,7 @@ def simulate_market_fluctuation():
         # 2. Fetch user portfolios containing these assets
         affected_types = ['stocks', 'crypto'] 
         user_assets_result = _retry_request(
-            lambda: supabase.table('user_assets').select(
+            lambda: app.supabase.table('user_assets').select(
                 'id, user_id, name, asset_type, quantity, value'
             ).in_('asset_type', affected_types).execute()
         )
@@ -128,7 +128,7 @@ def simulate_market_fluctuation():
                     # Update user's specific asset value in database with retry logic
                     try:
                         _retry_request(
-                            lambda: supabase.table('user_assets').update({'value': new_value}).eq('id', ua['id']).execute()
+                            lambda: app.supabase.table('user_assets').update({'value': new_value}).eq('id', ua['id']).execute()
                         )
                     except Exception as update_error:
                         logger.error(f"Failed to update user asset {ua['id']}: {update_error}")
@@ -196,7 +196,7 @@ def simulate_market_fluctuation():
                 
                 # Store headlines in database
                 for h in ai_news.get('headlines', []):
-                    supabase.table('market_news').insert({
+                    app.supabase.table('market_news').insert({
                         'headline': h['title'],
                         'body': h['body'],
                         'sentiment': h['sentiment'],
@@ -215,7 +215,7 @@ def simulate_market_fluctuation():
             for notif in notifications_to_send:
                 try:
                     res = ExpoPushService.send_notification_to_user(
-                        supabase_client=supabase,
+                        supabase_client=app.supabase,
                         user_id=notif['user_id'],
                         title=notif['title'],
                         body=notif['body'],
@@ -241,7 +241,11 @@ def simulate_market_fluctuation():
 
 
 if __name__ == '__main__':
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     from app import create_app
-    app = create_app()
-    with app.app_context():
+    flask_app = create_app()
+    with flask_app.app_context():
         simulate_market_fluctuation()
