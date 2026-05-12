@@ -164,7 +164,10 @@ def get_consolidated_dashboard(current_user_id: str):
         return jsonify({
             'success': True,
             'data': {
-                'profile': profile,
+                'profile': {
+                    **profile,
+                    'trading_profits': float(profile.get('trading_profits') or 0),
+                },
                 'account_balance': account_balance,
                 'portfolio': assets,
                 'liabilities': all_liabilities,

@@ -5,7 +5,7 @@ This job monitors user asset holdings and sends push notifications
 when SIMULATED price changes exceed defined thresholds.
 
 Note: This uses simulated price changes, not real-world market data.
-Run this job every hour via cron/scheduler.
+Run this job every 4 hours via cron/scheduler.
 """
 
 import app
@@ -57,7 +57,7 @@ def simulate_market_fluctuation():
 
     try:
         # 1. Fetch global assets that are volatile
-        fluctuating_categories = ['stocks', 'crypto', 'investments']
+        fluctuating_categories = ['stocks', 'crypto', 'investments', 'forex']
         assets_result = _retry_request(
             lambda: app.supabase.table('assets').select('*').in_('category', fluctuating_categories).execute()
         )
@@ -76,9 +76,11 @@ def simulate_market_fluctuation():
             if current_price <= 0:
                 continue
 
-            # Random changes
+            # Random changes based on asset class volatility
             if cat == 'crypto':
                 price_change_pct = random.uniform(-10, 10)
+            elif cat == 'forex':
+                price_change_pct = random.uniform(-3, 3)
             else:
                 price_change_pct = random.uniform(-5, 5)
 
@@ -107,7 +109,7 @@ def simulate_market_fluctuation():
             return
 
         # 2. Fetch user portfolios containing these assets
-        affected_types = ['stocks', 'crypto'] 
+        affected_types = ['stocks', 'crypto', 'forex'] 
         user_assets_result = _retry_request(
             lambda: app.supabase.table('user_assets').select(
                 'id, user_id, name, asset_type, quantity, value'
@@ -162,8 +164,8 @@ def simulate_market_fluctuation():
             except Exception as e:
                 logger.error(f"Failed to sync net worth for user {user_id}: {e}", exc_info=True)
 
-            # Filter for significant changes, e.g. > 3%
-            significant_changes = [c for c in changes if abs(c['change_pct']) >= 3.0]
+            # Filter for significant changes, e.g. > 4%
+            significant_changes = [c for c in changes if abs(c['change_pct']) >= 4.0]
             
             if significant_changes:
                 most_significant = max(significant_changes, key=lambda x: abs(x['change_pct']))

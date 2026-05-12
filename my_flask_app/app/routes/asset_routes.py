@@ -92,6 +92,7 @@ def purchase_asset(current_user_id: str):
             'property' if category == 'real_estate' else
             'stocks' if category in ['business', 'stocks', 'investments'] else
             'crypto' if category == 'crypto' else
+            'forex' if category == 'forex' else
             'property'
         )
         
@@ -102,7 +103,7 @@ def purchase_asset(current_user_id: str):
         new_total_value = float(total_price)
         new_purchase_price = asset['price']
         
-        if asset_type in ['stocks', 'crypto']:
+        if asset_type in ['stocks', 'crypto', 'forex']:
             existing_response = supabase.table('user_assets').select('*').eq('user_id', current_user_id).eq('name', asset['name']).execute()
             
             if existing_response.data and len(existing_response.data) > 0:
@@ -335,23 +336,26 @@ def sell_asset(current_user_id: str, asset_id: str):
     5. Logs the transaction
     """
     try:
-        # 1. Get the asset and verify ownership
-        asset_response = supabase.table('user_assets').select('*').eq('id', asset_id).eq('user_id', current_user_id).single().execute()
-        
+        # Resolve both possible UUIDs (Auth UID and Profile UUID) for this user
+        user_ids = resolve_user_ids(current_user_id)
+
+        # 1. Get the asset and verify ownership (try all resolved IDs)
+        asset_response = supabase.table('user_assets').select('*').eq('id', asset_id).in_('user_id', user_ids).execute()
+
         if not asset_response.data:
             return jsonify({
                 'success': False,
                 'error': 'ASSET_NOT_FOUND',
                 'message': 'Asset not found or does not belong to you'
             }), 404
-        
-        asset = asset_response.data
+
+        asset = asset_response.data[0]
         
         # 1.5 Calculate true sale value based on asset type
         quantity = Decimal(str(asset.get('quantity', 1)))
         asset_type = asset.get('asset_type', '')
         
-        if asset_type in ['stocks', 'crypto']:
+        if asset_type in ['stocks', 'crypto', 'forex']:
             # For volatile market assets, fetch current global market price
             market_asset_response = supabase.table('assets').select('price').eq('name', asset.get('name')).single().execute()
             
@@ -380,9 +384,21 @@ def sell_asset(current_user_id: str, asset_id: str):
         supabase.table('user_assets').delete().eq('id', asset_id).execute()
         
         # 3.5 Update Profile (Trading Profits)
-        # Net Worth is already synced via BalanceService.add_balance above
+        # Resolve the correct profile user_id for the SQLAlchemy ORM lookup.
+        # The ORM stores profiles by their Auth UID in the user_id column.
+        # We use resolve_user_ids to find whichever UUID the profile was stored under.
         try:
-            user_uuid = uuid.UUID(current_user_id)
+            # The asset owner_id is the one used when the user_asset was created
+            owner_id = asset.get('user_id', current_user_id)
+            profile_lookup_id = None
+            # Prefer the UUID that exists in the profiles.user_id column
+            profile_check = supabase.table('profiles').select('user_id').in_('user_id', user_ids).execute()
+            if profile_check.data:
+                profile_lookup_id = profile_check.data[0]['user_id']
+            else:
+                profile_lookup_id = owner_id
+
+            user_uuid = uuid.UUID(str(profile_lookup_id))
             ProfileService.update_trading_profits(user_uuid, float(profit))
         except Exception as e:
             logger.error(f"Failed to update trading profits for user {current_user_id}: {e}")

@@ -106,7 +106,7 @@ def cron_inactive_users_monitor():
 @cron_bp.route('/market-monitor/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_market_monitor():
-    """Market fluctuation simulation — Schedule: 0 * * * * (every hour)"""
+    """Market fluctuation simulation — Schedule: 0 */4 * * * (every 4 hours)"""
     try:
         run_in_background(simulate_market_fluctuation)
         return jsonify({'success': True, 'message': 'Market monitor queued for background execution'}), 200
