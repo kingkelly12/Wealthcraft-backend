@@ -580,9 +580,10 @@ class AIService:
         """Fetch the last N interactions for this player-mentor pair."""
         from app.models.player_mentor_interaction import PlayerMentorInteraction
 
-        interactions = PlayerMentorInteraction.query.filter_by(
-            player_id=uuid.UUID(player_id),
-            mentor_id=uuid.UUID(mentor_id),
+        interactions = PlayerMentorInteraction.query.filter(
+            PlayerMentorInteraction.player_id == uuid.UUID(player_id),
+            PlayerMentorInteraction.mentor_id == uuid.UUID(mentor_id),
+            PlayerMentorInteraction.trigger_type.in_(['player_chat', 'ai_chat_response'])
         ).order_by(
             PlayerMentorInteraction.sent_at.asc()
         ).limit(AIService.CONVERSATION_HISTORY_DEPTH * 2).all()

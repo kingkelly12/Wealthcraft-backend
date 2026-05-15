@@ -10,7 +10,8 @@ class Profile(db.Model):
     user_id = db.Column(UUID(as_uuid=True), unique=True, nullable=False, index=True)
     username = db.Column(db.String(255), unique=True, nullable=False, index=True)
     net_worth = db.Column(db.Numeric(15, 2), default=0)
-    monthly_income = db.Column(db.Numeric(15, 2), default=0)
+    base_monthly_income = db.Column(db.Numeric(15, 2), default=0) # Salary boosts
+    monthly_income = db.Column(db.Numeric(15, 2), default=0) # Total income (base + jobs + assets)
     credit_score = db.Column(db.Integer, default=650)
     wealth_level = db.Column(db.String(50), default='Beginner')
     experience_points = db.Column(db.Integer, default=0)
@@ -26,12 +27,19 @@ class Profile(db.Model):
     last_active_at = db.Column(db.DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     last_inactivity_ping_sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
+    # ── Linter fix ─────────────────────────────────────────────────────────
+    def __init__(self, **kwargs):
+        # This explicit init satisfies type checkers (like Pyrefly/Pyright) 
+        # which don't know that SQLAlchemy's db.Model handles kwargs automatically.
+        super(Profile, self).__init__(**kwargs)
+
     def to_dict(self):
         return {
             'id': str(self.id),
             'user_id': str(self.user_id),
             'username': self.username,
             'net_worth': float(self.net_worth) if self.net_worth else 0,
+            'base_monthly_income': float(self.base_monthly_income) if self.base_monthly_income else 0,
             'monthly_income': float(self.monthly_income) if self.monthly_income else 0,
             'credit_score': self.credit_score,
             'wealth_level': self.wealth_level,

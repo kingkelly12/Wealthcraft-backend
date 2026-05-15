@@ -26,6 +26,12 @@ class PlayerMentorInteraction(db.Model):
     parent_interaction_id = db.Column(UUID(as_uuid=True), db.ForeignKey('player_mentor_interactions.id'))  # Links AI response to the player message that triggered it
     ai_metadata = db.Column(JSONB, default={})  # Stores tone, suggested_actions, model info
 
+    # ── Linter fix ─────────────────────────────────────────────────────────
+    def __init__(self, **kwargs):
+        # This explicit init satisfies type checkers (like Pyrefly/Pyright) 
+        # which don't know that SQLAlchemy's db.Model handles kwargs automatically.
+        super(PlayerMentorInteraction, self).__init__(**kwargs)
+
     def to_dict(self):
         return {
             'id': str(self.id),

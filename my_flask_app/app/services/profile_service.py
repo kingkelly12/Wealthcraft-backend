@@ -95,12 +95,65 @@ class ProfileService:
 
     @staticmethod
     def update_monthly_income(user_id: uuid.UUID, amount: float) -> Optional[Profile]:
-        """Update user's monthly income (permanent change)"""
+        """Update user's base monthly income (permanent change from boosts)"""
         profile = Profile.query.filter_by(user_id=user_id).first()
         if profile:
-            profile.monthly_income = float(profile.monthly_income) + amount
+            profile.base_monthly_income = float(profile.base_monthly_income or 0) + amount
             db.session.commit()
+            # After updating base, recalculate total
+            ProfileService.recalculate_monthly_income(user_id)
         return profile
+
+    @staticmethod
+    def recalculate_monthly_income(user_id: uuid.UUID) -> float:
+        """
+        Calculates and updates the cached monthly_income core field in the profiles table.
+        This ensures the leaderboard and all screens show the true total income.
+        """
+        from app import supabase
+        
+        try:
+            profile = Profile.query.filter_by(user_id=user_id).first()
+            if not profile:
+                return 0.0
+
+            # 1. Get Base Income (salary boosts)
+            base_income = float(profile.base_monthly_income or 0)
+            
+            # 2. Get Job Salaries (annual / 12)
+            jobs_res = supabase.table('jobs').select('salary').eq('user_id', str(user_id)).eq('is_current', True).execute()
+            job_income = sum((float(j.get('salary') or 0) / 12.0) for j in (jobs_res.data or []))
+            
+            # 3. Get Passive Income from Assets
+            assets_res = supabase.table('user_assets').select('quantity, asset_type, name').eq('user_id', str(user_id)).execute()
+            asset_income = 0.0
+            
+            if assets_res.data:
+                # We need to map user_assets to the base assets to get their monthly_income
+                asset_names = [a.get('name') for a in assets_res.data if a.get('name')]
+                if asset_names:
+                    base_assets_res = supabase.table('assets').select('name, monthly_income').in_('name', asset_names).execute()
+                    base_assets_map = {a.get('name'): float(a.get('monthly_income') or 0) for a in (base_assets_res.data or [])}
+                    
+                    for ua in assets_res.data:
+                        name = ua.get('name')
+                        qty = float(ua.get('quantity') or 1)
+                        monthly_yield = base_assets_map.get(name, 0.0)
+                        asset_income += (monthly_yield * qty)
+
+            # 4. Final Calculation
+            total_income = base_income + job_income + asset_income
+            
+            # 5. Update Profile
+            profile.monthly_income = total_income
+            db.session.commit()
+            
+            return total_income
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to recalculate monthly income for {user_id}: {e}", exc_info=True)
+            return 0.0
 
     @staticmethod
     def update_credit_score(user_id: uuid.UUID, credit_score: int) -> Optional[Profile]:

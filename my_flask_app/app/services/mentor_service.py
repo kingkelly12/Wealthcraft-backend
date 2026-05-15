@@ -577,58 +577,5 @@ class MentorService:
 
     @staticmethod
     def check_real_time_triggers(player_id: uuid.UUID, action: str, action_data: Dict) -> Optional[Dict]:
-        """Check for immediate mentor reactions to player actions"""
-        
-        # Get username
-        profile = Profile.query.filter_by(user_id=player_id).first()
-        username = profile.username if profile else "Player"
-
-        # Buying expensive liability (yacht, helicopter, etc.)
-        if action == 'buy_liability' and action_data.get('cost', 0) > 50000:
-            mentor = Mentor.query.filter_by(role='emotional').first()
-            if mentor:
-                message = f"Sweetheart, I saw you bought a {action_data.get('item_name')}. I know you worked hard, but remember - things don't bring lasting happiness. Financial freedom does. Are you sure this aligns with your goals?"
-                return {
-                    'mentor': mentor,
-                    'message': message,
-                    'trigger_type': 'expensive_purchase',
-                    'immediate': True
-                }
-
-        # Taking on high debt
-        if action == 'take_loan' and action_data.get('amount', 0) > 100000:
-            mentor = Mentor.query.filter_by(role='risk_analyst').first()
-            if mentor:
-                message = f"Hi {username}, that's a ${action_data.get('amount'):,} loan. Let's make sure you have a solid repayment plan. High debt can become a trap if not managed carefully."
-                return {
-                    'mentor': mentor,
-                    'message': message,
-                    'trigger_type': 'high_debt_taken',
-                    'immediate': True
-                }
-
-        # Selling all assets (panic selling)
-        if action == 'sell_assets' and action_data.get('percentage_sold', 0) > 0.5:
-            mentor = Mentor.query.filter_by(role='strategic').first()
-            if mentor:
-                message = f"Whoa {username}! You just sold {int(action_data.get('percentage_sold') * 100)}% of your portfolio. Panic selling is how people lose wealth. What's driving this decision?"
-                return {
-                    'mentor': mentor,
-                    'message': message,
-                    'trigger_type': 'panic_selling',
-                    'immediate': True
-                }
-
-        # Buying an asset (first investment)
-        if action == 'buy_asset':
-            mentor = Mentor.query.filter_by(role='strategic').first()
-            if mentor:
-                message = f"Great move {username}! Buying {action_data.get('asset_name')} is your first step toward building a wealth engine. Keep this momentum going."
-                return {
-                    'mentor': mentor,
-                    'message': message,
-                    'trigger_type': 'first_asset_purchase',
-                    'immediate': True
-                }
-
+        """Check for immediate mentor reactions to player actions (Disabled to favor AI Chat)"""
         return None

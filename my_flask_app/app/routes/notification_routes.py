@@ -189,13 +189,30 @@ def mark_notification_read(current_user_id: str, notification_id: str):
         }), 500
 
 
+def resolve_user_ids(user_id: str) -> list:
+    """Resolve both Auth UID and Profile UUID"""
+    try:
+        res = supabase.table('profiles').select('id, user_id').eq('user_id', user_id).limit(1).execute()
+        if res.data:
+            p = res.data[0]
+            return list({str(p['user_id']), str(p['id'])})
+        res = supabase.table('profiles').select('id, user_id').eq('id', user_id).limit(1).execute()
+        if res.data:
+            p = res.data[0]
+            return list({str(p['user_id']), str(p['id'])})
+    except:
+        pass
+    return [user_id]
+
+
 @notification_bp.route('/', methods=['GET'])
 @require_auth
 def get_all_notifications(current_user_id: str):
     """Get all notifications"""
     try:
+        user_ids = resolve_user_ids(current_user_id)
         limit = request.args.get('limit', 20, type=int)
-        response = supabase.table('notifications').select('*').eq('user_id', current_user_id).order('created_at', desc=True).limit(limit).execute()
+        response = supabase.table('notifications').select('*').in_('user_id', user_ids).order('created_at', desc=True).limit(limit).execute()
         return jsonify({'success': True, 'data': response.data}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -206,7 +223,8 @@ def get_all_notifications(current_user_id: str):
 def get_unread_count(current_user_id: str):
     """Get count of unread notifications"""
     try:
-        response = supabase.table('notifications').select('id', count='exact').eq('user_id', current_user_id).eq('read', False).execute()
+        user_ids = resolve_user_ids(current_user_id)
+        response = supabase.table('notifications').select('id', count='exact').in_('user_id', user_ids).eq('read', False).execute()
         return jsonify({'success': True, 'data': response.count}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

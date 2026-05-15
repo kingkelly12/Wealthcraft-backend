@@ -176,6 +176,10 @@ def apply_for_job(current_user_id: str):
             reason=f'Job salary advance for {job["title"]} at {job["company"]}'
         )
         
+        # Recalculate true monthly income
+        from app.services.profile_service import ProfileService
+        ProfileService.recalculate_monthly_income(uuid.UUID(current_user_id))
+        
         # 6. Send push notification to followers
         # 6. Notify followers about the new job in background
         try:
@@ -234,6 +238,11 @@ def quit_job(current_user_id: str, job_id: str):
         
         # Update job to inactive (use .in_ for same reason)
         supabase.table('jobs').update({'is_current': False}).eq('id', job_id).in_('user_id', user_ids).execute()
+        
+        # Recalculate true monthly income
+        from app.services.profile_service import ProfileService
+        import uuid
+        ProfileService.recalculate_monthly_income(uuid.UUID(current_user_id))
         
         # Notify followers of quit job in background
         try:

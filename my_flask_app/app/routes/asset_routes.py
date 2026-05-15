@@ -177,6 +177,11 @@ def purchase_asset(current_user_id: str):
                 )
         except Exception as e:
             print(f"Failed to trigger mentor response: {str(e)}")
+            
+        # Recalculate true monthly income
+        from app.services.profile_service import ProfileService
+        import uuid
+        ProfileService.recalculate_monthly_income(uuid.UUID(current_user_id))
         
         # (already handled before real-time triggers)
         
@@ -400,6 +405,7 @@ def sell_asset(current_user_id: str, asset_id: str):
 
             user_uuid = uuid.UUID(str(profile_lookup_id))
             ProfileService.update_trading_profits(user_uuid, float(profit))
+            ProfileService.recalculate_monthly_income(user_uuid)
         except Exception as e:
             logger.error(f"Failed to update trading profits for user {current_user_id}: {e}")
         
