@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ── Qwen Configuration ────────────────────────────────────────────────────────
 
-QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 def _call_qwen_api(prompt: str, system_instruction: Optional[str] = None) -> Optional[str]:
     """
