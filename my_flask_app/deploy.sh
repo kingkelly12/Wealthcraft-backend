@@ -1,91 +1,186 @@
 #!/bin/bash
 
-# 🚀 WealthCraft Lambda Deployment Script
-# This script automates the deployment of your Flask API to AWS Lambda
+# 🚀 Adulting Backend - Cloud Run Quick Deploy Script
+# Usage: ./deploy.sh [build|test|push|deploy|all]
 
-set -e  # Exit immediately if any command fails
+set -e  # Exit on any error
 
-echo "========================================="
-echo "🚀 Adulting Lambda Deployment"
-echo "========================================="
-echo ""
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# 🎓 STEP 1: Validate AWS credentials
-echo "📋 Step 1: Validating AWS credentials..."
-if ! aws sts get-caller-identity &> /dev/null; then
-    echo "❌ ERROR: AWS credentials not configured!"
-    echo ""
-    echo "Please configure AWS CLI first:"
-    echo "  1. Install AWS CLI: https://aws.amazon.com/cli/"
-    echo "  2. Run: aws configure"
-    echo "  3. Enter your AWS Access Key ID and Secret Access Key"
-    echo ""
-    exit 1
-fi
+# Configuration
+PROJECT_ID="${GCP_PROJECT_ID}"
+IMAGE_NAME="Adulting-backend"
+REGION="europe-west2"
+REGISTRY="gcr.io"
 
-AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-AWS_REGION=$(aws configure get region || echo "us-east-1")
-echo "✅ Authenticated as AWS Account: $AWS_ACCOUNT"
-echo "✅ Deploying to region: $AWS_REGION"
-echo ""
+# Function to print colored output
+print_step() {
+    echo -e "\n${BLUE}==>${NC} $1"
+}
 
-# 🎓 STEP 2: Build the SAM application
-echo "📦 Step 2: Building SAM application..."
-echo "This will:"
-echo "  - Install Python dependencies from requirements.txt"
-echo "  - Create deployment package in .aws-sam/ directory"
-echo "  - Exclude files listed in .samignore"
-echo ""
+print_success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
 
-sam build
+print_error() {
+    echo -e "${RED}✗${NC} $1"
+}
 
-if [ $? -ne 0 ]; then
-    echo "❌ Build failed! Check the error messages above."
-    exit 1
-fi
+print_warning() {
+    echo -e "${YELLOW}⚠${NC} $1"
+}
 
-echo "✅ Build successful!"
-echo ""
+# Check if GCP_PROJECT_ID is set
+check_project_id() {
+    if [ -z "$PROJECT_ID" ]; then
+        print_error "GCP_PROJECT_ID environment variable not set"
+        echo "Set it with: export GCP_PROJECT_ID=your-project-id"
+        exit 1
+    fi
+    print_success "Using GCP Project: $PROJECT_ID"
+}
 
-# 🎓 STEP 3: Deploy to AWS
-echo "☁️  Step 3: Deploying to AWS Lambda..."
-echo ""
+# Build Docker image locally
+build() {
+    print_step "Building Docker image: $IMAGE_NAME:latest"
+    docker build -t $IMAGE_NAME:latest .
+    print_success "Docker image built successfully"
+}
 
-# Check if this is first deployment (no samconfig.toml exists)
-if [ ! -f samconfig.toml ]; then
-    echo "🎯 First-time deployment detected!"
-    echo "You will be prompted for configuration parameters."
-    echo "These will be saved to samconfig.toml for future deployments."
-    echo ""
+# Test image locally
+test() {
+    print_step "Testing Docker image locally..."
     
-    # Guided deployment (interactive)
-    sam deploy --guided
-else
-    echo "🎯 Using existing configuration from samconfig.toml"
-    echo "To change parameters, delete samconfig.toml and run again."
-    echo ""
+    if [ ! -f ".env" ]; then
+        print_warning "No .env file found. Creating template..."
+        cat > .env.example << 'EOF'
+FLASK_CONFIG=production
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+SUPABASE_JWT_SECRET=your_jwt_secret
+GOOGLE_WEB_CLIENT_ID=your_google_client_id
+QWEN_API_KEY=your_qwen_key
+SECRET_KEY=your_secret_key
+DATABASE_URL=your_postgres_url
+EOF
+        print_warning "Created .env.example - Copy and update with your values"
+        exit 1
+    fi
     
-    # Non-interactive deployment using saved config
-    sam deploy
-fi
+    print_step "Starting container on port 8080..."
+    docker run -d \
+        -p 8080:8080 \
+        --env-file .env \
+        --name $IMAGE_NAME-test \
+        $IMAGE_NAME:latest
+    
+    # Wait for container to start
+    sleep 3
+    
+    print_step "Testing health endpoint..."
+    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+        print_success "Health check passed!"
+        curl -s http://localhost:8080/health | jq .
+    else
+        print_error "Health check failed!"
+        docker logs $IMAGE_NAME-test
+        docker stop $IMAGE_NAME-test
+        docker rm $IMAGE_NAME-test
+        exit 1
+    fi
+    
+    docker stop $IMAGE_NAME-test
+    docker rm $IMAGE_NAME-test
+    print_success "Local test passed!"
+}
 
-if [ $? -ne 0 ]; then
-    echo "❌ Deployment failed! Check the error messages above."
-    exit 1
-fi
+# Push image to GCR
+push() {
+    check_project_id
+    
+    print_step "Tagging image for Google Container Registry..."
+    docker tag $IMAGE_NAME:latest $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest
+    
+    print_step "Pushing to GCR..."
+    docker push $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest
+    
+    print_success "Image pushed to: $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest"
+}
 
-echo ""
-echo "========================================="
-echo "✅ Deployment Complete!"
-echo "========================================="
-echo ""
-echo "📝 Next Steps:"
-echo "  1. Copy the API URL from the outputs above"
-echo "  2. Update your mobile app to use the new Lambda URL"
-echo "  3. Test your endpoints: curl <API_URL>/health"
-echo "  4. Monitor logs: sam logs -n WealthCraftAPI --tail"
-echo ""
-echo "💰 Cost Monitoring:"
-echo "  - Check AWS billing dashboard"
-echo "  - Expected: \$0.00 for <1M requests/month"
-echo ""
+# Deploy to Cloud Run
+deploy() {
+    check_project_id
+    
+    print_step "Deploying to Cloud Run..."
+    
+    gcloud run deploy $IMAGE_NAME \
+        --image $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest \
+        --platform managed \
+        --region $REGION \
+        --memory 1Gi \
+        --cpu 1 \
+        --timeout 300 \
+        --allow-unauthenticated \
+        --set-env-vars "FLASK_CONFIG=production" \
+        --max-instances 5
+
+    
+    print_success "Deployment complete!"
+    
+    print_step "Getting service URL..."
+    SERVICE_URL=$(gcloud run services describe $IMAGE_NAME --region $REGION --format='value(status.url)')
+    print_success "Your API is live at: $SERVICE_URL"
+    print_success "Health check: curl $SERVICE_URL/health"
+}
+
+# Show logs
+logs() {
+    check_project_id
+    print_step "Showing Cloud Run logs..."
+    gcloud run logs read $IMAGE_NAME --limit 50 --region $REGION --follow
+}
+
+# Main script logic
+case "${1:-all}" in
+    build)
+        build
+        ;;
+    test)
+        test
+        ;;
+    push)
+        build
+        push
+        ;;
+    deploy)
+        check_project_id
+        deploy
+        ;;
+    logs)
+        logs
+        ;;
+    all)
+        build
+        test
+        push
+        deploy
+        ;;
+    *)
+        echo "Usage: $0 {build|test|push|deploy|logs|all}"
+        echo ""
+        echo "Commands:"
+        echo "  build   - Build Docker image locally"
+        echo "  test    - Test Docker image locally (requires .env)"
+        echo "  push    - Build and push to Google Container Registry"
+        echo "  deploy  - Deploy to Cloud Run"
+        echo "  logs    - View Cloud Run logs"
+        echo "  all     - Run all steps (build → test → push → deploy)"
+        exit 1
+        ;;
+esac

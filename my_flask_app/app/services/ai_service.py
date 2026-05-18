@@ -1,10 +1,10 @@
 """
 AI Service Layer — The brain behind dynamic mentor conversations.
 
-Uses Google Gemini (gemini-2.0-flash) for cost-effective, fast generation.
+Uses Qwen AI (qwen-plus) for cost-effective, fast generation.
 All responses return structured JSON that maps directly to React Native UI components.
 
-Falls back gracefully to the existing template system if Gemini is unavailable.
+Falls back gracefully to the existing template system if Qwen is unavailable.
 """
 
 import json
@@ -18,48 +18,52 @@ from flask import current_app
 
 logger = logging.getLogger(__name__)
 
-# ── Gemini Configuration ──────────────────────────────────────────────────────
+# ── Qwen Configuration ────────────────────────────────────────────────────────
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
-def _call_gemini_api(prompt: str, system_instruction: Optional[str] = None) -> Optional[str]:
+def _call_qwen_api(prompt: str, system_instruction: Optional[str] = None) -> Optional[str]:
     """
-    Directly call the Gemini REST API via requests.
+    Directly call the Qwen REST API via requests using OpenAI-compatible format.
     This avoids SDK version conflicts on Python 3.8.
     """
-    api_key = current_app.config.get('GEMINI_API_KEY')
+    api_key = current_app.config.get('QWEN_API_KEY')
     if not api_key:
-        logger.warning("GEMINI_API_KEY not set — falling back to templates")
+        logger.warning("QWEN_API_KEY not set — falling back to templates")
         return None
 
     model = AIService.MODEL_NAME
-    url = GEMINI_API_URL.format(model=model, key=api_key)
-
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
     }
 
+    messages = []
     if system_instruction:
-        payload["system_instruction"] = {
-            "parts": [{"text": system_instruction}]
-        }
+        messages.append({"role": "system", "content": system_instruction})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.7
+    }
 
     try:
-        response = requests.post(url, json=payload, timeout=30)
+        response = requests.post(QWEN_API_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         data = response.json()
         
-        # Extract text from response structure
-        candidates = data.get('candidates', [])
-        if not candidates:
-            logger.error(f"Gemini returned no candidates: {data}")
+        # Extract text from standard OpenAI-compatible choices structure
+        choices = data.get('choices', [])
+        if not choices:
+            logger.error(f"Qwen returned no choices: {data}")
             return None
             
-        return candidates[0].get('content', {}).get('parts', [{}])[0].get('text')
+        return choices[0].get('message', {}).get('content')
     except Exception as e:
-        logger.error(f"Gemini API request failed: {e}")
+        logger.error(f"Qwen API request failed: {e}")
         return None
 
 
@@ -210,7 +214,7 @@ class AIService:
     # Rate limits: 3 player messages per mentor per day
     DAILY_MESSAGE_LIMIT = 3
     CONVERSATION_HISTORY_DEPTH = 10
-    MODEL_NAME = "gemini-2.0-flash"
+    MODEL_NAME = "qwen-plus"
 
     # ── Mentor Chat ────────────────────────────────────────────────────────
 
@@ -256,7 +260,7 @@ class AIService:
         )
 
         try:
-            response_text = _call_gemini_api(full_prompt)
+            response_text = _call_qwen_api(full_prompt)
             if not response_text:
                 return AIService._fallback_response(mentor_role, username, metrics)
             
@@ -274,7 +278,7 @@ class AIService:
             }
 
         except Exception as e:
-            logger.error(f"Gemini API call failed for mentor chat: {e}")
+            logger.error(f"Qwen API call failed for mentor chat: {e}")
             return AIService._fallback_response(mentor_role, username, metrics)
 
     @staticmethod
@@ -303,7 +307,7 @@ class AIService:
             
             Based on this scream and their financial state, provide your analysis as THE VOID."""
 
-            response_text = _call_gemini_api(prompt, system_instruction=MENTOR_SYSTEM_PROMPTS['void'])
+            response_text = _call_qwen_api(prompt, system_instruction=MENTOR_SYSTEM_PROMPTS['void'])
             if not response_text:
                 return AIService._get_void_fallback(content)
             
@@ -344,7 +348,7 @@ class AIService:
             
             Provide a short, cryptic, and unsettling analysis of their failure as THE VOID."""
 
-            response_text = _call_gemini_api(prompt, system_instruction=MENTOR_SYSTEM_PROMPTS['void'])
+            response_text = _call_qwen_api(prompt, system_instruction=MENTOR_SYSTEM_PROMPTS['void'])
             if not response_text:
                 return AIService._get_void_fallback("Financial pressure mounting.")
             
@@ -412,7 +416,7 @@ class AIService:
               }
             }"""
 
-            response_text = _call_gemini_api(prompt, system_instruction=system_prompt)
+            response_text = _call_qwen_api(prompt, system_instruction=system_prompt)
             if not response_text:
                 return AIService._get_market_news_fallback(asset_changes)
             
@@ -448,7 +452,7 @@ class AIService:
 
     @staticmethod
     def _parse_json_response(text: str) -> Optional[Dict]:
-        """Utility to strip markdown fences and parse JSON from Gemini."""
+        """Utility to strip markdown fences and parse JSON from Qwen."""
         if not text:
             return None
             
@@ -464,12 +468,12 @@ class AIService:
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from Gemini: {e}. Raw: {raw_text[:100]}")
+            logger.error(f"Failed to parse JSON from Qwen: {e}. Raw: {raw_text[:100]}")
             return None
 
     @staticmethod
     def _get_void_fallback(content: str) -> Dict:
-        """Fallback response for The Void when Gemini is down."""
+        """Fallback response for The Void when Qwen is down."""
         return {
             "mood": "anxious",
             "mood_emoji": "🌀",
@@ -520,7 +524,7 @@ class AIService:
         )
 
         try:
-            response_text = _call_gemini_api(prompt)
+            response_text = _call_qwen_api(prompt)
             if not response_text:
                 return AIService._fallback_greeting(mentor_role, username, metrics)
 

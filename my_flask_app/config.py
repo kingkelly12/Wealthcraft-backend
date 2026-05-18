@@ -35,9 +35,9 @@ class Config:
     if not GOOGLE_WEB_CLIENT_ID:
         raise ValueError('GOOGLE_WEB_CLIENT_ID environment variable is required')
 
-    # Gemini AI Configuration
-    GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-    # Note: GEMINI_API_KEY is optional — app will fall back to template messages if not set
+    # Qwen AI Configuration
+    QWEN_API_KEY = os.environ.get('QWEN_API_KEY')
+    # Note: QWEN_API_KEY is optional — app will fall back to template messages if not set
     
     # API Configuration
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max request size
