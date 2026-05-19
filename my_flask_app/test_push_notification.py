@@ -9,7 +9,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import create_app, supabase
+from app import create_app
 from app.services.push_notification_service import ExpoPushService
 import argparse
 
@@ -19,9 +19,11 @@ def test_push_notification(user_id: str = None, title: str = None, body: str = N
     app = create_app()
     
     with app.app_context():
+        from app import supabase
+        
         if not user_id:
             # Get first user with push token
-            result = supabase.table('profiles').select('user_id, username, push_token').not_.is_('push_token', 'null').limit(1).execute()
+            result = supabase.table('profiles').select('user_id, username, expo_push_token').not_.is_('expo_push_token', 'null').limit(1).execute()
             
             if not result.data or len(result.data) == 0:
                 print("❌ No users with push tokens found")
@@ -50,12 +52,12 @@ def test_push_notification(user_id: str = None, title: str = None, body: str = N
             }
         )
         
+        return success
+        
         if success:
             print("✅ Notification sent successfully!")
-            return True
         else:
             print("❌ Failed to send notification")
-            return False
 
 
 def list_users_with_tokens():
@@ -63,7 +65,9 @@ def list_users_with_tokens():
     app = create_app()
     
     with app.app_context():
-        result = supabase.table('profiles').select('user_id, username, push_token, push_token_updated_at').not_.is_('push_token', 'null').execute()
+        from app import supabase
+        
+        result = supabase.table('profiles').select('user_id, username, expo_push_token, push_token_updated_at').not_.is_('expo_push_token', 'null').execute()
         
         if not result.data or len(result.data) == 0:
             print("No users with push tokens found")

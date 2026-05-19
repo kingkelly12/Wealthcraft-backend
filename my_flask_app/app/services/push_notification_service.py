@@ -18,6 +18,20 @@ class ExpoPushService:
     """Service for sending push notifications directly via Expo Push API"""
 
     EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+    # Expo push token format: ExponentPushToken[...]
+    EXPO_TOKEN_PATTERN = r'^ExponentPushToken\[.+\]$'
+
+    @classmethod
+    def validate_push_token(cls, token: str) -> bool:
+        """
+        Validate Expo push token format.
+        Valid format: ExponentPushToken[...]
+        """
+        import re
+        if not token or not isinstance(token, str):
+            return False
+        # Accept tokens starting with ExponentPushToken[
+        return token.startswith('ExponentPushToken[') and token.endswith(']')
 
     @classmethod
     def _get_expo_token(cls, supabase_client, user_id: str) -> Optional[str]:
@@ -90,7 +104,9 @@ class ExpoPushService:
             result = response.json()
 
             # Check Expo's ticket response
-            ticket_data = result.get('data', {})
+            # Expo API returns: {"data": [{"status": "ok", "id": "ticket-id"}, ...]}
+            # or {"errors": [{"message": "..."}]} on error
+            ticket_data = result.get('data', [{}])[0] if isinstance(result.get('data'), list) else result.get('data', {})
             if ticket_data.get('status') == 'ok':
                 logger.info(f"Expo Push sent successfully to user {user_id} (ticket: {ticket_data.get('id', 'N/A')})")
                 return True

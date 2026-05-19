@@ -9,8 +9,11 @@ from app.services.push_notification_service import ExpoPushService
 from app import supabase
 import os
 import uuid
+import logging
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 notification_bp = Blueprint('notification', __name__)
 
@@ -32,9 +35,10 @@ def register_push_token(current_user_id: str):
     Register or update a user's push notification token
     
     This endpoint:
-    1. Validates the push token format
-    2. Updates the user's profile with the new token
+    1. Validates the push token format (must be Expo format: ExponentPushToken[...])
+    2. Saves the token to the user's profile in Supabase
     3. Records the timestamp of the update
+    4. Returns success only if token is saved
     
     Security: user_id is taken from JWT, not from request
     """
@@ -42,19 +46,44 @@ def register_push_token(current_user_id: str):
         # Validate request
         data = RegisterTokenRequest(**request.json)
         
-        # Native Notify uses subID (user_id) directly — no token storage needed in DB.
-        # Validate format for client-side compatibility, then return success.
+        # Validate token format - must be ExponentPushToken[...]
         if not ExpoPushService.validate_push_token(data.push_token):
             return jsonify({
                 'success': False,
                 'error': 'INVALID_TOKEN_FORMAT',
-                'message': 'Invalid Expo push token format'
+                'message': 'Invalid Expo push token format. Expected ExponentPushToken[...]'
             }), 400
         
-        return jsonify({
-            'success': True,
-            'message': 'Push token acknowledged (Native Notify uses user ID — no DB storage needed)'
-        }), 200
+        # Save token to database
+        try:
+            result = supabase.table('profiles') \
+                .update({
+                    'expo_push_token': data.push_token,
+                    'push_token_updated_at': datetime.utcnow().isoformat()
+                }) \
+                .eq('user_id', current_user_id) \
+                .execute()
+            
+            if not result.data:
+                return jsonify({
+                    'success': False,
+                    'error': 'UPDATE_FAILED',
+                    'message': 'Failed to save push token to profile'
+                }), 500
+            
+            logger.info(f"Push token registered for user {current_user_id}")
+            return jsonify({
+                'success': True,
+                'message': 'Push token registered successfully'
+            }), 200
+            
+        except Exception as db_error:
+            logger.error(f"Database error saving push token for user {current_user_id}: {str(db_error)}")
+            return jsonify({
+                'success': False,
+                'error': 'DATABASE_ERROR',
+                'message': 'Failed to save push token to database'
+            }), 500
         
     except ValidationError as e:
         return jsonify({
@@ -84,19 +113,35 @@ def update_push_token(current_user_id: str):
 @require_auth
 def unregister_push_token(current_user_id: str):
     """
-    Remove a user's push token (e.g., on logout)
+    Remove a user's push token (e.g., on logout or app uninstall)
     
     This prevents notifications from being sent to devices
     where the user has logged out.
     """
     try:
-        # Native Notify uses subID (user_id) — no token to clear in DB.
-        return jsonify({
-            'success': True,
-            'message': 'Push token unregistered (Native Notify uses user ID — no DB storage needed)'
-        }), 200
+        result = supabase.table('profiles') \
+            .update({
+                'expo_push_token': None,
+                'push_token_updated_at': datetime.utcnow().isoformat()
+            }) \
+            .eq('user_id', current_user_id) \
+            .execute()
+        
+        if result.data:
+            logger.info(f"Push token unregistered for user {current_user_id}")
+            return jsonify({
+                'success': True,
+                'message': 'Push token unregistered successfully'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'UPDATE_FAILED',
+                'message': 'Failed to unregister push token'
+            }), 500
         
     except Exception as e:
+        logger.error(f"Error unregistering push token for user {current_user_id}: {str(e)}")
         return jsonify({
             'success': False,
             'error': 'OPERATION_FAILED',
