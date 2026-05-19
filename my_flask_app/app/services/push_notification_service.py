@@ -1,11 +1,13 @@
 """
-Push Notification Service for Native Notify
+Push Notification Service — Direct Expo Push API
 
-This service handles sending push notifications to mobile devices via the Native Notify API.
-We act as a drop-in replacement for the previous Expo Push Service so existing routes work out of the box.
+Sends push notifications directly via Expo's Push API (https://exp.host/--/api/v2/push/send).
+Reads the user's Expo Push Token from the `profiles.expo_push_token` column in Supabase.
+
+This replaces the previous Native Notify relay, which silently dropped notifications.
 """
 import requests
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 import logging
 from datetime import datetime
 
@@ -13,12 +15,29 @@ logger = logging.getLogger(__name__)
 
 
 class ExpoPushService:
-    """Service for sending push notifications via Native Notify Indie Push API"""
-    
-    APP_ID = 33561
-    APP_TOKEN = "zHkkW0NtIsUe14PaWbYzcv"
-    NATIVE_NOTIFY_INDIE_URL = "https://app.nativenotify.com/api/indie/notification"
-    
+    """Service for sending push notifications directly via Expo Push API"""
+
+    EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+    @classmethod
+    def _get_expo_token(cls, supabase_client, user_id: str) -> Optional[str]:
+        """Fetch a user's Expo Push Token from the profiles table."""
+        try:
+            result = supabase_client.table('profiles') \
+                .select('expo_push_token') \
+                .eq('user_id', user_id) \
+                .single() \
+                .execute()
+
+            if result.data and result.data.get('expo_push_token'):
+                return result.data['expo_push_token']
+            else:
+                logger.warning(f"No Expo push token found for user {user_id}")
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching Expo token for user {user_id}: {str(e)}")
+            return None
+
     @classmethod
     def send_notification_to_user(
         cls,
@@ -30,35 +49,71 @@ class ExpoPushService:
         data: Optional[Dict] = None
     ) -> bool:
         """
-        Send an Indie Push Notification via Native Notify using the user ID as subID.
+        Send a push notification to a user via Expo Push API.
+        Looks up their Expo Push Token from profiles.expo_push_token.
         """
         try:
+            # Get the user's Expo Push Token
+            expo_token = cls._get_expo_token(supabase_client, user_id)
+            if not expo_token:
+                logger.warning(f"Cannot send push to user {user_id}: no token registered")
+                return False
+
             # Prepare data payload
             notification_data = dict(data) if data else {}
             notification_data['type'] = notification_type
             notification_data['timestamp'] = datetime.utcnow().isoformat()
-            
+
+            # Expo Push API payload
             payload = {
-                "subID": str(user_id),
-                "appId": cls.APP_ID,
-                "appToken": cls.APP_TOKEN,
+                "to": expo_token,
                 "title": title,
-                "message": body,
-                "pushData": notification_data
+                "body": body,
+                "data": notification_data,
+                "sound": "default",
+                "priority": "high",
+                "channelId": "default",
             }
-            
+
             response = requests.post(
-                cls.NATIVE_NOTIFY_INDIE_URL,
+                cls.EXPO_PUSH_URL,
                 json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate",
+                },
                 timeout=10
             )
-            
+
             response.raise_for_status()
-            logger.info(f"Native Notify Push sent successfully to user {user_id}")
-            return True
-            
+            result = response.json()
+
+            # Check Expo's ticket response
+            ticket_data = result.get('data', {})
+            if ticket_data.get('status') == 'ok':
+                logger.info(f"Expo Push sent successfully to user {user_id} (ticket: {ticket_data.get('id', 'N/A')})")
+                return True
+            else:
+                error_msg = ticket_data.get('message', 'Unknown error')
+                error_detail = ticket_data.get('details', {}).get('error', '')
+                logger.error(f"Expo Push rejected for user {user_id}: {error_msg} ({error_detail})")
+
+                # If token is invalid, clear it from the database
+                if error_detail in ('DeviceNotRegistered', 'InvalidCredentials'):
+                    logger.info(f"Clearing invalid token for user {user_id}")
+                    try:
+                        supabase_client.table('profiles') \
+                            .update({'expo_push_token': None}) \
+                            .eq('user_id', user_id) \
+                            .execute()
+                    except Exception:
+                        pass
+
+                return False
+
         except Exception as e:
-            logger.error(f"Error sending Native Notify notification to user {user_id}: {str(e)}")
+            logger.error(f"Error sending Expo Push to user {user_id}: {str(e)}")
             return False
 
     @classmethod
@@ -69,7 +124,9 @@ class ExpoPushService:
         notification_type: str = 'system'
     ) -> Dict[str, int]:
         """
-        Batch-send notifications. Native Notify Indie API handles messages individually via HTTP post per user.
+        Batch-send notifications to multiple users.
+        Sends individually via Expo Push API (Expo also supports batch, but
+        individual calls give us per-user error handling).
         """
         if not user_notifications:
             return {'success': 0, 'failed': 0, 'skipped': 0}
@@ -82,7 +139,7 @@ class ExpoPushService:
             if not user_id:
                 failed_count += 1
                 continue
-                
+
             success = cls.send_notification_to_user(
                 supabase_client=supabase_client,
                 user_id=user_id,
@@ -91,14 +148,14 @@ class ExpoPushService:
                 notification_type=notification_type,
                 data=notif.get('data')
             )
-            
+
             if success:
                 success_count += 1
             else:
                 failed_count += 1
 
         logger.info(
-            f"Native Notify batch send complete — success: {success_count}, failed: {failed_count}"
+            f"Expo Push batch send complete — success: {success_count}, failed: {failed_count}"
         )
         return {'success': success_count, 'failed': failed_count, 'skipped': 0}
 
@@ -117,7 +174,7 @@ class ExpoPushService:
         Provides engaging copy to trigger mentorship intervention or praise.
         """
         from app.utils.background_task import run_in_background
-        
+
         def background_task():
             try:
                 # Get user's username
