@@ -75,6 +75,10 @@ def _calculate_appreciation(asset, today):
 def run_monthly_appreciation():
     """Run monthly appreciation update for non-volatile player assets (e.g. property, business)."""
     logger.info("Starting monthly asset appreciation...")
+    from jobs.run_guard import claim_monthly_run
+    if not claim_monthly_run('monthly_appreciation'):
+        logger.warning("Appreciation already ran this month; skipping.")
+        return {'skipped': True}
 
     try:
         assets = UserAsset.query.all()
@@ -83,7 +87,7 @@ def run_monthly_appreciation():
         updated_count = 0
         total_appreciation = Decimal('0')
         
-        excluded_types = ['stocks', 'crypto']
+        excluded_types = ['stocks', 'crypto', 'forex']  # priced by the market monitor
 
         for asset in assets:
             if asset.asset_type in excluded_types:

@@ -9,7 +9,6 @@ from app.services.balance_service import BalanceService
 from app.schemas.job_schema import JobApplicationRequest, JobApplicationResponse, JobQuitResponse
 from app import supabase
 from decimal import Decimal
-import os
 import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
@@ -124,7 +123,7 @@ def apply_for_job(current_user_id: str):
         data = JobApplicationRequest(**request.json)
         
         # 1. Get job details
-        job_response = supabase.table('job_market').select('*').eq('id', str(data.job_id)).single().execute()
+        job_response = supabase.table('job_market').select('*').eq('id', str(data.job_id)).limit(1).execute()
         
         if not job_response.data:
             return jsonify({
@@ -133,7 +132,7 @@ def apply_for_job(current_user_id: str):
                 'message': f'Job {data.job_id} not found'
             }), 404
         
-        job = job_response.data
+        job = job_response.data[0]
         
         # 2. Check current job count (Max 2) - use resolve to handle Auth UID vs Profile ID
         user_ids = resolve_user_ids(current_user_id)
@@ -156,11 +155,19 @@ def apply_for_job(current_user_id: str):
                 'message': f'You already work as a {job["title"]} at {job["company"]}'
             }), 400
         
-        # 4. Create job record
+        # 4. Has this player held this exact job before? The signing bonus is
+        #    paid once per listing. (Previously the FULL ANNUAL salary was paid
+        #    on every hire, so quit → re-apply was an infinite-money loop.)
+        held_before = supabase.table('jobs').select('id', count='exact') \
+            .in_('user_id', user_ids).eq('job_market_id', job['id']).execute()
+        first_time = (held_before.count or 0) == 0
+
+        # 5. Create job record (partial unique index blocks duplicate current jobs)
         job_id = str(uuid.uuid4())
         supabase.table('jobs').insert({
             'id': job_id,
             'user_id': current_user_id,
+            'job_market_id': job['id'],
             'title': job['title'],
             'company': job['company'],
             'salary': job['salary'],
@@ -168,14 +175,20 @@ def apply_for_job(current_user_id: str):
             'experience_months': job.get('experience_months', 0),
             'is_current': True
         }).execute()
-        
-        # 5. Add salary advance to balance
-        balance_result = BalanceService.add_balance(
-            user_id=current_user_id,
-            amount=Decimal(str(job['salary'])),
-            reason=f'Job salary advance for {job["title"]} at {job["company"]}'
-        )
-        
+
+        # 6. One-time signing bonus = one month's pay. Recurring salary is paid
+        #    by the monthly payday job (jobs/monthly_loan_deductions.py).
+        monthly_salary = (Decimal(str(job['salary'])) / 12).quantize(Decimal('0.01'))
+        if first_time:
+            balance_result = BalanceService.add_balance(
+                user_id=current_user_id,
+                amount=monthly_salary,
+                reason=f'Signing bonus: {job["title"]} at {job["company"]}',
+                category='salary',
+            )
+        else:
+            balance_result = {'new_balance': BalanceService.get_current_balance(current_user_id)}
+
         # Recalculate true monthly income
         from app.services.profile_service import ProfileService
         ProfileService.recalculate_monthly_income(uuid.UUID(current_user_id))
@@ -196,9 +209,10 @@ def apply_for_job(current_user_id: str):
         return jsonify({
             'success': True,
             'message': f'You have been hired as a {job["title"]}!',
-            'user_job_id': uuid.UUID(job_id),
+            'user_job_id': job_id,
             'new_balance': float(balance_result['new_balance']),
-            'salary': float(job['salary'])
+            'salary': float(job['salary']),
+            'signing_bonus': float(monthly_salary) if first_time else 0
         }), 200
         
     except ValidationError as e:
@@ -237,7 +251,10 @@ def quit_job(current_user_id: str, job_id: str):
         job = job_response.data
         
         # Update job to inactive (use .in_ for same reason)
-        supabase.table('jobs').update({'is_current': False}).eq('id', job_id).in_('user_id', user_ids).execute()
+        supabase.table('jobs').update({
+            'is_current': False,
+            'end_date': datetime.utcnow().isoformat()
+        }).eq('id', job_id).in_('user_id', user_ids).execute()
         
         # Recalculate true monthly income
         from app.services.profile_service import ProfileService

@@ -8,10 +8,9 @@ from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.services.mentor_service import MentorService
 from app.schemas.education_schema import CourseEnrollmentRequest, CourseCompletionRequest, CourseEnrollmentResponse, CourseCompletionResponse
-import os
 import uuid
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
@@ -142,7 +141,7 @@ def enroll_in_course(current_user_id: str):
         data = CourseEnrollmentRequest(**request.json)
         
         # 1. Get course details
-        course_response = supabase.table('courses').select('*').eq('id', str(data.course_id)).single().execute()
+        course_response = supabase.table('courses').select('*').eq('id', str(data.course_id)).limit(1).execute()
         
         if not course_response.data:
             return jsonify({
@@ -151,7 +150,7 @@ def enroll_in_course(current_user_id: str):
                 'message': f'Course {data.course_id} not found'
             }), 404
         
-        course = course_response.data
+        course = course_response.data[0]
         
         # 2. Check if already enrolled
         existing_enrollment = supabase.table('user_courses').select('id').eq('user_id', current_user_id).eq('course_id', str(data.course_id)).execute()
@@ -174,12 +173,16 @@ def enroll_in_course(current_user_id: str):
                 'message': f"You don't have enough cash to enroll in this course. Need ${course_cost}, have ${current_balance}"
             }), 400
         
-        # 4. Deduct course cost
-        balance_result = BalanceService.subtract_balance(
-            user_id=current_user_id,
-            amount=course_cost,
-            reason=f"Enrolled in {course['title']}"
-        )
+        # 4. Deduct course cost (free courses skip the wallet)
+        if course_cost > 0:
+            balance_result = BalanceService.subtract_balance(
+                user_id=current_user_id,
+                amount=course_cost,
+                reason=f"Enrolled in {course['title']}",
+                category='education',
+            )
+        else:
+            balance_result = {'new_balance': current_balance}
         
         # 5. Create enrollment record
         enrollment_id = str(uuid.uuid4())
@@ -203,7 +206,7 @@ def enroll_in_course(current_user_id: str):
         return jsonify({
             'success': True,
             'message': f'You have successfully enrolled in {course["title"]}.',
-            'enrollment_id': uuid.UUID(enrollment_id),
+            'enrollment_id': enrollment_id,
             'new_balance': float(balance_result['new_balance']),
             'cost': float(course_cost)
         }), 200
@@ -245,39 +248,63 @@ def complete_course(current_user_id: str):
     4. Logs transaction
     """
     try:
-        # Validate request
-        data = CourseCompletionRequest(**request.json)
-        
-        # 1. Get user course details
-        try:
-            user_course_response = supabase.table('user_courses').select('*, courses(*)').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
-        except:
-            # Fallback: fetch without course join
-            user_course_response = supabase.table('user_courses').select('*').eq('id', str(data.user_course_id)).eq('user_id', current_user_id).single().execute()
-        
+        # Validate request (older app builds sent the enrollment id as `course_id`)
+        body = request.get_json(silent=True) or {}
+        if 'user_course_id' not in body and 'course_id' in body:
+            body['user_course_id'] = body['course_id']
+        data = CourseCompletionRequest(**body)
+
+        user_course_response = supabase.table('user_courses').select('*, courses(*)') \
+            .eq('id', str(data.user_course_id)).eq('user_id', current_user_id).limit(1).execute()
+
         if not user_course_response.data:
             return jsonify({
                 'success': False,
                 'error': 'ENROLLMENT_NOT_FOUND',
                 'message': 'Course enrollment not found or does not belong to you'
             }), 404
-        
-        user_course = user_course_response.data
-        course = user_course.get('courses', {})
-        
+
+        user_course = user_course_response.data[0]
+        course = user_course.get('courses') or {}
+
         if not course:
             return jsonify({
                 'success': False,
                 'error': 'COURSE_NOT_FOUND',
                 'message': 'Course details not found'
             }), 404
-        
-        # 2. Mark as completed
-        supabase.table('user_courses').update({
+
+        # Course time must actually have elapsed (enroll → complete instantly
+        # used to be possible straight from the API).
+        try:
+            started = datetime.fromisoformat(str(user_course.get('started_at')).replace('Z', '+00:00'))
+            if started.tzinfo is not None:
+                started = started.astimezone(timezone.utc).replace(tzinfo=None)
+            hours_needed = float(course.get('duration_hours') or 0)
+            hours_done = (datetime.utcnow() - started).total_seconds() / 3600
+            if hours_done < hours_needed:
+                return jsonify({
+                    'success': False,
+                    'error': 'COURSE_IN_PROGRESS',
+                    'message': f'Keep studying: {hours_needed - hours_done:.1f} more hours to go.'
+                }), 400
+        except (TypeError, ValueError):
+            pass
+
+        # 2. Mark as completed — atomically, and only once. Previously this could
+        #    be called repeatedly, stacking the salary boost and bonus every time.
+        claim = supabase.table('user_courses').update({
             'progress': 100,
             'completed_at': datetime.utcnow().isoformat()
-        }).eq('id', str(data.user_course_id)).execute()
-        
+        }).eq('id', str(data.user_course_id)).eq('user_id', current_user_id) \
+          .is_('completed_at', 'null').execute()
+        if not claim.data:
+            return jsonify({
+                'success': False,
+                'error': 'ALREADY_COMPLETED',
+                'message': 'You have already completed this course.'
+            }), 400
+
         # 3. Apply salary boost to profile (permanent income increase)
         try:
             salary_boost = Decimal(str(course.get('salary_boost', 0)))
@@ -289,11 +316,15 @@ def complete_course(current_user_id: str):
         
         # 4. Give completion bonus (2x salary boost)
         bonus = salary_boost * 2
-        balance_result = BalanceService.add_balance(
-            user_id=current_user_id,
-            amount=bonus,
-            reason=f"Course completion bonus for {course['title']}"
-        )
+        if bonus > 0:
+            balance_result = BalanceService.add_balance(
+                user_id=current_user_id,
+                amount=bonus,
+                reason=f"Course completion bonus for {course['title']}",
+                category='education',
+            )
+        else:
+            balance_result = {'new_balance': BalanceService.get_current_balance(current_user_id)}
         
         # Send push notification
         try:

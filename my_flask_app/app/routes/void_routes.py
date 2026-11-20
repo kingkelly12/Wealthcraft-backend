@@ -3,7 +3,6 @@ from app import supabase
 from app.utils.jwt_helper import require_auth
 from app.services.push_notification_service import ExpoPushService
 from app.services.profile_service import ProfileService
-import os
 import uuid
 import logging
 
@@ -40,8 +39,8 @@ from app.services.mentor_service import MentorService
 @require_auth
 def scream(current_user_id: str):
     try:
-        data = request.json
-        content = data.get('content', '').strip()
+        data = request.get_json(silent=True) or {}
+        content = (data.get('content') or '').strip()
         
         if not content:
             return jsonify({'success': False, 'message': 'Silence is not a scream.'}), 400
@@ -213,120 +212,76 @@ def void_overview(current_user_id: str):
         logger.error(f"Overview error: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
+# Sanity effect of a reaction on BOTH the poster and the reactor.
+_REACTION_SANITY = {None: 0, 'same': +1, 'oof': -1}
+
+
 @void_bp.route('/react/', methods=['POST'])
 @require_auth
 def react(current_user_id: str):
-    try:
-        data = request.json
-        post_id = data.get('post_id')
-        new_type = data.get('type') # 'oof' or 'same'
-        
-        if new_type not in ['oof', 'same']:
-            return jsonify({'success': False, 'message': 'Invalid reaction'}), 400
-            
-        # Check existing reaction
-        existing_res = supabase.table('void_reactions')\
-            .select('*')\
-            .eq('user_id', current_user_id)\
-            .eq('post_id', post_id)\
-            .execute()
-        
-        existing = existing_res.data[0] if existing_res.data else None
-        
-        # Determine counter updates
-        post_update = {}
-        
-        if existing:
-            if existing['reaction_type'] == new_type:
-                # Toggle OFF (Remove reaction)
-                supabase.table('void_reactions').delete().eq('id', existing['id']).execute()
-                # Decrement counter
-                col = f"{new_type}_count"
-                # Need atomic decrement, but for now fetching post to get current count roughly or just trusting client? 
-                # Better: use RPC or just read-update-write for MVP.
-                # Assuming low concurrency for MVP.
-                post_res = supabase.table('void_posts').select(col).eq('id', post_id).single().execute()
-                curr_count = post_res.data.get(col, 0)
-                post_update[col] = max(0, curr_count - 1)
-                
-            else:
-                # Switch reaction (e.g. oof -> same)
-                supabase.table('void_reactions').update({'reaction_type': new_type}).eq('id', existing['id']).execute()
-                # Decrement old, Increment new
-                old_col = f"{existing['reaction_type']}_count"
-                new_col = f"{new_type}_count"
-                
-                post_res = supabase.table('void_posts').select('*').eq('id', post_id).single().execute()
-                post_update[old_col] = max(0, post_res.data.get(old_col, 0) - 1)
-                post_update[new_col] = post_res.data.get(new_col, 0) + 1
-                
-                # SANITY REWARD CHECK (Switching TO 'same')
-                if new_type == 'same':
-                    # Recipient reward
-                    _apply_sanity_impact(post_res.data['user_id'], +1)
-                    # Reactor reward (Helper's High)
-                    _apply_sanity_impact(current_user_id, +1)
-                    _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
-                # SANITY PENALTY (Switching TO 'oof')
-                elif new_type == 'oof':
-                    # Recipient penalty
-                    _apply_sanity_impact(post_res.data['user_id'], -1)
-                    # Reactor penalty (the person being rough)
-                    _apply_sanity_impact(current_user_id, -1)
+    """
+    Toggle / switch a reaction.
 
+    Sanity is applied as the DIFFERENCE between the old and new reaction, so
+    toggling is symmetric. (Previously every re-add of 'same' granted +1 to both
+    users again, so un-react/re-react farmed unlimited sanity.) Counters are
+    recomputed from void_reactions instead of read-modify-write.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        post_id = data.get('post_id')
+        new_type = data.get('type')  # 'oof' or 'same'
+
+        if new_type not in ('oof', 'same') or not post_id:
+            return jsonify({'success': False, 'message': 'Invalid reaction'}), 400
+
+        post_res = supabase.table('void_posts').select('id, user_id').eq('id', post_id).limit(1).execute()
+        if not post_res.data:
+            return jsonify({'success': False, 'message': 'Post not found'}), 404
+        poster_id = post_res.data[0]['user_id']
+
+        existing_res = supabase.table('void_reactions').select('id, reaction_type') \
+            .eq('user_id', current_user_id).eq('post_id', post_id).limit(1).execute()
+        existing = existing_res.data[0] if existing_res.data else None
+        old_type = existing['reaction_type'] if existing else None
+
+        if old_type == new_type:
+            supabase.table('void_reactions').delete().eq('id', existing['id']).execute()
+            final_type = None
+        elif existing:
+            supabase.table('void_reactions').update({'reaction_type': new_type}).eq('id', existing['id']).execute()
+            final_type = new_type
         else:
-            # New Reaction
             supabase.table('void_reactions').insert({
                 'user_id': current_user_id,
                 'post_id': post_id,
                 'reaction_type': new_type
             }).execute()
-            
-            # Increment new
-            col = f"{new_type}_count"
-            post_res = supabase.table('void_posts').select(col, 'user_id').eq('id', post_id).single().execute()
-            post_update[col] = post_res.data.get(col, 0) + 1
-            
-            # SANITY REWARD/PENALTY CHECK
-            if new_type == 'same' and post_res.data['user_id'] != current_user_id:
-                # Recipient reward
-                _apply_sanity_impact(post_res.data['user_id'], +1)
-                # Reactor reward (Helper's High)
-                _apply_sanity_impact(current_user_id, +1)
-                _send_consolation_notification(post_res.data['user_id'], current_user_id, post_id)
-            elif new_type == 'oof' and post_res.data['user_id'] != current_user_id:
-                # Recipient penalty
-                _apply_sanity_impact(post_res.data['user_id'], -1)
-                # Reactor penalty (the person being rough)
-                _apply_sanity_impact(current_user_id, -1)
-                
-        # Apply updates to post
-        if post_update:
-            supabase.table('void_posts').update(post_update).eq('id', post_id).execute()
-            
-        return jsonify({'success': True}), 200
-        
+            final_type = new_type
+
+        supabase.rpc('refresh_void_post_counts', {'p_post_id': post_id}).execute()
+
+        if poster_id != current_user_id:
+            delta = _REACTION_SANITY[final_type] - _REACTION_SANITY[old_type]
+            if delta:
+                _apply_sanity_impact(poster_id, delta)
+                _apply_sanity_impact(current_user_id, delta)
+            if final_type == 'same' and old_type is None:
+                _send_consolation_notification(poster_id, current_user_id, post_id)
+
+        return jsonify({'success': True, 'my_reaction': final_type}), 200
+
     except Exception as e:
+        logger.exception('react failed')
         return jsonify({'success': False, 'message': str(e)}), 500
 
+
 def _apply_sanity_impact(user_id: str, delta: int):
-    """
-    Apply a sanity change (positive or negative) to a user.
-    - Positive delta = gain (capped at 100).
-    - Negative delta = loss (capped at 0).
-    - Will not deduct below 0.
-    """
+    """Atomically change a user's sanity, clamped to 0..100. Never blocks the caller."""
     try:
-        res = supabase.table('profiles').select('sanity').eq('user_id', user_id).single().execute()
-        current = res.data.get('sanity', 100)
-        
-        if delta < 0 and current <= 0:
-            return  # Already at 0, don't go below
-        
-        new_val = max(0, min(100, current + delta))
-        supabase.table('profiles').update({'sanity': new_val}).eq('user_id', user_id).execute()
-    except:
-        pass  # Fail silently, don't block reaction
+        supabase.rpc('adjust_sanity', {'p_user_id': str(user_id), 'p_delta': int(delta)}).execute()
+    except Exception as e:
+        logger.warning(f"Sanity update failed for {user_id}: {e}")
 
 
 def _send_consolation_notification(poster_id, reactor_id, post_id):

@@ -2226,6 +2226,8 @@ lib/third_party/google/appengine/v1beta/service_pb2.py
 lib/third_party/google/appengine/v1beta/version_pb2.py
 lib/third_party/google/auth/LICENSE
 lib/third_party/google/auth/__init__.py
+lib/third_party/google/auth/_agent_identity_utils.py
+lib/third_party/google/auth/_cache.py
 lib/third_party/google/auth/_cloud_sdk.py
 lib/third_party/google/auth/_credentials_async.py
 lib/third_party/google/auth/_credentials_base.py
@@ -2236,17 +2238,21 @@ lib/third_party/google/auth/_helpers.py
 lib/third_party/google/auth/_jwt_async.py
 lib/third_party/google/auth/_oauth2client.py
 lib/third_party/google/auth/_refresh_worker.py
+lib/third_party/google/auth/_regional_access_boundary_utils.py
 lib/third_party/google/auth/_service_account_info.py
 lib/third_party/google/auth/aio/__init__.py
+lib/third_party/google/auth/aio/_helpers.py
 lib/third_party/google/auth/aio/credentials.py
 lib/third_party/google/auth/aio/transport/__init__.py
 lib/third_party/google/auth/aio/transport/aiohttp.py
+lib/third_party/google/auth/aio/transport/mtls.py
 lib/third_party/google/auth/aio/transport/sessions.py
 lib/third_party/google/auth/api_key.py
 lib/third_party/google/auth/app_engine.py
 lib/third_party/google/auth/aws.py
 lib/third_party/google/auth/compute_engine/__init__.py
 lib/third_party/google/auth/compute_engine/_metadata.py
+lib/third_party/google/auth/compute_engine/_mtls.py
 lib/third_party/google/auth/compute_engine/credentials.py
 lib/third_party/google/auth/credentials.py
 lib/third_party/google/auth/crypt/__init__.py
@@ -2254,6 +2260,7 @@ lib/third_party/google/auth/crypt/_cryptography_rsa.py
 lib/third_party/google/auth/crypt/_helpers.py
 lib/third_party/google/auth/crypt/_python_rsa.py
 lib/third_party/google/auth/crypt/base.py
+lib/third_party/google/auth/crypt/es.py
 lib/third_party/google/auth/crypt/es256.py
 lib/third_party/google/auth/crypt/rsa.py
 lib/third_party/google/auth/downscoped.py
@@ -2613,8 +2620,6 @@ lib/third_party/google/type/phone_number_pb2.py
 lib/third_party/google/type/postal_address_pb2.py
 lib/third_party/google/type/quaternion_pb2.py
 lib/third_party/google/type/timeofday_pb2.py
-lib/third_party/google_auth_httplib2/LICENSE
-lib/third_party/google_auth_httplib2/__init__.py
 lib/third_party/google_auth_oauthlib/LICENSE
 lib/third_party/google_auth_oauthlib/__init__.py
 lib/third_party/google_auth_oauthlib/flow.py
@@ -2653,8 +2658,6 @@ lib/third_party/httplib2/python3/httplib2/certs.py
 lib/third_party/httplib2/python3/httplib2/error.py
 lib/third_party/httplib2/python3/httplib2/iri2uri.py
 lib/third_party/httplib2/python3/httplib2/socks.py
-lib/third_party/httplib2shim/LICENSE
-lib/third_party/httplib2shim/__init__.py
 lib/third_party/idna/LICENSE
 lib/third_party/idna/__init__.py
 lib/third_party/idna/codec.py

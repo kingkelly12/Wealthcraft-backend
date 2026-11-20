@@ -25,6 +25,14 @@ def process_monthly_deductions():
     """
     logger.info("Starting End of Month Processing cycle...")
 
+    # Run at most once per calendar month, even if the scheduler retries or
+    # someone calls the endpoint twice (double-charging rent/loans otherwise).
+    from jobs.run_guard import claim_monthly_run
+    period = claim_monthly_run('monthly_processing')
+    if not period:
+        logger.warning("Monthly processing already ran this month; skipping.")
+        return {'success': True, 'skipped': True}
+
     notifications_to_send = []
     summary_by_user = {}
 
@@ -39,11 +47,34 @@ def process_monthly_deductions():
 
     logger.info("Fetching profiles data for dynamic calculations...")
     try:
-        profiles_res = supabase.table('profiles').select('user_id, monthly_income, created_at, sanity').execute()
+        profiles_res = supabase.table('profiles').select('user_id, username, monthly_income, base_monthly_income, credit_score, created_at, sanity').execute()
         profiles_map = {p['user_id']: p for p in profiles_res.data}
     except Exception as e:
         logger.error(f"Error fetching profiles: {e}")
         profiles_map = {}
+
+    # --- 0. Payday: job salaries (annual / 12) + permanent income boosts ---
+    # Nothing paid salaries before: players only ever got a lump sum on hire,
+    # while living costs below were charged every month.
+    logger.info("Paying salaries...")
+    try:
+        jobs_res = supabase.table('jobs').select('user_id, title, salary').eq('is_current', True).execute()
+        pay_by_user = {}
+        for job in jobs_res.data or []:
+            pay_by_user.setdefault(job['user_id'], []).append(job)
+        for uid, profile in profiles_map.items():
+            user_jobs = pay_by_user.get(uid, [])
+            salary = sum(Decimal(str(j.get('salary') or 0)) for j in user_jobs) / 12
+            boosts = Decimal(str(profile.get('base_monthly_income') or 0))
+            pay = (salary + boosts).quantize(Decimal('0.01'))
+            if pay <= 0:
+                continue
+            BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
+            summ = get_summary(uid)
+            summ['income'] += pay
+            summ['details'].append(f"+${pay:,.2f} Salary")
+    except Exception as e:
+        logger.error(f"Error paying salaries: {e}")
 
     # --- 1. Process Liabilities (Loans) ---
     logger.info("Processing loans (Bank & P2P)...")
@@ -61,21 +92,30 @@ def process_monthly_deductions():
             current_balance = BalanceService.get_current_balance(user_id)
             summ = get_summary(user_id)
 
+            remaining = Decimal(str(liability['remaining_balance']))
+            monthly_payment = min(monthly_payment, remaining)  # never overcharge the final instalment
+
             if current_balance >= monthly_payment:
                 # Deduct
                 BalanceService.subtract_balance(
                     user_id=user_id,
                     amount=monthly_payment,
-                    reason=f"Monthly Loan Payment: {liability.get('name')}"
+                    reason=f"Monthly Loan Payment: {liability.get('name')}",
+                    category='loan_payment',
                 )
                 
-                new_bal = Decimal(str(liability['remaining_balance'])) - monthly_payment
+                new_bal = remaining - monthly_payment
                 
-                # Update liability
-                supabase.table('liabilities').update({
-                    'remaining_balance': float(max(0, new_bal)),
-                    'updated_at': datetime.utcnow().isoformat()
-                }).eq('id', liability_id).execute()
+                if new_bal <= 0:
+                    supabase.table('liabilities').delete().eq('id', liability_id).execute()
+                    if liability.get('bank_loan_id'):
+                        supabase.table('bank_loans').update({'status': 'completed'}).eq('id', liability['bank_loan_id']).execute()
+                else:
+                    supabase.table('liabilities').update({
+                        'remaining_balance': float(new_bal),
+                        'remaining_term': max(0, (liability.get('remaining_term') or 1) - 1),
+                    }).eq('id', liability_id).execute()
+                _adjust_credit_score(profiles_map, user_id, CREDIT_ON_TIME_PAYMENT)
 
                 # If P2P Loan, credit lender and update P2P table sync
                 if liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id'):
@@ -88,7 +128,8 @@ def process_monthly_deductions():
                             BalanceService.add_balance(
                                 user_id=lender_id,
                                 amount=monthly_payment,
-                                reason=f"P2P Loan payment received"
+                                reason=f"P2P Loan payment received",
+                                category='p2p_repayment',
                             )
                             lender_summ = get_summary(lender_id)
                             lender_summ['income'] += monthly_payment
@@ -100,7 +141,6 @@ def process_monthly_deductions():
                             supabase.table('p2p_loans').update({
                                 'remaining_balance': float(max(0, new_bal)),
                                 'status': p2p_status,
-                                'updated_at': datetime.utcnow().isoformat()
                             }).eq('id', p2p_loan_id).execute()
                     except Exception as e:
                         logger.error(f"Error handling P2P lender credit for loan {liability_id}: {e}")
@@ -109,11 +149,16 @@ def process_monthly_deductions():
                 summ['expenses'] += monthly_payment
                 summ['details'].append(f"-${monthly_payment:,.2f} {liability.get('name')}")
             else:
-                # Provide a notification log for missing logic, applying penalty
-                penalty = monthly_payment * Decimal('0.05')
-                logger.warning(f"User {user_id} missed loan payment for {liability_id}. Applied penalty.")
-                summ['expenses'] += Decimal('0')  # Missed, no deduct
-                summ['details'].append(f"⚠️ Missed {liability.get('name')} (${monthly_payment:,.2f})")
+                # Missed payment: 5% late fee added to the debt and a credit hit.
+                # (Previously the penalty was computed and then thrown away, so
+                # skipping payments had no consequence at all.)
+                penalty = (monthly_payment * Decimal('0.05')).quantize(Decimal('0.01'))
+                supabase.table('liabilities').update({
+                    'remaining_balance': float(remaining + penalty),
+                }).eq('id', liability_id).execute()
+                _adjust_credit_score(profiles_map, user_id, CREDIT_MISSED_PAYMENT)
+                logger.warning(f"User {user_id} missed loan payment for {liability_id}. Late fee ${penalty}.")
+                summ['details'].append(f"⚠️ Missed {liability.get('name')} (${monthly_payment:,.2f}) +${penalty:,.2f} late fee, credit score {CREDIT_MISSED_PAYMENT}")
     except Exception as e:
         logger.error(f"Error processing liabilities: {e}")
 
@@ -139,7 +184,8 @@ def process_monthly_deductions():
                 BalanceService.subtract_balance(
                     user_id=user_id,
                     amount=cost,
-                    reason=f"Maintenance Cost: {name}"
+                    reason=f"Maintenance Cost: {name}",
+                    category='lifestyle',
                 )
                 summ['expenses'] += cost
                 summ['details'].append(f"-${cost:,.2f} {name} maintenance")
@@ -168,7 +214,8 @@ def process_monthly_deductions():
                 BalanceService.subtract_balance(
                     user_id=user_id,
                     amount=rent,
-                    reason=f"Monthly Rent: {name}"
+                    reason=f"Monthly Rent: {name}",
+                    category='rent',
                 )
                 summ['expenses'] += rent
                 summ['details'].append(f"-${rent:,.2f} {name}")
@@ -217,7 +264,8 @@ def process_monthly_deductions():
                 BalanceService.subtract_balance(
                     user_id=user_id,
                     amount=actual_living_cost,
-                    reason="Living Costs (Food & WiFi)"
+                    reason="Living Costs (Food & WiFi)",
+                    category='living_costs',
                 )
                 summ['expenses'] += actual_living_cost
                 summ['details'].append(f"-${actual_living_cost:,.2f} Living Costs")
@@ -248,7 +296,8 @@ def process_monthly_deductions():
                 BalanceService.add_balance(
                     user_id=user_id,
                     amount=total_income,
-                    reason=f"Monthly Asset Income: {name}"
+                    reason=f"Monthly Asset Income: {name}",
+                    category='asset_income',
                 )
                 summ = get_summary(user_id)
                 summ['income'] += total_income
@@ -287,7 +336,7 @@ def process_monthly_deductions():
                 logger.error(f"Failed to generate AI stress message for {uid}: {e}")
 
             try:
-                supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', uid).execute()
+                supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': -10}).execute()
             except Exception as e:
                 logger.error(f"Failed to deduct sanity for {uid}: {e}")
             
@@ -329,8 +378,142 @@ def process_monthly_deductions():
             )
         logger.info(f"Batched {len(notifications_to_send)} end of month notifications.")
 
+    # --- 7. Advance missions one month; finish the ones that reached their end ---
+    try:
+        _advance_missions()
+    except Exception as e:
+        logger.error(f"Error advancing missions: {e}")
+
     logger.info("End of Month Processing cycle complete.")
-    return {'success': True}
+    return {'success': True, 'period': period}
+
+
+CREDIT_ON_TIME_PAYMENT = 2
+CREDIT_MISSED_PAYMENT = -25
+
+
+def _adjust_credit_score(profiles_map, user_id, delta):
+    """Nudge credit score, clamped to 300..850 (it never changed anywhere before)."""
+    profile = profiles_map.get(user_id)
+    if not profile:
+        return
+    current = int(profile.get('credit_score') or 650)
+    new_score = max(300, min(850, current + delta))
+    if new_score == current:
+        return
+    try:
+        supabase.table('profiles').update({'credit_score': new_score}).eq('user_id', user_id).execute()
+        profile['credit_score'] = new_score
+    except Exception as e:
+        logger.error(f"Failed to update credit score for {user_id}: {e}")
+
+
+def _criterion_met(criterion, profile):
+    metric = criterion.get('metric')
+    value = {
+        'net_worth': profile.get('net_worth'),
+        'monthly_income': profile.get('monthly_income'),
+        'credit_score': profile.get('credit_score'),
+    }.get(metric)
+    if value is None:
+        logger.warning(f"Mission metric '{metric}' is not evaluated yet; counting as not met")
+        return False, None
+    value = Decimal(str(value))
+    target = Decimal(str(criterion.get('target') or 0))
+    comparison = criterion.get('comparison')
+    if comparison == 'greater_than':
+        ok = value > target
+    elif comparison == 'less_than':
+        ok = value < target
+    elif comparison == 'equals':
+        ok = value == target
+    elif comparison == 'between':
+        ok = Decimal(str(criterion.get('target_min') or 0)) <= value <= target
+    else:
+        ok = False
+    return ok, value
+
+
+def _advance_missions():
+    """
+    Missions never progressed before: nothing advanced current_month or wrote
+    mission_completion_results, so every mission stayed on month 1 forever.
+    """
+    active = supabase.table('player_mission_progress') \
+        .select('*, integrated_missions!mission_id(name, duration_months, completion_reward)') \
+        .eq('is_active', True).execute()
+
+    for pm in active.data or []:
+        mission = pm.get('integrated_missions') or {}
+        duration = int(mission.get('duration_months') or 1)
+        next_month = int(pm.get('current_month') or 1) + 1
+
+        if next_month <= duration:
+            supabase.table('player_mission_progress').update({'current_month': next_month}) \
+                .eq('id', pm['id']).eq('is_active', True).execute()
+            continue
+
+        player_id = pm['player_id']
+        prof_res = supabase.table('profiles').select('net_worth, monthly_income, credit_score') \
+            .eq('user_id', player_id).limit(1).execute()
+        if not prof_res.data:
+            continue
+        profile = prof_res.data[0]
+        criteria = supabase.table('mission_success_criteria').select('*') \
+            .eq('mission_id', pm['mission_id']).execute().data or []
+
+        met = 0
+        for c in criteria:
+            ok, value = _criterion_met(c, profile)
+            met += int(ok)
+            supabase.table('player_mission_success_tracking').update({
+                'current_value': float(value or 0), 'is_met': ok,
+            }).eq('player_mission_id', pm['id']).eq('criteria_id', c['id']).execute()
+
+        total = len(criteria)
+        success = met == total
+        now = datetime.utcnow().isoformat()
+        closed = supabase.table('player_mission_progress').update({
+            'is_active': False,
+            'is_completed': success,
+            'is_failed': not success,
+            'completed_at' if success else 'failed_at': now,
+        }).eq('id', pm['id']).eq('is_active', True).execute()
+        if not closed.data:
+            continue  # someone else closed it concurrently
+
+        snapshot = pm.get('game_state_snapshot') or {}
+        reward = Decimal(str(mission.get('completion_reward') or 0)) if success else Decimal('0')
+        supabase.table('mission_completion_results').insert({
+            'mission_id': pm['mission_id'],
+            'player_mission_id': pm['id'],
+            'player_id': player_id,
+            'completed': success,
+            'failed': not success,
+            'abandoned': False,
+            'duration_months': duration,
+            'net_worth_change': float(Decimal(str(profile.get('net_worth') or 0)) - Decimal(str(snapshot.get('net_worth') or 0))),
+            'income_change': float(Decimal(str(profile.get('monthly_income') or 0)) - Decimal(str(snapshot.get('monthly_income') or 0))),
+            'credit_score_change': int(profile.get('credit_score') or 0) - int(snapshot.get('credit_score') or 0),
+            'criteria_met': met,
+            'criteria_total': total,
+            'success_percentage': (100.0 * met / total) if total else 100.0,
+            'total_cash_reward': float(reward),
+            'completion_message': f"{'Completed' if success else 'Failed'}: {mission.get('name', 'Mission')}",
+            'completed_at': now,
+        }).execute()
+
+        if reward > 0:
+            BalanceService.add_balance(player_id, reward, f"Mission reward: {mission.get('name')}", category='mission_reward')
+
+        supabase.table('notifications').insert({
+            'user_id': player_id,
+            'type': 'system',
+            'title': '🏆 Mission Complete!' if success else '💀 Mission Failed',
+            'message': f"{mission.get('name', 'Mission')}: {met}/{total} goals met."
+                       + (f" Reward: ${reward:,.2f}" if reward > 0 else ''),
+            'read': False,
+        }).execute()
 
 if __name__ == "__main__":
     from app import create_app

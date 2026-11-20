@@ -7,11 +7,11 @@ class ProfileCreate(BaseModel):
     username: constr(min_length=3, max_length=50) # type: ignore
 
 class ProfileUpdate(BaseModel):
-    username: Optional[constr(min_length=3, max_length=50)] = None # type: ignore
-    profile_picture_url: Optional[str] = None
-    net_worth: Optional[float] = None
-    monthly_income: Optional[float] = None
-    credit_score: Optional[int] = Field(None, ge=300, le=850)
+    # Only cosmetic fields are client-editable. Game stats (net worth, income,
+    # credit score, sanity) are computed server-side and must never be accepted
+    # from the client; extra keys are ignored.
+    username: Optional[constr(min_length=3, max_length=50, pattern=r'^[A-Za-z0-9_.]+$')] = None # type: ignore
+    profile_picture_url: Optional[constr(max_length=1000)] = None # type: ignore
     has_completed_onboarding: Optional[bool] = None
 
 class ProfileResponse(BaseModel):
@@ -24,7 +24,7 @@ class ProfileResponse(BaseModel):
     wealth_level: str
     experience_points: int
     has_completed_onboarding: bool
-    profile_picture_url: str
+    profile_picture_url: Optional[str] = None
     created_at: str
 
     class Config:

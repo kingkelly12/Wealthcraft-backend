@@ -23,17 +23,14 @@ class Config:
     SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
     SUPABASE_SERVICE_ROLE_KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 
-    if not SUPABASE_JWT_SECRET:
-         raise ValueError('SUPABASE_JWT_SECRET environment variable is required')
+    # SUPABASE_JWT_SECRET is only needed for legacy (HS256) projects; new projects
+    # verify tokens via the JWKS endpoint derived from SUPABASE_URL.
     if not SUPABASE_URL:
         raise ValueError('SUPABASE_URL environment variable is required')
     if not SUPABASE_KEY:
-        raise ValueError('SUPABASE_KEY environment variable is required')
-    
-    # Google OAuth Configuration
-    GOOGLE_WEB_CLIENT_ID = os.environ.get('GOOGLE_WEB_CLIENT_ID')
-    if not GOOGLE_WEB_CLIENT_ID:
-        raise ValueError('GOOGLE_WEB_CLIENT_ID environment variable is required')
+        raise ValueError('SUPABASE_KEY (anon/publishable key) environment variable is required')
+    if not SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError('SUPABASE_SERVICE_ROLE_KEY (service_role/secret key) environment variable is required')
 
     # Qwen AI Configuration
     QWEN_API_KEY = os.environ.get('QWEN_API_KEY')
@@ -57,14 +54,16 @@ class Config:
 
 class DevelopmentConfig(Config):
     DEBUG = True
-    CORS_ORIGINS = ['http://localhost:8081', 'http://localhost:19000', '*']  # Expo dev server
+    CORS_ORIGINS = ['http://localhost:8081', 'http://localhost:19000']  # Expo dev server (native apps don't need CORS)
 
 class ProductionConfig(Config):
     DEBUG = False
-    # In production, use a secure random secret key
-    SECRET_KEY = os.environ.get('SECRET_KEY')
-    # Only allow specific origins in production
-    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '').split(',')
+    # Without DATABASE_URL, SQLAlchemy silently fell back to an empty local
+    # sqlite file, so every ORM read (profiles, mentors, leaderboard) returned nothing.
+    if not os.environ.get('DATABASE_URL'):
+        raise ValueError('DATABASE_URL is required in production')
+    # Only allow specific origins in production (empty = no browser origins allowed)
+    CORS_ORIGINS = [o.strip() for o in os.environ.get('CORS_ORIGINS', '').split(',') if o.strip()]
 
 class TestingConfig(Config):
     TESTING = True

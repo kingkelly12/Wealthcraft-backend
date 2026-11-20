@@ -200,6 +200,7 @@ def simulate_market_fluctuation():
                 for h in ai_news.get('headlines', []):
                     app.supabase.table('market_news').insert({
                         'headline': h['title'],
+                        'category': 'market',
                         'body': h['body'],
                         'sentiment': h['sentiment'],
                         'asset_name': h['asset_name'],

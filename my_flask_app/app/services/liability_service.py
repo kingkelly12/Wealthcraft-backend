@@ -1,8 +1,5 @@
 from app import db
 from app.models.player_liability import PlayerLiability
-from app.models.monthly_deduction import MonthlyDeduction
-from app.models.transaction import Transaction
-from app.models.user_balance import UserBalance
 from typing import Optional, List, Dict
 import uuid
 from datetime import datetime, date
@@ -117,55 +114,47 @@ class LiabilityService:
         Sell a player's liability at current depreciated value.
         Returns sale details including amount received.
         """
-        # Fetch and validate liability
-        liability = PlayerLiability.query.filter_by(
-            id=player_liability_id,
-            player_id=player_id,
-            is_active=True
+        # Atomically claim the item (only one concurrent sale can flip is_active)
+        claimed = db.session.execute(
+            PlayerLiability.__table__.update()
+            .where(PlayerLiability.id == player_liability_id)
+            .where(PlayerLiability.player_id == player_id)
+            .where(PlayerLiability.is_active.is_(True))
+            .values(is_active=False)
+            .returning(PlayerLiability.id, PlayerLiability.liability_id,
+                       PlayerLiability.purchase_price, PlayerLiability.current_value)
         ).first()
-        
-        if not liability:
+        db.session.commit()
+
+        if not claimed:
             raise ValueError("Liability not found or does not belong to player")
-        
-        # Get current value (or purchase price if not depreciated yet)
-        sale_value = liability.current_value or liability.purchase_price
-        sale_value = Decimal(str(sale_value))
-        
-        # Update player balance via standardized BalanceService
-        # This ensuring Supabase sync, Transaction logging, and Net Worth recalculation
+
+        purchase_price = Decimal(str(claimed.purchase_price))
+        sale_value = Decimal(str(claimed.current_value if claimed.current_value is not None else claimed.purchase_price))
+
         from app.services.balance_service import BalanceService
         balance_result = BalanceService.add_balance(
             user_id=str(player_id),
             amount=sale_value,
-            reason=f"Sold liability: {liability.liability_id}"
+            reason="Sold lifestyle item",
+            category='liability_sale',
         )
-        
-        # Remove associated monthly deductions
-        MonthlyDeduction.query.filter_by(
-            reference_id=player_liability_id,
-            deduction_type='liability_cost'
-        ).delete()
-        
-        # Mark as inactive (preserve history)
-        liability.is_active = False
-        
-        db.session.commit()
-        
+
         return {
             'sale_value': float(sale_value),
-            'liability_id': str(liability.id),
-            'purchase_price': float(liability.purchase_price),
-            'depreciation_loss': float(Decimal(str(liability.purchase_price)) - sale_value),
+            'liability_id': str(claimed.id),
+            'purchase_price': float(purchase_price),
+            'depreciation_loss': float(purchase_price - sale_value),
             'transaction_id': balance_result.get('transaction_id')
         }
-    
+
     @staticmethod
-    def get_depreciation_preview(player_liability_id: uuid.UUID) -> Dict:
+    def get_depreciation_preview(player_liability_id: uuid.UUID, player_id: uuid.UUID) -> Dict:
         """
         Get depreciation preview for a liability without applying it.
         Shows current stats and next month's estimated value.
         """
-        liability = PlayerLiability.query.get(player_liability_id)
+        liability = PlayerLiability.query.filter_by(id=player_liability_id, player_id=player_id).first()
         
         if not liability:
             raise ValueError("Liability not found")

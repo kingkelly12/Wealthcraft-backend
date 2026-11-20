@@ -211,30 +211,35 @@ def get_leaderboard(current_user_id: str):
 
 
 @follow_bp.route('/search/', methods=['GET'])
-
-def search_users():
-    """Search for users"""
+@require_auth
+def search_users(current_user_id: str):
+    """Search players by username (public fields only — never push tokens etc.)"""
     try:
-        query = request.args.get('query', '')
-        if not query:
+        query = (request.args.get('query') or '').strip()[:50]
+        if len(query) < 2:
              return jsonify({'success': True, 'data': []}), 200
-             
-        response = supabase.table('profiles').select('*').ilike('username', f'%{query}%').execute()
+        # Escape LIKE wildcards so '%' / '_' in the query are literal
+        safe = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+        response = supabase.table('profiles') \
+            .select('id, user_id, username, profile_picture_url, net_worth, wealth_level') \
+            .ilike('username', f'%{safe}%').limit(25).execute()
         return jsonify({'success': True, 'data': response.data}), 200
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 
 @follow_bp.route('/rank/<user_id>/', methods=['GET'])
-def get_user_rank(user_id: str):
+@require_auth
+def get_user_rank(current_user_id: str, user_id: str):
     """Get specific user's rank"""
     try:
         # Logic to calculate rank (can be expensive, maybe optimized via view?)
         # For now, simple count query
-        profile_res = supabase.table('profiles').select('net_worth').eq('user_id', user_id).single().execute()
+        profile_res = supabase.table('profiles').select('net_worth').eq('user_id', user_id).limit(1).execute()
         if not profile_res.data:
              return jsonify({'success': False, 'error': 'User not found'}), 404
              
-        net_worth = profile_res.data['net_worth']
+        net_worth = profile_res.data[0]['net_worth']
         
         # Count users with greater net worth
         count_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()

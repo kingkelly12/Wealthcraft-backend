@@ -22,8 +22,11 @@ def create_app(config_name='default'):
     # Initialize Supabase
     global supabase
     url = app.config.get('SUPABASE_URL')
-    # Use service role key if available for system-level access
-    key = app.config.get('SUPABASE_SERVICE_ROLE_KEY') or app.config.get('SUPABASE_KEY')
+    # The shared client uses the service role key and must NEVER be used for
+    # auth.sign_in/sign_up: supabase-py swaps the client's Authorization header
+    # to the signed-in user's token, so every later query in this worker would
+    # run as that user. UserService uses a separate, throwaway auth client.
+    key = app.config.get('SUPABASE_SERVICE_ROLE_KEY')
     if url and key:
         supabase = create_client(url, key)
     

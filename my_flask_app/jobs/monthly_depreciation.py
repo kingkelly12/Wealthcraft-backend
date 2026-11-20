@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 def run_monthly_depreciation():
     """Run monthly depreciation update for all active player liabilities"""
     logger.info("Starting monthly liability depreciation...")
+    from jobs.run_guard import claim_monthly_run
+    if not claim_monthly_run('monthly_depreciation'):
+        logger.warning("Depreciation already ran this month; skipping.")
+        return {'skipped': True}
 
     try:
         # 1. Backfill any liabilities missing initial values (safety check)

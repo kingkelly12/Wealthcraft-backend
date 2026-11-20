@@ -40,3 +40,10 @@ instance/
 # Node (if used)
 node_modules/
 npm-debug.log
+
+# Accidentally-created artefacts (a mistyped `exec -l /bin/bash\rgcloud --version`
+# installed the whole Google Cloud SDK into this folder; a broken multi-line
+# gcloud command created empty files named after its flags)
+my_flask_app/exec -l*
+/--*
+.qodo/

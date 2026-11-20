@@ -71,3 +71,14 @@ yarn-error.log
 # OS files
 Thumbs.db
 .DS_Store
+
+# Docker patterns are anchored at the context root: `.env` above does NOT
+# match my_flask_app/.env, which was being baked into the image.
+**/.env
+**/.env.*
+!**/.env.example
+**/instance
+**/__pycache__
+**/.pytest_cache
+# 886 MB Google Cloud SDK accidentally installed inside the app folder
+my_flask_app/exec*

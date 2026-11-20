@@ -1,8 +1,7 @@
 from flask import Blueprint, request, jsonify
 from pydantic import ValidationError
 from app.services.user_service import UserService
-from app.services.google_auth_service import GoogleAuthService
-from app.schemas.user_schema import UserCreate, UserResponse
+from app.schemas.user_schema import UserCreate
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -10,7 +9,7 @@ auth_bp = Blueprint('auth', __name__)
 @auth_bp.route('/login/', methods=['POST'])
 def login():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         email = data.get('email')
         password = data.get('password')
 
@@ -30,7 +29,7 @@ def login():
                 'user': {
                     'id': user.id,
                     'email': user.email,
-                    'username': user.user_metadata.get('username')
+                    'username': (user.user_metadata or {}).get('username')
                 }
             }
         }), 200
@@ -57,7 +56,7 @@ def logout():
 def register():
     try:
         # Validate input using Pydantic
-        user_data = UserCreate(**request.json)
+        user_data = UserCreate(**(request.get_json(silent=True) or {}))
         
         # Register with Supabase
         auth_response = UserService.create_user(user_data)
@@ -70,7 +69,7 @@ def register():
                 'user': {
                     'id': user.id,
                     'email': user.email,
-                    'username': user.user_metadata.get('username'),
+                    'username': (user.user_metadata or {}).get('username'),
                     'created_at': user.created_at
                 }
             }
@@ -93,60 +92,7 @@ def register():
         # Check if it is a requests connection error (Supabase unreachable)
         return jsonify({'error': 'Internal Server Error'}), 500
 
-@auth_bp.route('/google-signin/', methods=['POST'])
-def google_signin():
-    """
-    Handle Google OAuth sign-in from mobile app.
-    
-    Expects JSON:
-    {
-        "idToken": "...",
-        "email": "user@example.com" (optional, used as fallback)
-    }
-    """
-    try:
-        data = request.get_json()
-        id_token_str = data.get('idToken')
-        email = data.get('email')
-
-        if not id_token_str:
-            return jsonify({
-                'success': False,
-                'error': 'Missing idToken'
-            }), 400
-
-        # Verify token and create/retrieve user
-        user, access_token, refresh_token = GoogleAuthService.verify_and_create_user(
-            id_token_str, 
-            email
-        )
-
-        return jsonify({
-            'success': True,
-            'data': {
-                'token': access_token,
-                'refresh_token': refresh_token,
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'username': user.username,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'profile_picture_url': user.profile_picture_url,
-                }
-            }
-        }), 200
-
-    except ValueError as e:
-        print(f"Google Sign-In Validation Error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 401
-    except Exception as e:
-        print(f"Google Sign-In Error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': 'Authentication failed'
-        }), 500
-
+# Google sign-in is handled entirely by Supabase Auth on the client:
+#   supabase.auth.signInWithIdToken({ provider: 'google', token: idToken })
+# The old /google-signin/ endpoint minted its own JWTs for a separate `users`
+# table; Supabase rejected those sessions, so it was removed.

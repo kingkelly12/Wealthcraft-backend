@@ -1,5 +1,5 @@
-# Import all 37 models so Flask-Migrate can detect them
-from app.models.user import User
+# Import every model so SQLAlchemy registers them.
+# The schema itself is owned by supabase/schema.sql (not Flask-Migrate).
 from app.models.profile import Profile
 from app.models.user_balance import UserBalance
 from app.models.transaction import Transaction
@@ -19,31 +19,26 @@ from app.models.chat_message import ChatMessage
 from app.models.life_event import LifeEvent
 from app.models.integrated_mission import IntegratedMission
 from app.models.player_mission_progress import PlayerMissionProgress
-from app.models.loan_repayment import LoanRepayment
 from app.models.job_market import JobMarket
 from app.models.user_course import UserCourse
 from app.models.life_event_choice import LifeEventChoice
 from app.models.user_life_event import UserLifeEvent
-from app.models.monthly_deduction import MonthlyDeduction
 from app.models.player_liability import PlayerLiability
 from app.models.mission_decision_point import MissionDecisionPoint
 from app.models.mission_decision_option import MissionDecisionOption
 from app.models.mission_success_criteria import MissionSuccessCriteria
-from app.models.integrated_mission_event import IntegratedMissionEvent
-from app.models.mission_event_choice import MissionEventChoice
 from app.models.player_mission_decision import PlayerMissionDecision
 from app.models.player_mission_success_tracking import PlayerMissionSuccessTracking
 from app.models.mission_completion_result import MissionCompletionResult
 from app.models.mission_story_event import MissionStoryEvent
 from app.models.player_story_progress import PlayerStoryProgress
-from app.models.mission_course import MissionCourse
-from app.models.mission_asset import MissionAsset
 from app.models.mentor import Mentor
 from app.models.mentor_message import MentorMessage
 from app.models.player_mentor_interaction import PlayerMentorInteraction
+from app.models.void_post import VoidPost
+from app.models.void_reaction import VoidReaction
 
 __all__ = [
-    'User',
     'Profile',
     'UserBalance',
     'Transaction',
@@ -63,27 +58,22 @@ __all__ = [
     'LifeEvent',
     'IntegratedMission',
     'PlayerMissionProgress',
-    'LoanRepayment',
     'JobMarket',
     'UserCourse',
-    'FamilyMember',
     'LifeEventChoice',
     'UserLifeEvent',
-    'MonthlyDeduction',
     'PlayerLiability',
     'MissionDecisionPoint',
     'MissionDecisionOption',
     'MissionSuccessCriteria',
-    'IntegratedMissionEvent',
-    'MissionEventChoice',
     'PlayerMissionDecision',
     'PlayerMissionSuccessTracking',
     'MissionCompletionResult',
     'MissionStoryEvent',
     'PlayerStoryProgress',
-    'MissionCourse',
-    'MissionAsset',
     'Mentor',
     'MentorMessage',
-    'PlayerMentorInteraction'
+    'PlayerMentorInteraction',
+    'VoidPost',
+    'VoidReaction',
 ]

@@ -72,3 +72,8 @@ docker-compose.override.yml
 # Documentation
 *.md
 docs/
+
+# 886 MB Google Cloud SDK accidentally installed inside the app folder
+my_flask_app/exec*
+venv/
+.venv/

@@ -1,7 +1,6 @@
-#!/tmp/edittar28699/python/install/bin/python3.13
+#!/tmp/edittar12987/python/install/bin/python3.14
 import sys
 from wheel._commands import main
 if __name__ == '__main__':
-    if sys.argv[0].endswith('.exe'):
-        sys.argv[0] = sys.argv[0][:-4]
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
     sys.exit(main())

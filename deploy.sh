@@ -63,9 +63,8 @@ FLASK_CONFIG=production
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-SUPABASE_JWT_SECRET=your_jwt_secret
-GOOGLE_WEB_CLIENT_ID=your_google_client_id
-GEMINI_API_KEY=your_gemini_key
+SUPABASE_JWT_SECRET=  # legacy HS256 projects only
+QWEN_API_KEY=your_qwen_key
 SECRET_KEY=your_secret_key
 DATABASE_URL=your_postgres_url
 EOF

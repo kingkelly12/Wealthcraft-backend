@@ -32,11 +32,16 @@ class ProfileService:
         if not profile:
             return None
 
+        allowed = {'username', 'profile_picture_url', 'has_completed_onboarding'}
         for key, value in kwargs.items():
-            if hasattr(profile, key):
+            if key in allowed:
                 setattr(profile, key, value)
 
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            raise ValueError("Username is already taken")
         return profile
 
     @staticmethod
@@ -62,17 +67,25 @@ class ProfileService:
             # 1. Get Balance
             balance = float(BalanceService.get_current_balance(str(user_id)))
             
-            # 2. Get Assets - only select 'value' column (current_value doesn't exist in schema)
+            # 2. Assets at their current value
             assets_res = supabase.table('user_assets').select('value').eq('user_id', str(user_id)).execute()
             assets_total = sum(float(a.get('value') or 0) for a in (assets_res.data or []))
-            
-            # 3. Get Liabilities - use 'current_value' column (how much liability is currently owed)
-            liabilities_res = supabase.table('player_liabilities').select('current_value').eq('player_id', str(user_id)).eq('is_active', True).execute()
-            liabilities_total = sum(float(l.get('current_value') or 0) for l in (liabilities_res.data or []))
-            
-            # 4. Final Calculation
-            net_worth = balance + assets_total - liabilities_total
-            
+
+            # 3. Lifestyle items you own outright still have a resale value: they
+            #    are possessions, not debt. (The old code SUBTRACTED them, so buying
+            #    a $10k watch cost $20k of net worth and selling it "made" $20k.)
+            items_res = supabase.table('player_liabilities').select('current_value, purchase_price') \
+                .eq('player_id', str(user_id)).eq('is_active', True).execute()
+            items_total = sum(float(i.get('current_value') or i.get('purchase_price') or 0) for i in (items_res.data or []))
+
+            # 4. Debt actually owed (bank + P2P loans). The old code ignored loans,
+            #    so borrowing raised net worth and topped the leaderboard.
+            debt_res = supabase.table('liabilities').select('remaining_balance') \
+                .eq('user_id', str(user_id)).gt('remaining_balance', 0).execute()
+            debt_total = sum(float(d.get('remaining_balance') or 0) for d in (debt_res.data or []))
+
+            net_worth = balance + assets_total + items_total - debt_total
+
             # 5. Update Profile
             ProfileService.update_net_worth(user_id, net_worth)
             

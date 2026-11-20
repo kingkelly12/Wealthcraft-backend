@@ -27,40 +27,48 @@ def make_life_event_choice(current_user_id: str):
     5. Logs transaction
     """
     try:
-        # Validate request
-        data = request.json
+        data = request.get_json(silent=True) or {}
         choice_id = data.get('choice_id')
         event_id = data.get('event_id')
-        
-        # 1. Get choice details
-        choice_response = supabase.table('life_event_choices').select('*').eq('id', str(choice_id)).single().execute()
-        
+        if not choice_id or not event_id:
+            return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'event_id and choice_id are required'}), 400
+
+        # 1. The choice must belong to this event (previously any choice from
+        #    ANY event could be submitted — e.g. the most lucrative one).
+        choice_response = supabase.table('life_event_choices').select('*') \
+            .eq('id', str(choice_id)).eq('life_event_id', str(event_id)).limit(1).execute()
         if not choice_response.data:
             return jsonify({
                 'success': False,
                 'error': 'CHOICE_NOT_FOUND',
-                'message': f'Choice {choice_id} not found'
+                'message': 'That choice does not belong to this event'
             }), 404
-        
-        choice = choice_response.data
-        
+        choice = choice_response.data[0]
+
         # 2. Get life event details
-        event_response = supabase.table('life_events').select('*').eq('id', str(event_id)).single().execute()
-        
+        event_response = supabase.table('life_events').select('*').eq('id', str(event_id)).limit(1).execute()
         if not event_response.data:
             return jsonify({
                 'success': False,
                 'error': 'EVENT_NOT_FOUND',
                 'message': f'Life event {event_id} not found'
             }), 404
-        
-        event = event_response.data
-        
-        # 3. Update user_life_event with choice
-        supabase.table('user_life_events').update({
+        event = event_response.data[0]
+
+        # 3. Claim the pending event atomically. Only proceed if a pending row
+        #    was actually updated — otherwise the event was never assigned to
+        #    this player or was already answered (the old code paid out anyway,
+        #    so the same choice could be replayed for infinite money).
+        claim = supabase.table('user_life_events').update({
             'choice_id': str(choice_id)
         }).eq('user_id', current_user_id).eq('life_event_id', str(event_id)).is_('choice_id', 'null').execute()
-        
+        if not claim.data:
+            return jsonify({
+                'success': False,
+                'error': 'ALREADY_RESOLVED',
+                'message': 'You have already made a choice for this event (or it is not assigned to you).'
+            }), 400
+
         # 4. Apply balance changes
         net_impact = Decimal(str(choice.get('benefit', 0))) - Decimal(str(choice.get('cost', 0)))
         
@@ -98,9 +106,10 @@ def make_life_event_choice(current_user_id: str):
         if impact_sanity is None or impact_sanity == 0:
             impact_sanity = event.get('impact_sanity', 0)
         
+        before = ProfileService.get_profile_by_user_id(user_uuid)
+        current_sanity = before.sanity if before else 100
         profile = ProfileService.update_sanity(user_uuid, impact_sanity)
         new_sanity = profile.sanity if profile else 0
-        current_sanity = new_sanity - impact_sanity # Approximation of old sanity for the check below
 
         burnout_triggered = False
         game_over = False
@@ -111,12 +120,14 @@ def make_life_event_choice(current_user_id: str):
             if current_sanity > 0:
                 burnout_triggered = True
                 game_over = True
-                burnout_cost = Decimal(500)
-                BalanceService.subtract_balance(
-                    user_id=current_user_id,
-                    amount=burnout_cost,
-                    reason="Medical Bill: Mental Breakdown"
-                )
+                burnout_cost = min(Decimal(500), BalanceService.get_current_balance(current_user_id))
+                if burnout_cost > 0:
+                    BalanceService.subtract_balance(
+                        user_id=current_user_id,
+                        amount=burnout_cost,
+                        reason="Medical Bill: Mental Breakdown",
+                        category='life_event',
+                    )
                 outcome_message = f"GAME OVER! You've lost your mind. Hospital bill: $500. Use recovery actions to regain sanity. {outcome_message}"
         
         if impact_income != 0:

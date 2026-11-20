@@ -103,8 +103,7 @@ def get_available_missions(current_user_id: str):
             print(f"[Missions] No missions found in integrated_missions table")
             return jsonify({
                 'success': True,
-                'data': [],
-                'has_active_mission': False
+                'data': {'missions': [], 'has_active_mission': False}
             }), 200
         
         # Get completed missions for this user
@@ -920,11 +919,19 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
         
         # Check if already viewed
         existing_response = supabase.table('player_story_progress').select(
-            'id'
+            'id, has_been_viewed'
         ).eq('player_mission_id', player_mission_id).eq('story_event_id', event_id).execute()
         
+        already_applied = bool(existing_response.data) and bool(existing_response.data[0].get('has_been_viewed'))
+        if already_applied:
+            return jsonify({
+                'success': True,
+                'message': 'Story event already acknowledged',
+                'data': {'event': event, 'impacts_applied': {}}
+            }), 200
+
         if existing_response.data:
-            # Already viewed, just update flags
+            # Triggered but not yet viewed: mark viewed
             supabase.table('player_story_progress').update({
                 'has_been_viewed': True,
                 'viewed_at': datetime.utcnow().isoformat(),

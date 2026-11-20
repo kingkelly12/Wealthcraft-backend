@@ -6,7 +6,6 @@ from app.services.mentor_service import MentorService
 from app.schemas.asset_schema import AssetPurchase
 from app import supabase
 from decimal import Decimal
-import os
 import uuid
 from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
@@ -43,109 +42,95 @@ asset_bp = Blueprint('asset', __name__)
 logger = logging.getLogger(__name__)
 
 
+VOLATILE_TYPES = ('stocks', 'crypto', 'forex')
+
+
+def _asset_type_for(category: str) -> str:
+    return {
+        'real_estate': 'property',
+        'business': 'stocks',
+        'stocks': 'stocks',
+        'investments': 'stocks',
+        'crypto': 'crypto',
+        'forex': 'forex',
+    }.get(category or '', 'property')
+
+
 @asset_bp.route('/purchase/', methods=['POST'])
 @require_auth
 def purchase_asset(current_user_id: str):
     """
-    Purchase an asset (stocks, crypto, real estate, etc.)
-    
-    This endpoint:
-    1. Validates the request
-    2. Checks if user has sufficient funds
-    3. Deducts money from balance
-    4. Creates or updates the asset record
-    5. Logs the transaction
-    
-    All operations are atomic - if any step fails, nothing is committed.
+    Purchase an asset. The wallet is debited atomically first (adjust_balance
+    refuses to overdraw); if writing the holding then fails, the debit is refunded.
     """
     try:
-        # Validate request
-        data = AssetPurchase(**request.json)
-        quantity = int(data.quantity)
-        
-        # 1. Get asset details from database
-        asset_response = supabase.table('assets').select('*').eq('id', data.asset_id).single().execute()
-        
+        data = AssetPurchase(**(request.get_json(silent=True) or {}))
+        quantity = Decimal(str(data.quantity))
+
+        asset_response = supabase.table('assets').select('*').eq('id', data.asset_id).limit(1).execute()
         if not asset_response.data:
             return jsonify({
                 'success': False,
                 'error': 'ASSET_NOT_FOUND',
                 'message': f'Asset {data.asset_id} not found'
             }), 404
-        
-        asset = asset_response.data
-        total_price = Decimal(str(asset['price'])) * quantity
-        
-        # 2. Check if user has sufficient funds
-        current_balance = BalanceService.get_current_balance(current_user_id)
-        
-        if current_balance < total_price:
-            return jsonify({
-                'success': False,
-                'error': 'INSUFFICIENT_FUNDS',
-                'message': f'Insufficient funds. You need ${total_price} but only have ${current_balance}'
-            }), 400
-        
-        # 3. Determine asset type
-        category = asset.get('category', '')
-        asset_type = (
-            'property' if category == 'real_estate' else
-            'stocks' if category in ['business', 'stocks', 'investments'] else
-            'crypto' if category == 'crypto' else
-            'forex' if category == 'forex' else
-            'property'
-        )
-        
-        # 4. Check if asset already exists (for stocks/crypto, we stack)
-        should_update = False
-        existing_asset_id = None
-        new_quantity = quantity
-        new_total_value = float(total_price)
-        new_purchase_price = asset['price']
-        
-        if asset_type in ['stocks', 'crypto', 'forex']:
-            existing_response = supabase.table('user_assets').select('*').eq('user_id', current_user_id).eq('name', asset['name']).execute()
-            
-            if existing_response.data and len(existing_response.data) > 0:
-                existing_asset = existing_response.data[0]
-                should_update = True
-                existing_asset_id = existing_asset['id']
-                new_quantity = (existing_asset.get('quantity') or 0) + quantity
-                new_total_value = (existing_asset.get('value') or 0) + float(total_price)
-                # Weighted average price
-                new_purchase_price = new_total_value / new_quantity
-        
-        # 5. Deduct balance
+
+        asset = asset_response.data[0]
+        unit_price = Decimal(str(asset['price']))
+        total_price = (unit_price * quantity).quantize(Decimal('0.01'))
+        if total_price <= 0:
+            return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'Quantity too small'}), 400
+
+        asset_type = _asset_type_for(asset.get('category'))
+
+        # 1. Debit first (atomic, cannot overdraw)
         balance_result = BalanceService.subtract_balance(
             user_id=current_user_id,
             amount=total_price,
-            reason=f'Purchased {quantity} {asset["name"]}'
+            reason=f'Purchased {quantity} {asset["name"]}',
+            category='asset_purchase',
         )
-        
-        # 6. Create or update asset
-        if should_update and existing_asset_id:
-            supabase.table('user_assets').update({
-                'quantity': new_quantity,
-                'value': new_total_value,
-                'purchase_price': new_purchase_price,
-                'updated_at': datetime.utcnow().isoformat()
-            }).eq('id', existing_asset_id).execute()
-            
-            result_asset_id = existing_asset_id
-        else:
-            insert_response = supabase.table('user_assets').insert({
-                'user_id': current_user_id,
-                'name': asset['name'],
-                'asset_type': asset_type,
-                'value': float(total_price),
-                'purchase_price': asset['price'],
-                'quantity': quantity
-            }).execute()
-            
-            result_asset_id = insert_response.data[0]['id'] if insert_response.data else None
-        
-        # 7. Notify followers of asset purchase
-        # (User gets immediate toast feedback from API response)
+
+        # 2. Create or stack the holding; refund if this fails
+        try:
+            existing = None
+            if asset_type in VOLATILE_TYPES:
+                existing_response = supabase.table('user_assets').select('*') \
+                    .eq('user_id', current_user_id).eq('name', asset['name']).limit(1).execute()
+                existing = existing_response.data[0] if existing_response.data else None
+
+            if existing:
+                old_qty = Decimal(str(existing.get('quantity') or 0))
+                old_basis = Decimal(str(existing.get('purchase_price') or 0)) * old_qty
+                new_quantity = old_qty + quantity
+                supabase.table('user_assets').update({
+                    'quantity': float(new_quantity),
+                    'value': float(new_quantity * unit_price),
+                    # weighted-average cost basis per unit
+                    'purchase_price': float(((old_basis + total_price) / new_quantity).quantize(Decimal('0.01'))),
+                    'asset_id': asset['id'],
+                }).eq('id', existing['id']).execute()
+                result_asset_id = existing['id']
+            else:
+                new_quantity = quantity
+                insert_response = supabase.table('user_assets').insert({
+                    'user_id': current_user_id,
+                    'asset_id': asset['id'],
+                    'name': asset['name'],
+                    'asset_type': asset_type,
+                    'value': float(total_price),
+                    'purchase_price': float(unit_price),
+                    'quantity': float(quantity),
+                }).execute()
+                result_asset_id = insert_response.data[0]['id'] if insert_response.data else None
+        except Exception:
+            logger.exception('Asset write failed after debit; refunding %s', current_user_id)
+            BalanceService.add_balance(current_user_id, total_price, f'Refund: failed purchase of {asset["name"]}', category='refund')
+            raise
+
+        ProfileService.recalculate_monthly_income(uuid.UUID(current_user_id))
+        ProfileService.recalculate_net_worth(uuid.UUID(current_user_id))
+
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,
@@ -153,47 +138,29 @@ def purchase_asset(current_user_id: str):
             item_name=asset['name'],
             amount=float(total_price)
         )
-        
-        # ============ REAL-TIME MENTOR TRIGGER ============
-        # Check if this is first asset purchase (triggers congratulations message)
+
         try:
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,
                 action='buy_asset',
-                action_data={
-                    'cost': float(total_price),
-                    'asset_name': asset['name'],
-                    'quantity': quantity
-                }
+                action_data={'cost': float(total_price), 'asset_name': asset['name'], 'quantity': float(quantity)}
             )
-            
             if trigger:
-                # Send mentor message to player (with push notification)
                 MentorService.send_mentor_message(
-                    player_id=current_user_id,
-                    mentor_data=trigger,
-                    metrics={},
-                    supabase_client=supabase
+                    player_id=current_user_id, mentor_data=trigger, metrics={}, supabase_client=supabase
                 )
         except Exception as e:
-            print(f"Failed to trigger mentor response: {str(e)}")
-            
-        # Recalculate true monthly income
-        from app.services.profile_service import ProfileService
-        import uuid
-        ProfileService.recalculate_monthly_income(uuid.UUID(current_user_id))
-        
-        # (already handled before real-time triggers)
-        
+            logger.warning(f"Failed to trigger mentor response: {e}")
+
         return jsonify({
             'success': True,
             'message': f'Successfully purchased {quantity} {asset["name"]}',
             'asset_id': result_asset_id,
             'new_balance': float(balance_result['new_balance']),
             'total_cost': float(total_price),
-            'quantity': new_quantity
+            'quantity': float(new_quantity)
         }), 200
-        
+
     except ValidationError as e:
         return jsonify({
             'success': False,
@@ -203,14 +170,13 @@ def purchase_asset(current_user_id: str):
         }), 400
     except Exception as e:
         error_message = str(e)
-        
         if 'Insufficient funds' in error_message:
             return jsonify({
                 'success': False,
                 'error': 'INSUFFICIENT_FUNDS',
-                'message': error_message
+                'message': f'Insufficient funds for this purchase'
             }), 400
-        
+        logger.exception('purchase_asset failed')
         return jsonify({
             'success': False,
             'error': 'OPERATION_FAILED',
@@ -327,26 +293,28 @@ def get_user_portfolio(current_user_id: str, user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@asset_bp.route('/sell/', methods=['POST'])
 @asset_bp.route('/sell/<asset_id>/', methods=['POST'])
 @require_auth
-def sell_asset(current_user_id: str, asset_id: str):
+def sell_asset(current_user_id: str, asset_id: str = None):
     """
-    Sell a user's asset
-    
-    This endpoint:
-    1. Validates the asset belongs to the user
-    2. Calculates the sale value (current value of the asset)
-    3. Adds money to user's balance
-    4. Deletes the asset record
-    5. Logs the transaction
+    Sell all or part of a holding.
+
+    Body (all optional when asset_id is in the URL):
+        { "asset_id": "<user_assets.id>", "quantity": <number> }   # omit quantity = sell everything
+
+    The holding is claimed atomically (conditional delete/update on the quantity
+    we read) BEFORE money is credited, so two concurrent sell requests can't
+    both get paid for the same shares.
     """
     try:
-        # Resolve both possible UUIDs (Auth UID and Profile UUID) for this user
+        body = request.get_json(silent=True) or {}
+        asset_id = asset_id or body.get('asset_id')
+        if not asset_id:
+            return jsonify({'success': False, 'error': 'MISSING_ID', 'message': 'asset_id is required'}), 400
+
         user_ids = resolve_user_ids(current_user_id)
-
-        # 1. Get the asset and verify ownership (try all resolved IDs)
         asset_response = supabase.table('user_assets').select('*').eq('id', asset_id).in_('user_id', user_ids).execute()
-
         if not asset_response.data:
             return jsonify({
                 'success': False,
@@ -355,93 +323,58 @@ def sell_asset(current_user_id: str, asset_id: str):
             }), 404
 
         asset = asset_response.data[0]
-        
-        # 1.5 Calculate true sale value based on asset type
-        quantity = Decimal(str(asset.get('quantity', 1)))
-        asset_type = asset.get('asset_type', '')
-        
-        if asset_type in ['stocks', 'crypto', 'forex']:
-            # For volatile market assets, fetch current global market price
-            market_asset_response = supabase.table('assets').select('price').eq('name', asset.get('name')).single().execute()
-            
-            current_price = Decimal(str(asset.get('purchase_price'))) # Default if lookup fails
-            if market_asset_response.data:
-                 current_price = Decimal(str(market_asset_response.data.get('price')))
-                 
-            sale_value = current_price * quantity
+        held_qty = Decimal(str(asset.get('quantity') or 1))
+        cost_basis_unit = Decimal(str(asset.get('purchase_price') or 0))
+
+        sell_qty = held_qty
+        if body.get('quantity') is not None:
+            sell_qty = Decimal(str(body['quantity']))
+            if sell_qty <= 0:
+                return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'Quantity must be positive'}), 400
+            sell_qty = min(sell_qty, held_qty)
+
+        # Unit sale price: live market price for volatile assets, appreciated value otherwise.
+        if asset.get('asset_type') in VOLATILE_TYPES:
+            market = supabase.table('assets').select('price').eq('name', asset.get('name')).limit(1).execute()
+            unit_price = Decimal(str(market.data[0]['price'])) if market.data else cost_basis_unit
         else:
-            # For properties and business, use the individually appreciated value from user_assets
-            sale_value = Decimal(str(asset.get('value', asset.get('purchase_price', 0))))
-        
-        # Calculate profit
-        purchase_price = Decimal(str(asset.get('purchase_price', 0)))
-        cost_basis = purchase_price * quantity
-        profit = sale_value - cost_basis
-        
-        # 2. Add money to balance
+            unit_price = Decimal(str(asset.get('value') or 0)) / held_qty
+
+        sale_value = (unit_price * sell_qty).quantize(Decimal('0.01'))
+        profit = ((unit_price - cost_basis_unit) * sell_qty).quantize(Decimal('0.01'))
+
+        # 1. Atomically claim the shares
+        if sell_qty >= held_qty:
+            claim = supabase.table('user_assets').delete() \
+                .eq('id', asset_id).eq('quantity', float(held_qty)).execute()
+        else:
+            remaining = held_qty - sell_qty
+            claim = supabase.table('user_assets').update({
+                'quantity': float(remaining),
+                'value': float((unit_price * remaining).quantize(Decimal('0.01'))),
+            }).eq('id', asset_id).eq('quantity', float(held_qty)).execute()
+        if not claim.data:
+            return jsonify({
+                'success': False,
+                'error': 'CONFLICT',
+                'message': 'This holding changed while you were selling. Refresh and try again.'
+            }), 409
+
+        # 2. Pay out
         balance_result = BalanceService.add_balance(
             user_id=current_user_id,
             amount=sale_value,
-            reason=f'Sold {asset.get("name", "asset")}'
-        )
-        
-        # 3. Delete the asset
-        supabase.table('user_assets').delete().eq('id', asset_id).execute()
-        
-        # 3.5 Update Profile (Trading Profits)
-        # Resolve the correct profile user_id for the SQLAlchemy ORM lookup.
-        # The ORM stores profiles by their Auth UID in the user_id column.
-        # We use resolve_user_ids to find whichever UUID the profile was stored under.
-        try:
-            # The asset owner_id is the one used when the user_asset was created
-            owner_id = asset.get('user_id', current_user_id)
-            profile_lookup_id = None
-            # Prefer the UUID that exists in the profiles.user_id column
-            profile_check = supabase.table('profiles').select('user_id').in_('user_id', user_ids).execute()
-            if profile_check.data:
-                profile_lookup_id = profile_check.data[0]['user_id']
-            else:
-                profile_lookup_id = owner_id
+            reason=f'Sold {sell_qty} {asset.get("name", "asset")}',
+            category='asset_sale',
+        ) if sale_value > 0 else {'new_balance': BalanceService.get_current_balance(current_user_id)}
 
-            user_uuid = uuid.UUID(str(profile_lookup_id))
+        try:
+            user_uuid = uuid.UUID(current_user_id)
             ProfileService.update_trading_profits(user_uuid, float(profit))
             ProfileService.recalculate_monthly_income(user_uuid)
         except Exception as e:
             logger.error(f"Failed to update trading profits for user {current_user_id}: {e}")
-        
-        # 4. Send push notification to followers
-        # (User gets immediate toast feedback from API response)
-        try:
-            ExpoPushService.notify_followers_of_financial_move(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                move_type='sell_asset',
-                item_name=asset.get('name', 'your asset'),
-                amount=float(sale_value)
-            )
-        except Exception as e:
-            print(f"Failed to notify followers of asset sale: {str(e)}")
-        
-        # Also send direct push to user for immediate alert
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='💵 Asset Sold',
-                body=f'Sold {asset.get("name", "asset")} for ${sale_value:,.2f}. Profit: ${profit:,.2f}',
-                notification_type='financial_move',
-                data={
-                    'asset_id': asset_id,
-                    'amount': float(sale_value),
-                    'profit': float(profit),
-                    'transaction_type': 'asset_sale',
-                    'screen': '/portfolio'
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-        
-        # Send Mentorship Notification
+
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
             user_id=current_user_id,
@@ -451,12 +384,7 @@ def sell_asset(current_user_id: str, asset_id: str):
             profit=float(profit)
         )
 
-        # ============ REAL-TIME MENTOR TRIGGER ============
-        # Check for panic selling (selling large percentage of portfolio)
         try:
-            # Calculate percentage of assets sold (simple: assume this is significant if profit is negative)
-            percentage_sold = 1.0 if profit < 0 else 0.3  # Full sale if loss, partial if gain
-            
             trigger = MentorService.check_real_time_triggers(
                 player_id=current_user_id,
                 action='sell_assets',
@@ -464,32 +392,27 @@ def sell_asset(current_user_id: str, asset_id: str):
                     'amount': float(sale_value),
                     'asset_name': asset.get('name'),
                     'profit': float(profit),
-                    'percentage_sold': percentage_sold
+                    'percentage_sold': float(sell_qty / held_qty),
                 }
             )
-            
             if trigger:
-                # Send mentor message to player (with push notification in Phase 4)
                 MentorService.send_mentor_message(
-                    player_id=current_user_id,
-                    mentor_data=trigger,
-                    metrics={},
-                    supabase_client=supabase
+                    player_id=current_user_id, mentor_data=trigger, metrics={}, supabase_client=supabase
                 )
         except Exception as e:
-            print(f"Failed to trigger mentor response: {str(e)}")
-        
-        # (sell follower notification already sent above)
-        
+            logger.warning(f"Failed to trigger mentor response: {e}")
+
         return jsonify({
             'success': True,
             'message': f'Successfully sold {asset.get("name", "asset")}',
             'sale_value': float(sale_value),
             'profit': float(profit),
+            'quantity_sold': float(sell_qty),
             'new_balance': float(balance_result['new_balance'])
         }), 200
-        
+
     except Exception as e:
+        logger.exception('sell_asset failed')
         return jsonify({
             'success': False,
             'error': 'OPERATION_FAILED',

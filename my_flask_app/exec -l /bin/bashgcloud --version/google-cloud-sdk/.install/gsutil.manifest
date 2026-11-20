@@ -1060,7 +1060,6 @@ platform/gsutil/gslib/vendored/oauth2client/oauth2client/_helpers.py
 platform/gsutil/gslib/vendored/oauth2client/oauth2client/_openssl_crypt.py
 platform/gsutil/gslib/vendored/oauth2client/oauth2client/_pkce.py
 platform/gsutil/gslib/vendored/oauth2client/oauth2client/_pure_python_crypt.py
-platform/gsutil/gslib/vendored/oauth2client/oauth2client/_pycrypto_crypt.py
 platform/gsutil/gslib/vendored/oauth2client/oauth2client/client.py
 platform/gsutil/gslib/vendored/oauth2client/oauth2client/clientsecrets.py
 platform/gsutil/gslib/vendored/oauth2client/oauth2client/contrib/__init__.py

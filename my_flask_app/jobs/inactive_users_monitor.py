@@ -6,7 +6,6 @@ Run this daily via cron or task scheduler.
 
 from app import db, supabase
 from app.models.profile import Profile
-from app.models.user import User
 from app.services.push_notification_service import ExpoPushService
 from datetime import datetime, timedelta
 import logging

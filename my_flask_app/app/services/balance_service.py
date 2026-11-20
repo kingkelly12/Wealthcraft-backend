@@ -1,155 +1,92 @@
+"""
+Balance operations.
 
+All money movement goes through the `adjust_balance` Postgres function
+(supabase/schema.sql), which updates the wallet and writes the transactions
+row in ONE atomic statement and refuses to overdraw. The old read-modify-write
+implementation lost updates under concurrent requests (double-spend) and
+accepted negative amounts.
 """
-Service layer for balance operations
-Handles business logic for adding/subtracting user balance
-"""
-from decimal import Decimal
-from typing import Dict, Any
+import logging
 import uuid
-from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict
+
 from app import supabase
+
+logger = logging.getLogger(__name__)
+
+
+def _to_decimal(amount) -> Decimal:
+    try:
+        value = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError(f'Invalid amount: {amount!r}')
+    if not value.is_finite():
+        raise ValueError(f'Invalid amount: {amount!r}')
+    return value
 
 
 class BalanceService:
     """Service for managing user balances"""
-    
+
     @staticmethod
     def get_current_balance(user_id: str) -> Decimal:
-        """Get the current balance for a user (Lazy Initialization)"""
-        try:
-            response = supabase.table('user_balances').select('current_balance').eq('user_id', user_id).single().execute()
-            if response.data:
-                return Decimal(str(response.data['current_balance']))
-            return Decimal('0')
-        except Exception as e:
-            # Check for PGRST116 (0 rows returned)
-            error_str = str(e)
-            if 'PGRST116' in error_str or '0 rows' in error_str:
-                try:
-                    # Initialize balance record lazily
-                    supabase.table('user_balances').insert({
-                        'user_id': user_id,
-                        'current_balance': 0.0,
-                        'updated_at': datetime.utcnow().isoformat()
-                    }).execute()
-                    return Decimal('0')
-                except Exception as insert_error:
-                    print(f'Critical error initializing balance: {insert_error}')
-                    raise Exception('Failed to initialize user balance')
-            
-            print(f'Error getting balance: {e}')
-            raise Exception('Failed to retrieve balance')
-    
-    @staticmethod
-    def add_balance(user_id: str, amount: Decimal, reason: str) -> Dict[str, Any]:
-        """
-        Add money to user's balance
-        
-        Args:
-            user_id: UUID of the user
-            amount: Amount to add (must be positive)
-            reason: Reason for adding balance
-            
-        Returns:
-            Dict with success status, new balance, and transaction ID
-        """
-        try:
-            # Get current balance
-            current_balance = BalanceService.get_current_balance(user_id)
-            new_balance = current_balance + amount
-            
-            # Update balance
-            supabase.table('user_balances').update({
-                'current_balance': float(new_balance),
-                'updated_at': datetime.utcnow().isoformat()
-            }).eq('user_id', user_id).execute()
-            
-            # Create transaction record
-            transaction_id = str(uuid.uuid4())
-            supabase.table('transactions').insert({
-                'id': transaction_id,
-                'user_id': user_id,
-                'type': 'income',
-                'category': 'balance_adjustment',
-                'amount': float(amount),
-                'description': reason,
-                'created_at': datetime.utcnow().isoformat()
-            }).execute()
-            
-            # 4. Sync Net Worth for Leaderboard
-            try:
-                from app.services.profile_service import ProfileService
-                ProfileService.recalculate_net_worth(uuid.UUID(user_id))
-            except Exception as sync_error:
-                print(f"Failed to sync net worth during add_balance: {sync_error}")
+        """Current wallet balance (0 if the wallet row doesn't exist yet)."""
+        response = supabase.table('user_balances').select('current_balance') \
+            .eq('user_id', str(user_id)).limit(1).execute()
+        if response.data:
+            return Decimal(str(response.data[0]['current_balance']))
+        return Decimal('0')
 
-            return {
-                'success': True,
-                'new_balance': new_balance,
-                'transaction_id': transaction_id,
-                'message': f'Successfully added ${amount} to balance'
-            }
-        except Exception as e:
-            print(f'Error adding balance: {e}')
-            raise Exception(f'Failed to add balance: {str(e)}')
-    
     @staticmethod
-    def subtract_balance(user_id: str, amount: Decimal, reason: str) -> Dict[str, Any]:
-        """
-        Subtract money from user's balance
-        
-        Args:
-            user_id: UUID of the user
-            amount: Amount to subtract (must be positive)
-            reason: Reason for subtracting balance
-            
-        Returns:
-            Dict with success status, new balance, and transaction ID
-            
-        Raises:
-            Exception: If insufficient funds or operation fails
-        """
+    def _adjust(user_id: str, signed_amount: Decimal, reason: str, category: str) -> Decimal:
         try:
-            # Get current balance
-            current_balance = BalanceService.get_current_balance(user_id)
-            
-            # Check if user has sufficient funds
-            if current_balance < amount:
-                raise Exception(f'Insufficient funds. Current balance: ${current_balance}, Required: ${amount}')
-            
-            new_balance = current_balance - amount
-            
-            # Update balance
-            supabase.table('user_balances').update({
-                'current_balance': float(new_balance),
-                'updated_at': datetime.utcnow().isoformat()
-            }).eq('user_id', user_id).execute()
-            
-            # Create transaction record
-            transaction_id = str(uuid.uuid4())
-            supabase.table('transactions').insert({
-                'id': transaction_id,
-                'user_id': user_id,
-                'type': 'expense',
-                'category': 'balance_adjustment',
-                'amount': float(amount),
-                'description': reason,
-                'created_at': datetime.utcnow().isoformat()
+            res = supabase.rpc('adjust_balance', {
+                'p_user_id': str(user_id),
+                'p_amount': str(signed_amount),
+                'p_reason': reason,
+                'p_category': category,
             }).execute()
-            
-            # 4. Sync Net Worth for Leaderboard
-            try:
-                from app.services.profile_service import ProfileService
-                ProfileService.recalculate_net_worth(uuid.UUID(user_id))
-            except Exception as sync_error:
-                print(f"Failed to sync net worth during subtract_balance: {sync_error}")
-
-            return {
-                'success': True,
-                'new_balance': new_balance,
-                'transaction_id': transaction_id,
-                'message': f'Successfully subtracted ${amount} from balance'
-            }
         except Exception as e:
-            print(f'Error subtracting balance: {e}')
-            raise Exception(f'Failed to subtract balance: {str(e)}')
+            if 'Insufficient funds' in str(e):
+                raise Exception('Insufficient funds') from e
+            raise
+        new_balance = Decimal(str(res.data))
+
+        # Keep the cached leaderboard net worth in sync.
+        try:
+            from app.services.profile_service import ProfileService
+            ProfileService.recalculate_net_worth(uuid.UUID(str(user_id)))
+        except Exception as sync_error:
+            logger.warning(f'Failed to sync net worth for {user_id}: {sync_error}')
+
+        return new_balance
+
+    @staticmethod
+    def add_balance(user_id: str, amount, reason: str, category: str = 'balance_adjustment') -> Dict[str, Any]:
+        """Credit a positive amount."""
+        amount = _to_decimal(amount)
+        if amount <= 0:
+            raise ValueError('Amount to add must be positive')
+        new_balance = BalanceService._adjust(user_id, amount, reason, category)
+        return {
+            'success': True,
+            'new_balance': new_balance,
+            'transaction_id': None,
+            'message': f'Successfully added ${amount} to balance',
+        }
+
+    @staticmethod
+    def subtract_balance(user_id: str, amount, reason: str, category: str = 'balance_adjustment') -> Dict[str, Any]:
+        """Debit a positive amount. Raises 'Insufficient funds' rather than overdrawing."""
+        amount = _to_decimal(amount)
+        if amount <= 0:
+            raise ValueError('Amount to subtract must be positive')
+        new_balance = BalanceService._adjust(user_id, -amount, reason, category)
+        return {
+            'success': True,
+            'new_balance': new_balance,
+            'transaction_id': None,
+            'message': f'Successfully subtracted ${amount} from balance',
+        }

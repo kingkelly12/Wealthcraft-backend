@@ -7,6 +7,7 @@ unauthorized external calls.
 """
 
 from flask import Blueprint, request, jsonify, current_app
+import hmac
 from functools import wraps
 
 from jobs.daily_mentor_analysis import run_daily_mentor_analysis
@@ -36,7 +37,7 @@ def require_cron_secret(f):
             return jsonify({'success': False, 'error': 'Missing or invalid Authorization header'}), 401
 
         token = auth_header.split('Bearer ', 1)[1]
-        if token != cron_secret:
+        if not hmac.compare_digest(token.encode(), cron_secret.encode()):
             return jsonify({'success': False, 'error': 'Invalid cron secret'}), 401
 
         return f(*args, **kwargs)

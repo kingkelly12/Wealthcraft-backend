@@ -1,193 +1,121 @@
 """
-JWT Helper utilities for verifying Supabase JWT tokens
+JWT helpers for verifying Supabase access tokens.
+
+Supabase projects created since 2025 sign access tokens with asymmetric
+"JWT signing keys" (ES256/RS256) published at
+    <SUPABASE_URL>/auth/v1/.well-known/jwks.json
+Older projects use the shared HS256 "legacy JWT secret". Both are supported:
+the token header's `alg` decides which path is used.
 """
-import jwt
+import logging
 import os
 from functools import wraps
-from flask import request, jsonify
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
-# Get Supabase JWT secret from environment
-SUPABASE_JWT_SECRET = os.getenv('SUPABASE_JWT_SECRET')
+import jwt
+from flask import jsonify, request
 
-if not SUPABASE_JWT_SECRET:
-    raise ValueError('SUPABASE_JWT_SECRET environment variable is required')
+logger = logging.getLogger(__name__)
+
+SUPABASE_URL = (os.getenv('SUPABASE_URL') or '').rstrip('/')
+SUPABASE_JWT_SECRET = os.getenv('SUPABASE_JWT_SECRET')  # only needed for legacy HS256 projects
+
+if not SUPABASE_URL and not SUPABASE_JWT_SECRET:
+    raise ValueError('SUPABASE_URL (for JWKS) or SUPABASE_JWT_SECRET (legacy HS256) is required')
+
+_ASYMMETRIC_ALGS = ['ES256', 'RS256', 'EdDSA']
+_jwks_client: Optional[jwt.PyJWKClient] = None
+
+
+def _get_jwks_client() -> jwt.PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        # PyJWKClient caches keys and refetches when it sees an unknown `kid`.
+        _jwks_client = jwt.PyJWKClient(f'{SUPABASE_URL}/auth/v1/.well-known/jwks.json', cache_keys=True)
+    return _jwks_client
 
 
 def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Decode and verify a Supabase JWT token
-    
-    Args:
-        token: The JWT token string
-        
-    Returns:
-        Decoded token payload if valid, None otherwise
-    """
+    """Verify a Supabase access token and return its claims, or None if invalid."""
     try:
-        # Verify and decode the token
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=['HS256'],
-            audience='authenticated'  # Supabase uses 'authenticated' as audience
-        )
-        return payload
+        alg = jwt.get_unverified_header(token).get('alg')
+        if alg == 'HS256':
+            if not SUPABASE_JWT_SECRET:
+                logger.warning('HS256 token received but SUPABASE_JWT_SECRET is not set')
+                return None
+            key = SUPABASE_JWT_SECRET
+            algorithms = ['HS256']
+        elif alg in _ASYMMETRIC_ALGS:
+            key = _get_jwks_client().get_signing_key_from_jwt(token).key
+            algorithms = [alg]
+        else:
+            logger.warning('Rejected token with unsupported alg %s', alg)
+            return None
+
+        return jwt.decode(token, key, algorithms=algorithms, audience='authenticated')
     except jwt.ExpiredSignatureError:
-        print('Token has expired')
         return None
-    except jwt.InvalidTokenError as e:
-        print(f'Invalid token: {e}')
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as e:
+        logger.info('Invalid token: %s', e)
         return None
 
 
 def get_user_id_from_token(token: str) -> Optional[str]:
-    """
-    Extract user_id from JWT token
-    
-    Args:
-        token: The JWT token string
-        
-    Returns:
-        User ID if token is valid, None otherwise
-    """
     payload = decode_jwt(token)
-    if payload:
-        return payload.get('sub')  # 'sub' claim contains the user ID
-    return None
+    return payload.get('sub') if payload else None
 
 
 def extract_token_from_header() -> Optional[str]:
-    """
-    Extract JWT token from Authorization header
-    
-    Returns:
-        Token string if present, None otherwise
-    """
-    auth_header = request.headers.get('Authorization')
-    if not auth_header:
-        return None
-    
-    # Expected format: "Bearer <token>"
-    parts = auth_header.split()
+    """Return the bearer token from the Authorization header, if present."""
+    parts = (request.headers.get('Authorization') or '').split()
     if len(parts) != 2 or parts[0].lower() != 'bearer':
         return None
-    
     return parts[1]
 
 
+def _unauthorized(error: str, message: str):
+    return jsonify({'success': False, 'error': error, 'message': message}), 401
+
+
 def require_auth(f):
-    """
-    Decorator to require authentication for a route
-    
-    Usage:
-        @app.route('/api/protected')
-        @require_auth
-        def protected_route(current_user_id):
-            # current_user_id is automatically injected
-            return jsonify({'user_id': current_user_id})
-    """
+    """Inject the authenticated user's id (auth.users.id) as the first argument."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         token = extract_token_from_header()
-        
         if not token:
-            return jsonify({
-                'success': False,
-                'error': 'UNAUTHORIZED',
-                'message': 'Authorization token is required'
-            }), 401
-        
+            return _unauthorized('UNAUTHORIZED', 'Authorization token is required')
+
         user_id = get_user_id_from_token(token)
-        
         if not user_id:
-            return jsonify({
-                'success': False,
-                'error': 'INVALID_TOKEN',
-                'message': 'Invalid or expired token'
-            }), 401
-        
-        # Inject user_id as first argument to the route function
+            return _unauthorized('INVALID_TOKEN', 'Invalid or expired token')
+
         return f(user_id, *args, **kwargs)
-    
     return decorated_function
 
 
 def require_admin(f):
     """
-    Decorator to require admin role for a route
-    
-    Usage:
-        @app.route('/api/admin/users')
-        @require_admin
-        def admin_route(current_user_id):
-            # Only admins can access this
-            return jsonify({'message': 'Admin only'})
+    Require an admin. The role is read from `app_metadata`, which only the
+    service role can write. (`user_metadata` is editable by the user themselves
+    via supabase.auth.updateUser, so it must never be trusted for authorization.)
+
+    Grant admin with SQL:
+        update auth.users
+           set raw_app_meta_data = raw_app_meta_data || '{"role": "admin"}'
+         where email = '...';
     """
     @wraps(f)
     def decorated_function(*args, **kwargs):
         token = extract_token_from_header()
-        
         if not token:
-            return jsonify({
-                'success': False,
-                'error': 'UNAUTHORIZED',
-                'message': 'Authorization token is required'
-            }), 401
-        
-        payload = decode_jwt(token)
-        
-        if not payload:
-            return jsonify({
-                'success': False,
-                'error': 'INVALID_TOKEN',
-                'message': 'Invalid or expired token'
-            }), 401
-        
-        # Check for admin role in user metadata
-        user_metadata = payload.get('user_metadata', {})
-        role = user_metadata.get('role', 'user')
-        
-        if role != 'admin':
-            return jsonify({
-                'success': False,
-                'error': 'FORBIDDEN',
-                'message': 'Admin access required'
-            }), 403
-        
-        user_id = payload.get('sub')
-        return f(user_id, *args, **kwargs)
-    
-    
-    return decorated_function
+            return _unauthorized('UNAUTHORIZED', 'Authorization token is required')
 
-def create_token(user_id: str, email: str) -> str:
-    """
-    Create a JWT token compatible with Supabase
-    
-    Args:
-        user_id: The user's ID
-        email: The user's email
-        
-    Returns:
-        Encoded JWT token string
-    """
-    import time
-    
-    payload = {
-        "aud": "authenticated",
-        "exp": int(time.time()) + 3600 * 24 * 7,  # 7 days expiration
-        "iat": int(time.time()),
-        "iss": "supabase",
-        "sub": str(user_id),
-        "email": email,
-        "role": "authenticated",
-        "app_metadata": {
-            "provider": "email",
-            "providers": ["email"]
-        },
-        "user_metadata": {},
-    }
-    
-    token = jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
-    return token
+        payload = decode_jwt(token)
+        if not payload:
+            return _unauthorized('INVALID_TOKEN', 'Invalid or expired token')
+
+        if (payload.get('app_metadata') or {}).get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'FORBIDDEN', 'message': 'Admin access required'}), 403
+
+        return f(payload.get('sub'), *args, **kwargs)
+    return decorated_function

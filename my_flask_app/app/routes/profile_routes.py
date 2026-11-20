@@ -34,7 +34,6 @@ def resolve_user_ids(user_id):
 profile_bp = Blueprint('profile', __name__)
 
 from app.utils.jwt_helper import require_auth
-from app import supabase
 
 @profile_bp.route('/me/', methods=['GET'])
 @require_auth
@@ -232,6 +231,12 @@ def ping_activity(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @profile_bp.route('/<user_id>/', methods=['GET'])
+@require_auth
+def get_user_profile(current_user_id: str, user_id: str):
+    """Get any player's public profile"""
+    return get_profile(user_id)
+
+
 def get_profile(user_id: str):
     """Get user profile by user ID"""
     try:
@@ -263,44 +268,48 @@ def get_profile(user_id: str):
         return jsonify({'error': str(e)}), 500
 
 @profile_bp.route('/', methods=['POST'])
-def create_profile():
-    """Create a new profile"""
+@require_auth
+def create_profile(current_user_id: str):
+    """
+    Create the caller's profile if the signup trigger didn't.
+    (Normally public.handle_new_user() creates it on sign-up.)
+    """
     try:
-        data = ProfileCreate(**request.json)
-        user_uuid = uuid.UUID(data.user_id)
-        
-        profile = ProfileService.create_profile(user_uuid, data.username)
+        data = ProfileCreate(**{**(request.get_json(silent=True) or {}), 'user_id': current_user_id})
+        profile = ProfileService.create_profile(uuid.UUID(current_user_id), data.username)
         response = ProfileResponse.model_validate(profile.to_dict())
         return jsonify(response.model_dump()), 201
-    
+
     except ValidationError as e:
         return jsonify(e.errors()), 400
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
+    except Exception:
+        logger.exception('create_profile failed')
         return jsonify({'error': 'Internal Server Error'}), 500
 
 @profile_bp.route('/<user_id>/', methods=['PUT'])
-def update_profile(user_id: str):
-    """Update user profile"""
+@require_auth
+def update_profile(current_user_id: str, user_id: str):
+    """Update the caller's own profile (cosmetic fields only)."""
+    if user_id != current_user_id:
+        return jsonify({'success': False, 'error': 'FORBIDDEN', 'message': 'You can only edit your own profile'}), 403
     try:
-        data = ProfileUpdate(**request.json)
-        user_uuid = uuid.UUID(user_id)
-        
-        # Filter out None values
+        data = ProfileUpdate(**(request.get_json(silent=True) or {}))
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
-        
-        profile = ProfileService.update_profile(user_uuid, **update_data)
-        
+
+        profile = ProfileService.update_profile(uuid.UUID(user_id), **update_data)
         if not profile:
             return jsonify({'error': 'Profile not found'}), 404
-        
+
         response = ProfileResponse.model_validate(profile.to_dict())
         return jsonify(response.model_dump()), 200
-    
+
     except ValidationError as e:
         return jsonify(e.errors()), 400
     except ValueError as e:
-        return jsonify({'error': 'Invalid user ID format'}), 400
-    except Exception as e:
+        # Username uniqueness violations surface here
+        return jsonify({'error': str(e)}), 400
+    except Exception:
+        logger.exception('update_profile failed')
         return jsonify({'error': 'Internal Server Error'}), 500
