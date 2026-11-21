@@ -8,13 +8,15 @@ from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.rental_schema import RentalRequest, RentalResponse, MoveOutResponse
 from app import supabase
+from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
 from app.services.profile_service import ProfileService
 from app.utils.background_task import run_in_background
+from app.utils.db import fetch_one
 
 def resolve_user_ids(user_id):
     """
@@ -148,7 +150,7 @@ def rent_property(current_user_id: str):
         data = RentalRequest(**request.json)
         
         # 1. Get property details
-        property_response = supabase.table('rental_properties').select('*').eq('id', str(data.property_id)).single().execute()
+        property_response = fetch_one(supabase.table('rental_properties').select('*').eq('id', str(data.property_id)))
         
         if not property_response.data:
             return jsonify({
@@ -158,6 +160,11 @@ def rent_property(current_user_id: str):
             }), 404
         
         property_data = property_response.data
+
+        blocked = enforce_mission_constraints(current_user_id, 'rent_property')
+        if blocked:
+            return blocked
+
         
         # 2. Check for existing active rental
         current_rental = supabase.table('player_rentals').select('id').eq('player_id', current_user_id).eq('is_active', True).execute()
@@ -180,24 +187,36 @@ def rent_property(current_user_id: str):
                 'message': f"You don't have enough cash for the first month's rent. Need ${monthly_rent}, have ${current_balance}"
             }), 400
         
-        # 4. Deduct first month's rent
-        balance_result = BalanceService.subtract_balance(
-            user_id=current_user_id,
-            amount=monthly_rent,
-            reason=f"First month rent for {property_data['name']}"
-        )
-        
-        # 5. Create rental record
+        # 4. Claim the rental first: the partial unique index (one active rental
+        #    per player) rejects a concurrent second request BEFORE any money moves.
         rental_id = str(uuid.uuid4())
-        supabase.table('player_rentals').insert({
-            'id': rental_id,
-            'player_id': current_user_id,
-            'property_id': str(data.property_id),
-            'monthly_rent': int(monthly_rent),  # Match database INTEGER type, not float
-            'is_active': True,
-            'rented_at': datetime.utcnow().isoformat()
-        }).execute()
-        
+        try:
+            supabase.table('player_rentals').insert({
+                'id': rental_id,
+                'player_id': current_user_id,
+                'property_id': str(data.property_id),
+                'monthly_rent': int(monthly_rent),  # INTEGER column
+                'is_active': True,
+                'rented_at': datetime.now(timezone.utc).isoformat()
+            }).execute()
+        except Exception as e:
+            if '23505' in str(e) or 'duplicate' in str(e).lower():
+                return jsonify({'success': False, 'error': 'ALREADY_RENTING',
+                                'message': 'You are already renting a property. Move out first.'}), 400
+            raise
+
+        # 5. Charge the first month; release the claim if that fails
+        try:
+            balance_result = BalanceService.subtract_balance(
+                user_id=current_user_id,
+                amount=monthly_rent,
+                reason=f"First month rent for {property_data['name']}",
+                category='rent',
+            )
+        except Exception:
+            supabase.table('player_rentals').delete().eq('id', rental_id).execute()
+            raise
+
         # 6. Notify followers of rental in background
         # (User gets immediate toast feedback from API response)
         try:
@@ -249,6 +268,10 @@ def rent_property(current_user_id: str):
 def move_out(current_user_id: str, rental_id: str = None):
     """Move out of a rental property"""
     try:
+        blocked = enforce_mission_constraints(current_user_id, 'rent_property')
+        if blocked:
+            return blocked
+
         # Support getting ID from body if not in URL
         if not rental_id:
             data = request.get_json() or {}
@@ -256,14 +279,14 @@ def move_out(current_user_id: str, rental_id: str = None):
             
         if not rental_id:
              # Try to find active rental for user automatically if no ID provided
-             current = supabase.table('player_rentals').select('id').eq('player_id', current_user_id).eq('is_active', True).maybe_single().execute()
+             current = fetch_one(supabase.table('player_rentals').select('id').eq('player_id', current_user_id).eq('is_active', True))
              if current.data:
                  rental_id = current.data['id']
              else:
                  return jsonify({'success': False, 'error': 'NO_ACTIVE_RENTAL', 'message': 'No active rental found to move out from'}), 400
 
         # Get rental details
-        rental_response = supabase.table('player_rentals').select('*, rental_properties(name)').eq('id', rental_id).eq('player_id', current_user_id).single().execute()
+        rental_response = fetch_one(supabase.table('player_rentals').select('*, rental_properties(name)').eq('id', rental_id).eq('player_id', current_user_id))
         
         if not rental_response.data:
             return jsonify({
@@ -278,7 +301,7 @@ def move_out(current_user_id: str, rental_id: str = None):
         # Update rental to inactive
         supabase.table('player_rentals').update({
             'is_active': False,
-            'ended_at': datetime.utcnow().isoformat()
+            'ended_at': datetime.now(timezone.utc).isoformat()
         }).eq('id', rental_id).eq('player_id', current_user_id).execute()
         
         # Notify followers of move-out in background

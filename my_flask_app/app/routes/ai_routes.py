@@ -37,9 +37,9 @@ def mentor_chat(current_user_id: str):
         The AI-generated mentor response with suggested actions.
     """
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         mentor_id = data.get('mentor_id')
-        user_message = data.get('message', '').strip()
+        user_message = (data.get('message') or '').strip()
 
         if not mentor_id or not user_message:
             return jsonify({
@@ -270,7 +270,8 @@ def mentor_history(current_user_id: str, mentor_id: str):
                 'error': 'MENTOR_NOT_FOUND'
             }), 404
 
-        history = AIService.get_conversation_history(current_user_id, mentor_id)
+        # The chat screen shows a longer window than the AI's context
+        history = AIService.get_conversation_history(current_user_id, mentor_id, limit=50)
 
         # Also get rate limit
         rate_limit = AIService.check_rate_limit(current_user_id, mentor_id)
@@ -306,8 +307,8 @@ def analyze_void_scream(current_user_id: str):
         The AI-generated analysis (mood, message, challenge).
     """
     try:
-        data = request.json
-        content = data.get('content', '').strip()
+        data = request.get_json(silent=True) or {}
+        content = (data.get('content') or '').strip()[:280]
         
         if not content:
             return jsonify({

@@ -77,7 +77,7 @@ def get_cached_response(key: str, supabase_client=None) -> Optional[dict]:
                 if now < expires_at:
                     payload = row['response']
                     # Warm memory cache (remaining TTL)
-                    remaining = (expires_at - now).seconds
+                    remaining = int((expires_at - now).total_seconds())
                     _memory_set(key, payload, ttl_seconds=remaining)
                     return payload
         except Exception as e:

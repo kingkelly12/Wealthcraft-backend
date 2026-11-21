@@ -17,7 +17,6 @@ from jobs.monthly_apreciation import run_monthly_appreciation
 from jobs.monthly_loan_deductions import process_monthly_deductions
 from jobs.trigger_random_events import trigger_random_events
 from jobs.inactive_users_monitor import run_inactive_users_monitor
-from app.utils.background_task import run_in_background
 
 cron_bp = Blueprint('cron', __name__)
 
@@ -109,8 +108,10 @@ def cron_inactive_users_monitor():
 def cron_market_monitor():
     """Market fluctuation simulation — Schedule: 0 */4 * * * (every 4 hours)"""
     try:
-        run_in_background(simulate_market_fluctuation)
-        return jsonify({'success': True, 'message': 'Market monitor queued for background execution'}), 200
+        # Synchronous on purpose: on Cloud Run a thread started after the
+        # response is CPU-throttled and may never finish. pg_net waits up to 5 min.
+        simulate_market_fluctuation()
+        return jsonify({'success': True, 'message': 'Market monitor completed'}), 200
     except Exception as e:
         import traceback
         import logging

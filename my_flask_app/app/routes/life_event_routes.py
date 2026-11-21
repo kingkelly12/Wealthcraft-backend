@@ -9,6 +9,7 @@ from app import supabase
 import uuid
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
+from app.utils.db import fetch_one
 
 life_event_bp = Blueprint('life_event', __name__)
 
@@ -186,7 +187,7 @@ def get_life_event_details(current_user_id: str, event_id: str):
     """
     try:
         # 1. Get life event details
-        event_response = supabase.table('life_events').select('*').eq('id', event_id).single().execute()
+        event_response = fetch_one(supabase.table('life_events').select('*').eq('id', event_id))
         
         if not event_response.data:
             return jsonify({

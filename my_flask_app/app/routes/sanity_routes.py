@@ -5,7 +5,8 @@ from app.services.balance_service import BalanceService
 from app.models.profile import Profile
 from app import db
 from decimal import Decimal
-import os
+from datetime import datetime, timedelta, timezone
+from app.utils.db import fetch_one
 
 sanity_bp = Blueprint('sanity', __name__)
 
@@ -19,7 +20,7 @@ RECOVERY_ACTIONS = {
 @require_auth
 def recover_sanity(current_user_id: str):
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         action_key = data.get('action')
         
         if action_key not in RECOVERY_ACTIONS:
@@ -29,27 +30,36 @@ def recover_sanity(current_user_id: str):
         cost = Decimal(action['cost'])
         sanity_gain = action['sanity']
         
-        # 1. Check Balance
+        profile_res = fetch_one(supabase.table('profiles').select('sanity').eq('user_id', current_user_id))
+        if not profile_res.data:
+            return jsonify({'success': False, 'message': 'Profile not found'}), 404
+        if (profile_res.data.get('sanity') or 0) >= 100:
+            return jsonify({'success': False, 'message': 'Your sanity is already full.'}), 400
+
         if cost > 0:
-            current_balance = BalanceService.get_current_balance(current_user_id)
-            if current_balance < cost:
-                 return jsonify({'success': False, 'message': 'Insufficient funds'}), 400
-                 
-            # Deduct cost
+            # Atomic debit; raises "Insufficient funds" instead of overdrawing
             BalanceService.subtract_balance(
                 user_id=current_user_id,
                 amount=cost,
-                reason=f"Sanity Recovery: {action_key.replace('_', ' ').title()}"
+                reason=f"Sanity Recovery: {action_key.replace('_', ' ').title()}",
+                category='sanity_recovery',
             )
-            
-        # 2. Update Sanity
-        profile_res = supabase.table('profiles').select('sanity').eq('user_id', current_user_id).single().execute()
-        current_sanity = profile_res.data.get('sanity', 100)
-        
-        new_sanity = min(100, current_sanity + sanity_gain)
-        
-        supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', current_user_id).execute()
-        
+        else:
+            # Free action: once per 24h (it used to be unlimited, making sanity meaningless)
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            claim = supabase.table('profiles').update({'last_free_recovery_at': datetime.now(timezone.utc).isoformat()}) \
+                .eq('user_id', current_user_id) \
+                .or_(f'last_free_recovery_at.is.null,last_free_recovery_at.lt.{cutoff}') \
+                .execute()
+            if not claim.data:
+                return jsonify({'success': False, 'message': 'You already touched grass today. Come back tomorrow.'}), 429
+
+        # 2. Update sanity atomically (clamped 0-100 in SQL)
+        current_sanity = profile_res.data.get('sanity') or 0
+        new_sanity = supabase.rpc('adjust_sanity', {'p_user_id': current_user_id, 'p_delta': sanity_gain}).execute().data
+        new_sanity = int(new_sanity) if new_sanity is not None else min(100, current_sanity + sanity_gain)
+        sanity_gain = new_sanity - current_sanity
+
         return jsonify({
             'success': True,
             'message': action['message'],

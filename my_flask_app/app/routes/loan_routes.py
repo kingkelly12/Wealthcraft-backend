@@ -9,10 +9,12 @@ from app.services.balance_service import BalanceService
 from app.services.mentor_service import MentorService
 from app.schemas.loan_schema import LoanApplicationRequest
 from app import supabase
+from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.services.push_notification_service import ExpoPushService
+from app.utils.db import fetch_one
 
 loan_bp = Blueprint('loan', __name__)
 
@@ -76,6 +78,11 @@ def apply_for_loan(current_user_id: str):
         monthly_payment = Decimal(str(loan.get('monthly_payment') or (loan_amount * Decimal('0.05'))))
         total_interest = Decimal(str(loan.get('total_interest') or 0))
 
+        blocked = enforce_mission_constraints(current_user_id, 'take_loan', {'amount': float(loan_amount), 'loan_type': loan.get('type')})
+        if blocked:
+            return blocked
+
+
         # Underwriting: credit score requirement and a cap on concurrent loans
         profile_res = supabase.table('profiles').select('credit_score') \
             .eq('user_id', current_user_id).limit(1).execute()
@@ -110,8 +117,8 @@ def apply_for_loan(current_user_id: str):
             'credit_required': loan['credit_required'],
             'status': 'active',
             'collateral': loan['collateral'],
-            'funded_at': datetime.utcnow().isoformat(),
-            'due_date': (datetime.utcnow() + timedelta(days=int(loan.get('term', 12)) * 30)).isoformat()
+            'funded_at': datetime.now(timezone.utc).isoformat(),
+            'due_date': (datetime.now(timezone.utc) + timedelta(days=int(loan.get('term', 12)) * 30)).isoformat()
         }).execute()
 
         # 3. Debt ledger entry. remaining_balance includes the interest: the old
@@ -302,7 +309,7 @@ def repay_loan(current_user_id: str, liability_id: str = None):
         if loan.get('liability_type') == 'p2p_loan' and loan.get('p2p_loan_id'):
             try:
                 p2p_loan_id = loan['p2p_loan_id']
-                p2p_res = supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id).single().execute()
+                p2p_res = fetch_one(supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id))
                 
                 if p2p_res.data:
                     lender_id = p2p_res.data['lender_id']
@@ -463,16 +470,21 @@ def post_p2p_offer(current_user_id: str):
         
         # 3. Create P2P loan record
         loan_id = str(uuid.uuid4())
-        supabase.table('p2p_loans').insert({
-            'id': loan_id,
-            'lender_id': current_user_id,
-            'amount': float(amount),
-            'interest_rate': float(interest_rate),
-            'term_months': term_months,
-            'purpose': purpose,
-            'status': 'pending',
-            'created_at': datetime.utcnow().isoformat()
-        }).execute()
+        try:
+            supabase.table('p2p_loans').insert({
+                'id': loan_id,
+                'lender_id': current_user_id,
+                'amount': float(amount),
+                'interest_rate': float(interest_rate),
+                'term_months': term_months,
+                'purpose': purpose,
+                'status': 'pending',
+                'created_at': datetime.now(timezone.utc).isoformat()
+            }).execute()
+        except Exception:
+            # escrow was already taken: give it back
+            BalanceService.add_balance(current_user_id, amount, 'Refund: P2P offer failed to post', category='p2p_escrow')
+            raise
         
         # Notify followers about the loan offer
         ExpoPushService.notify_followers_of_financial_move(
@@ -518,6 +530,11 @@ def accept_p2p_loan(current_user_id: str):
         loan = loan_response.data[0]
         if loan['lender_id'] == current_user_id:
             return jsonify({'success': False, 'message': 'You cannot accept your own loan offer'}), 400
+
+        blocked = enforce_mission_constraints(current_user_id, 'take_loan', {'amount': float(loan['amount']), 'loan_type': 'p2p'})
+        if blocked:
+            return blocked
+
             
         amount = Decimal(str(loan['amount']))
         
@@ -564,7 +581,7 @@ def accept_p2p_loan(current_user_id: str):
         claim = supabase.table('p2p_loans').update({
             'borrower_id': current_user_id,
             'status': 'active',
-            'funded_at': datetime.utcnow().isoformat(),
+            'funded_at': datetime.now(timezone.utc).isoformat(),
             'monthly_payment': float(round(monthly_payment, 2)),
         }).eq('id', loan_id).eq('status', 'pending').execute()
         if not claim.data:

@@ -14,8 +14,9 @@ balance_bp = Blueprint('balance', __name__)
 @balance_bp.route('/', methods=['GET'])
 @require_auth
 def get_balance_root(current_user_id: str):
-    """Alias for getting current balance"""
-    return get_current_balance(current_user_id)
+    """Alias for /current/. (Calling the decorated view re-ran @require_auth,
+    which injected the user id a second time: this endpoint always 500'd.)"""
+    return _current_balance_response(current_user_id)
 
 
 @balance_bp.route('/history/', methods=['GET'])
@@ -140,6 +141,10 @@ def get_current_balance(current_user_id: str):
     """
     Get the current balance for the authenticated user
     """
+    return _current_balance_response(current_user_id)
+
+
+def _current_balance_response(current_user_id: str):
     try:
         balance = BalanceService.get_current_balance(current_user_id)
         

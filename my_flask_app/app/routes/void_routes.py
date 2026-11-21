@@ -34,6 +34,7 @@ void_bp = Blueprint('void', __name__)
 
 from app.services.ai_service import AIService
 from app.services.mentor_service import MentorService
+from app.utils.db import fetch_one
 
 @void_bp.route('/scream/', methods=['POST'])
 @require_auth
@@ -320,7 +321,7 @@ def _send_consolation_notification(poster_id, reactor_id, post_id):
 def manage_scream(current_user_id: str, post_id: str):
     try:
         # Check ownership
-        post_res = supabase.table('void_posts').select('*').eq('id', post_id).single().execute()
+        post_res = fetch_one(supabase.table('void_posts').select('*').eq('id', post_id))
         if not post_res.data:
              return jsonify({'success': False, 'message': 'Post not found'}), 404
              

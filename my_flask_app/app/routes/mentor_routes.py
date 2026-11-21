@@ -10,14 +10,15 @@ from app.models.player_mentor_interaction import PlayerMentorInteraction
 from app.models.profile import Profile
 from app.services.mentor_service import MentorService
 from app import db, supabase
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 mentor_bp = Blueprint('mentor', __name__)
 
 
 @mentor_bp.route('/api/social/mentors/', methods=['GET'])
-def get_all_mentors():
+@require_auth
+def get_all_mentors(current_user_id: str):
     """
     Get all available mentor NPCs
     
@@ -25,7 +26,7 @@ def get_all_mentors():
         List of all 3 mentors (Coach Chen, Tasha, Parent)
     """
     try:
-        mentors = Mentor.query.all()
+        mentors = Mentor.query.order_by(Mentor.created_at, Mentor.name).all()
         
         mentor_data = []
         for mentor in mentors:
@@ -156,7 +157,7 @@ def mark_interaction_read(current_user_id: str, interaction_id: str):
         
         # Mark as read if not already
         if not interaction.read_at:
-            interaction.read_at = datetime.utcnow()
+            interaction.read_at = datetime.now(timezone.utc)
             db.session.commit()
         
         return jsonify({
@@ -204,58 +205,46 @@ def mark_advice_followed(current_user_id: str, interaction_id: str):
         player_uuid = uuid.UUID(current_user_id)
         interaction_uuid = uuid.UUID(interaction_id)
         
-        # Get interaction and verify ownership
         interaction = PlayerMentorInteraction.query.filter_by(
             id=interaction_uuid,
             player_id=player_uuid
         ).first()
-        
+
         if not interaction:
             return jsonify({
                 'success': False,
                 'error': 'NOT_FOUND',
                 'message': 'Interaction not found or does not belong to you'
             }), 404
-        
-        # Check if already followed
-        if interaction.action_taken:
+
+        if interaction.is_player_message:
+            return jsonify({
+                'success': False,
+                'error': 'INVALID_INTERACTION',
+                'message': 'Only mentor messages can be followed'
+            }), 400
+
+        # Points by template priority (AI chat replies have no template)
+        points_to_award = 15
+        if interaction.message_id:
+            message_template = MentorMessage.query.get(interaction.message_id)
+            if message_template:
+                points_to_award = {5: 30, 4: 25, 3: 15}.get(message_template.priority or 3, 10)
+
+        # Atomic once-only claim (concurrent taps can't double-award)
+        updated_interaction = MentorService.mark_advice_followed(
+            interaction_id=interaction_uuid,
+            player_id=player_uuid,
+            points=points_to_award
+        )
+
+        if not updated_interaction:
             return jsonify({
                 'success': False,
                 'error': 'ALREADY_FOLLOWED',
                 'message': 'You already followed this advice'
             }), 400
-        
-        # Get message template to determine points
-        message_template = None
-        if interaction.message_id:
-            message_template = MentorMessage.query.get(interaction.message_id)
-        
-        # Determine points based on priority
-        points_to_award = 15  # Default
-        if message_template:
-            priority = message_template.priority or 3
-            if priority == 5:
-                points_to_award = 30  # High priority
-            elif priority == 4:
-                points_to_award = 25
-            elif priority == 3:
-                points_to_award = 15
-            else:
-                points_to_award = 10  # Low priority
-        
-        # Use service to mark as followed and award points
-        updated_interaction = MentorService.mark_advice_followed(
-            interaction_id=interaction_uuid,
-            points=points_to_award
-        )
-        
-        if not updated_interaction:
-            return jsonify({
-                'success': False,
-                'error': 'UPDATE_FAILED',
-                'message': 'Failed to update interaction'
-            }), 500
-        
+
         # Get mentor details
         mentor = Mentor.query.get(interaction.mentor_id)
         

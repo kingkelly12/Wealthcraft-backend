@@ -7,7 +7,7 @@ Run this daily via cron or task scheduler.
 from app import db, supabase
 from app.models.profile import Profile
 from app.services.push_notification_service import ExpoPushService
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 # Setup logging
@@ -22,7 +22,7 @@ def run_inactive_users_monitor():
     logger.info("Starting inactive users monitor...")
 
     # Calculate 7 days ago
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
     
     # We query profiles where:
     # 1. last_active_at < 7 days ago
@@ -40,7 +40,7 @@ def run_inactive_users_monitor():
 
     messages_sent = 0
     errors = 0
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     for profile in inactive_profiles:
         try:

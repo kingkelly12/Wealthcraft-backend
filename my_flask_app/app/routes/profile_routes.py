@@ -214,13 +214,13 @@ def ping_activity(current_user_id: str):
     try:
         from app import db
         from app.models.profile import Profile
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         user_uuid = uuid.UUID(current_user_id)
         
         # We execute a direct update query to avoid loading the whole model and locking
         Profile.query.filter_by(user_id=user_uuid).update({
-            'last_active_at': datetime.utcnow()
+            'last_active_at': datetime.now(timezone.utc)
         })
         db.session.commit()
         

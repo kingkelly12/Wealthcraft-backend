@@ -9,7 +9,7 @@ This replaces the previous Native Notify relay, which silently dropped notificat
 import requests
 from typing import List, Dict, Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +40,11 @@ class ExpoPushService:
             result = supabase_client.table('profiles') \
                 .select('expo_push_token') \
                 .eq('user_id', user_id) \
-                .single() \
+                .limit(1) \
                 .execute()
 
-            if result.data and result.data.get('expo_push_token'):
-                return result.data['expo_push_token']
+            if result.data and result.data[0].get('expo_push_token'):
+                return result.data[0]['expo_push_token']
             else:
                 logger.warning(f"No Expo push token found for user {user_id}")
                 return None
@@ -76,7 +76,7 @@ class ExpoPushService:
             # Prepare data payload
             notification_data = dict(data) if data else {}
             notification_data['type'] = notification_type
-            notification_data['timestamp'] = datetime.utcnow().isoformat()
+            notification_data['timestamp'] = datetime.now(timezone.utc).isoformat()
 
             # Expo Push API payload
             payload = {
@@ -194,8 +194,8 @@ class ExpoPushService:
         def background_task():
             try:
                 # Get user's username
-                profile_res = supabase_client.table('profiles').select('username').eq('user_id', user_id).single().execute()
-                username = profile_res.data.get('username', 'Your student') if profile_res.data else 'Your student'
+                profile_res = supabase_client.table('profiles').select('username').eq('user_id', user_id).limit(1).execute()
+                username = profile_res.data[0].get('username', 'Your student') if profile_res.data else 'Your student'
 
                 # Get all followers 
                 followers_res = supabase_client.table('user_follows').select('follower_id').eq('following_id', user_id).execute()
@@ -258,7 +258,7 @@ class ExpoPushService:
                     follower_id = f['follower_id']
                     try:
                         # PUSH notification first (primary delivery method for followers)
-                        push_success = cls.send_notification_to_user(
+                        cls.send_notification_to_user(
                             supabase_client=supabase_client,
                             user_id=follower_id,
                             title=title,
@@ -271,18 +271,17 @@ class ExpoPushService:
                             }
                         )
                         
-                        # Only create in-app notification if push fails or as backup
-                        # This prevents duplicate notifications
-                        if not push_success:
-                            logger.warning(f"Push failed for follower {follower_id}, creating in-app backup")
-                            supabase_client.table('notifications').insert({
-                                'user_id': follower_id,
-                                'type': 'student_move',
-                                'title': title,
-                                'message': body,
-                                'related_user_id': user_id,
-                                'read': False
-                            }).execute()
+                        # Always record it in the in-app feed: the push is a
+                        # transient alert, the notifications screen is the history.
+                        # (Previously the feed only got it when the push FAILED.)
+                        supabase_client.table('notifications').insert({
+                            'user_id': follower_id,
+                            'type': 'student_move',
+                            'title': title,
+                            'message': body,
+                            'related_user_id': user_id,
+                            'read': False
+                        }).execute()
                     except Exception as e:
                         logger.error(f"Failed to notify mentor {follower_id}: {str(e)}")
             except Exception as e:

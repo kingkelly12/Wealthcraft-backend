@@ -1,10 +1,11 @@
 from app import db, supabase
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.services.balance_service import BalanceService
 from app.services.push_notification_service import ExpoPushService
 from decimal import Decimal
 import logging
+from app.utils.db import fetch_one
 
 # Setup logging
 logging.basicConfig(
@@ -64,7 +65,7 @@ def process_monthly_deductions():
             pay_by_user.setdefault(job['user_id'], []).append(job)
         for uid, profile in profiles_map.items():
             user_jobs = pay_by_user.get(uid, [])
-            salary = sum(Decimal(str(j.get('salary') or 0)) for j in user_jobs) / 12
+            salary = sum((Decimal(str(j.get('salary') or 0)) for j in user_jobs), Decimal('0')) / 12
             boosts = Decimal(str(profile.get('base_monthly_income') or 0))
             pay = (salary + boosts).quantize(Decimal('0.01'))
             if pay <= 0:
@@ -121,7 +122,7 @@ def process_monthly_deductions():
                 if liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id'):
                     try:
                         p2p_loan_id = liability['p2p_loan_id']
-                        p2p_res = supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id).single().execute()
+                        p2p_res = fetch_one(supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id))
                         if p2p_res.data:
                             lender_id = p2p_res.data['lender_id']
                             # Credit lender
@@ -472,7 +473,7 @@ def _advance_missions():
 
         total = len(criteria)
         success = met == total
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         closed = supabase.table('player_mission_progress').update({
             'is_active': False,
             'is_completed': success,

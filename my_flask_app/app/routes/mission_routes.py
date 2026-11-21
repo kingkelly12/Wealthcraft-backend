@@ -4,8 +4,10 @@ from app import supabase
 from decimal import Decimal
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
+from app.utils.mission_constraints import constraint_violation, story_event_due
+from app.utils.db import fetch_one
 
 mission_bp = Blueprint('mission', __name__)
 
@@ -72,9 +74,9 @@ def get_available_missions(current_user_id: str):
     """
     try:
         # Get user profile to check prerequisites
-        profile_response = supabase.table('profiles').select(
+        profile_response = fetch_one(supabase.table('profiles').select(
             'net_worth, monthly_income, credit_score'
-        ).eq('user_id', current_user_id).single().execute()
+        ).eq('user_id', current_user_id))
         
         if not profile_response.data:
             return jsonify({
@@ -218,9 +220,9 @@ def start_mission(current_user_id: str):
             }), 400
         
         # Check if mission exists
-        mission_response = supabase.table('integrated_missions').select(
+        mission_response = fetch_one(supabase.table('integrated_missions').select(
             '*'
-        ).eq('id', mission_id).single().execute()
+        ).eq('id', mission_id))
         
         if not mission_response.data:
             return jsonify({
@@ -255,9 +257,9 @@ def start_mission(current_user_id: str):
         except Exception as db_error:
             # If the function doesn't exist or fails, create manually
             # Get user profile for snapshot
-            profile_response = supabase.table('profiles').select(
+            profile_response = fetch_one(supabase.table('profiles').select(
                 'net_worth, monthly_income, credit_score'
-            ).eq('user_id', current_user_id).single().execute()
+            ).eq('user_id', current_user_id))
             
             profile = profile_response.data
             
@@ -285,7 +287,7 @@ def start_mission(current_user_id: str):
                     'net_worth': float(profile.get('net_worth', 0)),
                     'monthly_income': float(profile.get('monthly_income', 0)),
                     'credit_score': profile.get('credit_score', 650),
-                    'started_at': datetime.utcnow().isoformat()
+                    'started_at': datetime.now(timezone.utc).isoformat()
                 }
             }).execute()
             
@@ -315,9 +317,9 @@ def start_mission(current_user_id: str):
                     }).execute()
         
         # Get the created progress
-        progress_response = supabase.table('player_mission_progress').select(
+        progress_response = fetch_one(supabase.table('player_mission_progress').select(
             '*, integrated_missions!mission_id(*)'
-        ).eq('id', player_mission_id).single().execute()
+        ).eq('id', player_mission_id))
         
         # Create notification
         supabase.table('notifications').insert({
@@ -441,7 +443,7 @@ def make_decision(current_user_id: str):
     4. Updates game state
     """
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         decision_point_id = data.get('decision_point_id')
         option_id = data.get('option_id')
         
@@ -469,7 +471,7 @@ def make_decision(current_user_id: str):
         # Validate decision point belongs to this mission
         decision_response = supabase.table('mission_decision_points').select(
             '*'
-        ).eq('id', decision_point_id).eq('mission_id', progress['mission_id']).single().execute()
+        ).eq('id', decision_point_id).eq('mission_id', progress['mission_id']).limit(1).execute()
         
         if not decision_response.data:
             return jsonify({
@@ -477,11 +479,17 @@ def make_decision(current_user_id: str):
                 'error': 'INVALID_DECISION',
                 'message': 'Decision point not found or does not belong to this mission'
             }), 404
+        if decision_response.data[0]['month'] > progress['current_month']:
+            return jsonify({
+                'success': False,
+                'error': 'DECISION_NOT_DUE',
+                'message': f"This decision unlocks in month {decision_response.data[0]['month']}"
+            }), 400
         
         # Get the option
         option_response = supabase.table('mission_decision_options').select(
             '*'
-        ).eq('id', option_id).eq('decision_point_id', decision_point_id).single().execute()
+        ).eq('id', option_id).eq('decision_point_id', decision_point_id).limit(1).execute()
         
         if not option_response.data:
             return jsonify({
@@ -490,9 +498,17 @@ def make_decision(current_user_id: str):
                 'message': 'Option not found or does not belong to this decision point'
             }), 404
         
-        option = option_response.data
+        option = option_response.data[0]
         
-        # Record the decision
+        # Record the decision (once per decision point)
+        already = supabase.table('player_mission_decisions').select('id') \
+            .eq('player_mission_id', progress['id']).eq('decision_point_id', decision_point_id).limit(1).execute()
+        if already.data:
+            return jsonify({
+                'success': False,
+                'error': 'ALREADY_DECIDED',
+                'message': 'You already made this decision'
+            }), 400
         supabase.table('player_mission_decisions').insert({
             'player_mission_id': progress['id'],
             'decision_point_id': decision_point_id,
@@ -575,8 +591,8 @@ def abandon_mission(current_user_id: str):
         # Update mission progress
         supabase.table('player_mission_progress').update({
             'is_active': False,
-            'abandoned_at': datetime.utcnow().isoformat(),
-            'updated_at': datetime.utcnow().isoformat()
+            'abandoned_at': datetime.now(timezone.utc).isoformat(),
+            'updated_at': datetime.now(timezone.utc).isoformat()
         }).eq('id', progress['id']).execute()
         
         # Create notification
@@ -648,7 +664,7 @@ def check_constraints(current_user_id: str):
     try:
         data = request.json
         action = data.get('action')  # e.g., 'buy_asset', 'take_loan', 'change_job'
-        action_data = data.get('data', {})
+        action_data = data.get('data') or {}
         
         if not action:
             return jsonify({
@@ -672,50 +688,9 @@ def check_constraints(current_user_id: str):
         
         constraints = progress_response.data[0]['constraints_applied']
         
-        # Check constraints based on action
-        allowed = True
-        reason = None
-        
-        if action == 'buy_asset':
-            if not constraints.get('can_buy_assets', True):
-                allowed = False
-                reason = '🎯 Mission constraint: You cannot buy assets during this mission'
-            elif constraints.get('allowed_asset_types'):
-                asset_type = action_data.get('asset_type')
-                if asset_type and asset_type not in constraints['allowed_asset_types']:
-                    allowed = False
-                    reason = f'🎯 Mission constraint: You can only buy {", ".join(constraints["allowed_asset_types"])} during this mission'
-        
-        elif action == 'take_loan':
-            if not constraints.get('can_take_loans', True):
-                allowed = False
-                reason = '🎯 Mission constraint: You cannot take loans during this mission'
-            elif constraints.get('max_loan_amount'):
-                amount = action_data.get('amount', 0)
-                if amount > constraints['max_loan_amount']:
-                    allowed = False
-                    reason = f'🎯 Mission constraint: Maximum loan amount is ${constraints["max_loan_amount"]:,.2f}'
-        
-        elif action == 'change_job':
-            if not constraints.get('can_change_job', True):
-                allowed = False
-                reason = '🎯 Mission constraint: You cannot change jobs during this mission'
-        
-        elif action == 'rent_property':
-            if not constraints.get('can_rent_property', True):
-                allowed = False
-                reason = '🎯 Mission constraint: You cannot change rental properties during this mission'
-        
-        elif action == 'sell_asset':
-            if not constraints.get('can_sell_assets', True):
-                allowed = False
-                reason = '🎯 Mission constraint: You cannot sell assets during this mission'
-        
-        elif action == 'buy_lifestyle_item':
-            if not constraints.get('can_buy_lifestyle_items', True):
-                allowed = False
-                reason = '🎯 Mission constraint: You cannot buy lifestyle items during this mission'
-        
+        reason = constraint_violation(constraints or {}, action, action_data)
+        allowed = reason is None
+
         return jsonify({
             'success': True,
             'allowed': allowed,
@@ -745,9 +720,9 @@ def get_mission_story_events(current_user_id: str, mission_id: str):
     """
     try:
         # Validate mission exists
-        mission_response = supabase.table('integrated_missions').select(
+        mission_response = fetch_one(supabase.table('integrated_missions').select(
             'id, name'
-        ).eq('id', mission_id).single().execute()
+        ).eq('id', mission_id))
         
         if not mission_response.data:
             return jsonify({
@@ -828,28 +803,8 @@ def get_pending_story_events(current_user_id: str):
             if event['id'] in viewed_event_ids:
                 continue
             
-            # Check trigger conditions
-            should_show = False
-            
-            if event['trigger_type'] == 'mission_start':
-                # Show on month 1 only
-                should_show = current_month == 1
-            
-            elif event['trigger_type'] == 'month':
-                # Show when current month matches trigger_value
-                trigger_month = event.get('trigger_value', 0)
-                should_show = current_month >= trigger_month
-            
-            elif event['trigger_type'] == 'custom':
-                # For custom triggers, show if probability check passes
-                probability = event.get('probability', 1.0)
-                import random
-                should_show = random.random() <= probability
-            
-            else:
-                # For other trigger types (threshold, decision), show them
-                should_show = True
-            
+            should_show = story_event_due(event, player_mission_id, current_month)
+
             if should_show:
                 # Add mission context
                 event['mission_month'] = current_month
@@ -874,7 +829,7 @@ def get_pending_story_events(current_user_id: str):
 @require_auth
 def quit_mission(current_user_id: str):
     """Alias for abandon mission"""
-    return abandon_mission(current_user_id)
+    return abandon_mission.__wrapped__(current_user_id)  # skip re-running @require_auth
 
 @mission_bp.route('/story-events/<event_id>/acknowledge/', methods=['POST'])
 @require_auth
@@ -916,6 +871,15 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
             }), 404
         
         event = event_response.data[0]
+
+        # Must actually be due: previously any event of the mission (e.g. the
+        # month-6 one) could be acknowledged in month 1 to collect its cash.
+        if not story_event_due(event, player_mission_id, progress['current_month']):
+            return jsonify({
+                'success': False,
+                'error': 'EVENT_NOT_DUE',
+                'message': 'This story event has not happened yet'
+            }), 400
         
         # Check if already viewed
         existing_response = supabase.table('player_story_progress').select(
@@ -934,8 +898,8 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
             # Triggered but not yet viewed: mark viewed
             supabase.table('player_story_progress').update({
                 'has_been_viewed': True,
-                'viewed_at': datetime.utcnow().isoformat(),
-                'updated_at': datetime.utcnow().isoformat()
+                'viewed_at': datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.now(timezone.utc).isoformat()
             }).eq('id', existing_response.data[0]['id']).execute()
         else:
             # Create new progress record
@@ -944,8 +908,8 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
                 'story_event_id': event_id,
                 'has_triggered': True,
                 'has_been_viewed': True,
-                'triggered_at': datetime.utcnow().isoformat(),
-                'viewed_at': datetime.utcnow().isoformat(),
+                'triggered_at': datetime.now(timezone.utc).isoformat(),
+                'viewed_at': datetime.now(timezone.utc).isoformat(),
                 'mission_month': progress['current_month']
             }).execute()
         
@@ -978,13 +942,16 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
         stress = int(event.get('stress_change') or 0)
         sanity_delta = happiness + int(motivation / 2) - stress
         if sanity_delta != 0:
-            profile_row = supabase.table('profiles').select('sanity').eq(
+            before = supabase.table('profiles').select('sanity').eq(
                 'user_id', current_user_id
-            ).single().execute().data or {}
-            current_sanity = profile_row.get('sanity')
+            ).limit(1).execute().data
+            current_sanity = (before[0].get('sanity') if before else None)
             current_sanity = 100 if current_sanity is None else current_sanity
-            new_sanity = max(0, min(100, current_sanity + sanity_delta))
-            supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', current_user_id).execute()
+            # atomic clamp in SQL (no lost update if another sanity change races)
+            new_sanity = supabase.rpc('adjust_sanity', {
+                'p_user_id': current_user_id, 'p_delta': sanity_delta
+            }).execute().data
+            new_sanity = current_sanity if new_sanity is None else int(new_sanity)
             impacts_applied['sanity_change'] = new_sanity - current_sanity
             impacts_applied['new_sanity'] = new_sanity
 

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.schemas.follow_schema import FollowUserRequest, FollowUserResponse
 from app import supabase
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
 
 follow_bp = Blueprint('follow', __name__)
@@ -64,7 +64,7 @@ def follow_user(current_user_id: str):
         supabase.table('user_follows').insert({
             'follower_id': current_user_id,  # From JWT - cannot be spoofed!
             'following_id': str(data.target_user_id),
-            'created_at': datetime.utcnow().isoformat()
+            'created_at': datetime.now(timezone.utc).isoformat()
         }).execute()
         
         # Create notification for followed user — framed as MENTORSHIP

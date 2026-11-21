@@ -5,6 +5,7 @@ from app.services.balance_service import BalanceService
 from app.services.mentor_service import MentorService
 from app.schemas.asset_schema import AssetPurchase
 from app import supabase
+from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
 import uuid
 from datetime import datetime
@@ -48,7 +49,7 @@ VOLATILE_TYPES = ('stocks', 'crypto', 'forex')
 def _asset_type_for(category: str) -> str:
     return {
         'real_estate': 'property',
-        'business': 'stocks',
+        'business': 'business',   # not market-priced: appreciates monthly like property
         'stocks': 'stocks',
         'investments': 'stocks',
         'crypto': 'crypto',
@@ -82,6 +83,10 @@ def purchase_asset(current_user_id: str):
             return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'Quantity too small'}), 400
 
         asset_type = _asset_type_for(asset.get('category'))
+
+        blocked = enforce_mission_constraints(current_user_id, 'buy_asset', {'category': asset.get('category'), 'asset_type': asset_type})
+        if blocked:
+            return blocked
 
         # 1. Debit first (atomic, cannot overdraw)
         balance_result = BalanceService.subtract_balance(
@@ -312,6 +317,10 @@ def sell_asset(current_user_id: str, asset_id: str = None):
         asset_id = asset_id or body.get('asset_id')
         if not asset_id:
             return jsonify({'success': False, 'error': 'MISSING_ID', 'message': 'asset_id is required'}), 400
+
+        blocked = enforce_mission_constraints(current_user_id, 'sell_asset')
+        if blocked:
+            return blocked
 
         user_ids = resolve_user_ids(current_user_id)
         asset_response = supabase.table('user_assets').select('*').eq('id', asset_id).in_('user_id', user_ids).execute()

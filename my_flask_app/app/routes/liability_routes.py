@@ -6,10 +6,11 @@ from app.services.mentor_service import MentorService
 from app.utils.jwt_helper import require_auth
 from app.schemas.liability_schema import LiabilityPurchaseRequest, LiabilityPurchaseResponse, LiabilitySellResponse
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
+from app.utils.mission_constraints import enforce_mission_constraints
 from app.services.profile_service import ProfileService
 import logging
 
@@ -131,6 +132,11 @@ def purchase_liability(current_user_id: str):
             }), 404
         
         item = item_response.data[0]
+
+        blocked = enforce_mission_constraints(current_user_id, 'buy_lifestyle_item')
+        if blocked:
+            return blocked
+
         purchase_price = Decimal(str(item['base_price']))
         monthly_cost = Decimal(str(item['monthly_cost'] or 0))
         
@@ -161,9 +167,12 @@ def purchase_liability(current_user_id: str):
             'monthly_cost': float(monthly_cost),
             'current_value': float(purchase_price),  # Initial value equals purchase price
             'is_active': True,
-            'purchase_date': datetime.utcnow().isoformat()
+            'purchase_date': datetime.now(timezone.utc).isoformat()
         }).execute()
         
+        # The debit above recalculated net worth before the item existed
+        ProfileService.recalculate_net_worth(uuid.UUID(current_user_id))
+
         # Notify followers of liability purchase
         # (User gets immediate toast feedback from API response)
         ExpoPushService.notify_followers_of_financial_move(
@@ -323,7 +332,7 @@ def get_luxury_items():
 def purchase_luxury_item(current_user_id: str):
     """Alias used by the mobile app. Same logic as /purchase/ (which also sets
     current_value, so the item shows up correctly in net worth and resale)."""
-    return purchase_liability(current_user_id)
+    return purchase_liability.__wrapped__(current_user_id)  # skip re-running @require_auth
 
 @liability_bp.route('/loan/', methods=['POST'])
 @require_auth
@@ -334,7 +343,7 @@ def take_liability_loan(current_user_id: str):
     # I'll import the logic from loan_routes key function if I can, or just tell client to use /api/loans/apply?
     # Better to implement here to avoid client changes.
     from app.routes.loan_routes import apply_for_loan
-    return apply_for_loan(current_user_id)
+    return apply_for_loan.__wrapped__(current_user_id)  # skip re-running @require_auth
 
 @liability_bp.route('/pay/', methods=['POST'])
 @require_auth
@@ -343,7 +352,7 @@ def pay_liability_loan(current_user_id: str):
     data = request.json
     liability_id = data.get('liability_id')
     from app.routes.loan_routes import repay_loan
-    return repay_loan(current_user_id, liability_id)
+    return repay_loan.__wrapped__(current_user_id, liability_id)  # skip re-running @require_auth
 
 @liability_bp.route('/luxury/active/', methods=['GET'])
 @require_auth

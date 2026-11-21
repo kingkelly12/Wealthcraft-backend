@@ -10,7 +10,7 @@ from app import supabase
 import os
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def register_push_token(current_user_id: str):
             result = supabase.table('profiles') \
                 .update({
                     'expo_push_token': data.push_token,
-                    'push_token_updated_at': datetime.utcnow().isoformat()
+                    'push_token_updated_at': datetime.now(timezone.utc).isoformat()
                 }) \
                 .eq('user_id', current_user_id) \
                 .execute()
@@ -106,7 +106,7 @@ def update_push_token(current_user_id: str):
     """
     Update an existing push token (alias for register-token)
     """
-    return register_push_token(current_user_id)
+    return register_push_token.__wrapped__(current_user_id)  # skip re-running @require_auth
 
 
 @notification_bp.route('/unregister-token/', methods=['DELETE'])
@@ -122,7 +122,7 @@ def unregister_push_token(current_user_id: str):
         result = supabase.table('profiles') \
             .update({
                 'expo_push_token': None,
-                'push_token_updated_at': datetime.utcnow().isoformat()
+                'push_token_updated_at': datetime.now(timezone.utc).isoformat()
             }) \
             .eq('user_id', current_user_id) \
             .execute()

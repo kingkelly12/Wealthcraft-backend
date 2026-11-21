@@ -8,9 +8,10 @@ from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.job_schema import JobApplicationRequest, JobApplicationResponse, JobQuitResponse
 from app import supabase
+from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
 from app.services.profile_service import ProfileService
 from app.utils.background_task import run_in_background
@@ -133,6 +134,11 @@ def apply_for_job(current_user_id: str):
             }), 404
         
         job = job_response.data[0]
+
+        blocked = enforce_mission_constraints(current_user_id, 'change_job')
+        if blocked:
+            return blocked
+
         
         # 2. Check current job count (Max 2) - use resolve to handle Auth UID vs Profile ID
         user_ids = resolve_user_ids(current_user_id)
@@ -235,6 +241,10 @@ def apply_for_job(current_user_id: str):
 def quit_job(current_user_id: str, job_id: str):
     """Quit a job"""
     try:
+        blocked = enforce_mission_constraints(current_user_id, 'change_job')
+        if blocked:
+            return blocked
+
         # Resolve both Auth UID and Profile ID to ensure we find the job
         user_ids = resolve_user_ids(current_user_id)
         
@@ -253,7 +263,7 @@ def quit_job(current_user_id: str, job_id: str):
         # Update job to inactive (use .in_ for same reason)
         supabase.table('jobs').update({
             'is_current': False,
-            'end_date': datetime.utcnow().isoformat()
+            'end_date': datetime.now(timezone.utc).isoformat()
         }).eq('id', job_id).in_('user_id', user_ids).execute()
         
         # Recalculate true monthly income

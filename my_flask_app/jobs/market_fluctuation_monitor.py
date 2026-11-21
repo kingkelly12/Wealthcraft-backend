@@ -84,13 +84,20 @@ def simulate_market_fluctuation():
             else:
                 price_change_pct = random.uniform(-5, 5)
 
-            new_price = current_price * (1 + price_change_pct / 100)
-            new_price = max(1.0, float(new_price)) # prevent $0 or negative
+            # Floor at one cent: the old $1.00 floor made any sub-dollar asset
+            # (e.g. a $0.20 coin) jump 5x on its first tick.
+            new_price = round(max(0.01, current_price * (1 + price_change_pct / 100)), 2)
+            price_change = round(new_price - current_price, 2)
+            change_pct = round((price_change / current_price) * 100, 2)
 
-            # Update global asset with retry logic
+            # Update global asset with retry logic (price_change fields were never written before)
             try:
                 _retry_request(
-                    lambda: app.supabase.table('assets').update({'price': new_price}).eq('id', asset['id']).execute()
+                    lambda: app.supabase.table('assets').update({
+                        'price': new_price,
+                        'price_change': price_change,
+                        'price_change_percent': change_pct,
+                    }).eq('id', asset['id']).execute()
                 )
             except Exception as update_error:
                 logger.error(f"Failed to update asset {asset['id']}: {update_error}")
@@ -197,15 +204,19 @@ def simulate_market_fluctuation():
                 ai_news = AIService.generate_market_news(news_context)
                 
                 # Store headlines in database
-                for h in ai_news.get('headlines', []):
+                tip = ai_news.get('analyst_tip')
+                tip_text = tip.get('message') if isinstance(tip, dict) else (tip if isinstance(tip, str) else None)
+                for h in ai_news.get('headlines') or []:
+                    if not isinstance(h, dict) or not h.get('title'):
+                        continue  # one malformed headline must not drop the rest
                     app.supabase.table('market_news').insert({
-                        'headline': h['title'],
+                        'headline': str(h['title'])[:300],
                         'category': 'market',
-                        'body': h['body'],
-                        'sentiment': h['sentiment'],
-                        'asset_name': h['asset_name'],
-                        'price_change_pct': news_context.get(h['asset_name'], {}).get('change_pct', 0),
-                        'analyst_tip': ai_news.get('analyst_tip', {}).get('message')
+                        'body': h.get('body'),
+                        'sentiment': h.get('sentiment'),
+                        'asset_name': h.get('asset_name'),
+                        'price_change_pct': round(news_context.get(h.get('asset_name'), {}).get('change_pct', 0), 2),
+                        'analyst_tip': tip_text,
                     }).execute()
                 
                 logger.info(f"Generated {len(ai_news.get('headlines', []))} AI market headlines")

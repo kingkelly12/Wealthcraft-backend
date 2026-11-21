@@ -9,7 +9,7 @@ from app.schemas.chat_schema import SendMessageRequest, SendMessageResponse
 from app import supabase
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
 
 
@@ -70,7 +70,7 @@ def send_message(current_user_id: str):
             'content': content,
             'status': 'sent',
             'type': 'text',
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }).execute()
         
         # Create notification for recipient

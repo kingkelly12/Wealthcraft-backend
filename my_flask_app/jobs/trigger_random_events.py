@@ -7,7 +7,7 @@ Uses Supabase client directly (not SQLAlchemy ORM) for reliable production execu
 """
 
 from app.services.push_notification_service import ExpoPushService
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import random
 import os
@@ -32,7 +32,7 @@ def trigger_random_events():
         logger.error("Supabase client not initialized")
         return {'error': 'Supabase client not initialized', 'events_triggered': 0, 'skipped': 0, 'errors': 0}
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     four_days_ago = (now - timedelta(days=4)).isoformat()
     thirty_days_ago = (now - timedelta(days=30)).isoformat()
 
@@ -85,7 +85,7 @@ def trigger_random_events():
                 last_created = last_event['created_at']
 
                 # Compare timestamps (Supabase returns ISO format with timezone)
-                if last_created > four_days_ago:
+                if datetime.fromisoformat(last_created.replace('Z', '+00:00')) > now - timedelta(days=4):
                     skipped += 1
                     continue
 

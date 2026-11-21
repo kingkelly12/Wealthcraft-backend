@@ -173,27 +173,38 @@ def enroll_in_course(current_user_id: str):
                 'message': f"You don't have enough cash to enroll in this course. Need ${course_cost}, have ${current_balance}"
             }), 400
         
-        # 4. Deduct course cost (free courses skip the wallet)
+        # 4. Claim the enrollment first: unique (user_id, course_id) rejects a
+        #    concurrent duplicate BEFORE any money moves.
+        enrollment_id = str(uuid.uuid4())
+        try:
+            supabase.table('user_courses').insert({
+                'id': enrollment_id,
+                'user_id': current_user_id,
+                'course_id': str(data.course_id),
+                'progress': 0,
+                'started_at': datetime.now(timezone.utc).isoformat()
+            }).execute()
+        except Exception as e:
+            if '23505' in str(e) or 'duplicate' in str(e).lower():
+                return jsonify({'success': False, 'error': 'ALREADY_ENROLLED',
+                                'message': 'You have already enrolled in or completed this course.'}), 400
+            raise
+
+        # 5. Charge (free courses skip the wallet); release the claim on failure
         if course_cost > 0:
-            balance_result = BalanceService.subtract_balance(
-                user_id=current_user_id,
-                amount=course_cost,
-                reason=f"Enrolled in {course['title']}",
-                category='education',
-            )
+            try:
+                balance_result = BalanceService.subtract_balance(
+                    user_id=current_user_id,
+                    amount=course_cost,
+                    reason=f"Enrolled in {course['title']}",
+                    category='education',
+                )
+            except Exception:
+                supabase.table('user_courses').delete().eq('id', enrollment_id).execute()
+                raise
         else:
             balance_result = {'new_balance': current_balance}
-        
-        # 5. Create enrollment record
-        enrollment_id = str(uuid.uuid4())
-        supabase.table('user_courses').insert({
-            'id': enrollment_id,
-            'user_id': current_user_id,
-            'course_id': str(data.course_id),
-            'progress': 0,
-            'started_at': datetime.utcnow().isoformat()
-        }).execute()
-        
+
         # Notify followers about the enrollment
         ExpoPushService.notify_followers_of_financial_move(
             supabase_client=supabase,
@@ -295,7 +306,7 @@ def complete_course(current_user_id: str):
         #    be called repeatedly, stacking the salary boost and bonus every time.
         claim = supabase.table('user_courses').update({
             'progress': 100,
-            'completed_at': datetime.utcnow().isoformat()
+            'completed_at': datetime.now(timezone.utc).isoformat()
         }).eq('id', str(data.user_course_id)).eq('user_id', current_user_id) \
           .is_('completed_at', 'null').execute()
         if not claim.data:

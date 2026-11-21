@@ -54,6 +54,7 @@ create table public.profiles (
   push_token_updated_at        timestamptz,
   last_active_at               timestamptz not null default now(),
   last_inactivity_ping_sent_at timestamptz,
+  last_free_recovery_at        timestamptz,                         -- daily cooldown for free 'touch grass'
   created_at                   timestamptz not null default now(),
   updated_at                   timestamptz not null default now()
 );
