@@ -60,6 +60,7 @@ def create_app(config_name='default'):
     from app.routes.dashboard_routes import dashboard_bp
     from app.routes.ai_routes import ai_bp
     from app.routes.week_routes import week_bp
+    from app.routes.life_routes import life_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -83,6 +84,7 @@ def create_app(config_name='default'):
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
     app.register_blueprint(week_bp, url_prefix='/api/week')
+    app.register_blueprint(life_bp, url_prefix='/api/life')
 
     
     # Health check endpoint

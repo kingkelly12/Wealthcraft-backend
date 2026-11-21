@@ -739,6 +739,25 @@ create table public.player_weeks (
 );
 create index player_weeks_user_week_idx on public.player_weeks (user_id, week desc);
 
+-- Lives: character, age, background and ending per run. See migrations/20261122000000_player_lives.sql.
+create table public.player_lives (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references public.profiles(user_id) on delete cascade,
+  life_number  integer not null check (life_number >= 1),
+  background   text not null,
+  start_age    integer not null default 18 check (start_age between 14 and 30),
+  avatar       jsonb not null default '{}',
+  is_current   boolean not null default true,
+  started_at   timestamptz not null default now(),
+  ended_at     timestamptz,
+  ending       text,
+  summary      jsonb,
+  unique (user_id, life_number)
+);
+-- At most one current life per player.
+create unique index player_lives_one_current on public.player_lives (user_id) where is_current;
+create index player_lives_user_idx on public.player_lives (user_id, life_number desc);
+
 -- =============================================================================
 -- Functions
 -- =============================================================================

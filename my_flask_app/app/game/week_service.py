@@ -104,6 +104,31 @@ def _can_play(clock) -> bool:
     return _unlimited() or int(clock['banked_weeks']) >= 1
 
 
+def _life_info(uid, week):
+    """(start_age, age dict, life_over, life) for the player's current life (default start 18)."""
+    from app.game import life as life_mod
+    life = life_mod.current_life(uid)
+    start_age = int(life['start_age']) if life else life_mod.DEFAULT_START_AGE
+    age = life_mod.age_at(week, start_age)
+    return start_age, age, bool(life) and age['years'] >= life_mod.MAX_AGE, life
+
+
+def _between_lives(uid, life):
+    """A life ended and the next hasn't begun: the old run can't be played."""
+    if life:
+        return False
+    past = supabase.table('player_lives').select('id').eq('user_id', uid).limit(1).execute()
+    return bool(past.data)
+
+
+def _check_life(uid, week):
+    _, _, over, life = _life_info(uid, week)
+    if over:
+        raise WeekError('LIFE_OVER', 'This life has reached its end. Time to see how it went.', 409)
+    if _between_lives(uid, life):
+        raise WeekError('NEEDS_NEW_LIFE', 'Start a new life to keep playing.', 409)
+
+
 # --- deck ---------------------------------------------------------------------
 
 def _player_context(uid: str) -> dict:
@@ -283,11 +308,17 @@ def state(user_id: str) -> dict:
         last = prev.data[0].get('receipt') if prev.data else None
 
     banked = int(clock['banked_weeks'])
+    _, age, life_over, life = _life_info(uid, week)
+    needs_new_life = _between_lives(uid, life)
     return {
         **week_meta(week),
+        'age': age,
+        'has_life': life is not None,
+        'life_over': life_over,
+        'needs_new_life': needs_new_life,
         'banked_weeks': banked,
         'max_banked': MAX_BANKED,
-        'can_play': _can_play(clock),
+        'can_play': _can_play(clock) and not life_over and not needs_new_life,
         'unlimited': _unlimited(),
         'next_unlock_at': None if banked >= MAX_BANKED or _unlimited() else _next_unlock_at(today),
         'deck': {
@@ -328,6 +359,7 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
     clock = get_clock(uid)
     if not _can_play(clock):
         raise WeekError('WEEK_LOCKED', 'Next week unlocks tomorrow.', 403)
+    _check_life(uid, int(clock['week']))
     deck = get_week(uid, int(clock['week']))
     if deck['status'] != 'open':
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
@@ -419,6 +451,7 @@ def complete_week(user_id: str) -> dict:
     week = int(clock['week'])
     if not _can_play(clock):
         raise WeekError('WEEK_LOCKED', 'Next week unlocks tomorrow.', 403)
+    _check_life(uid, week)
     deck = get_week(uid, week)
     if deck['status'] != 'open':
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
@@ -458,8 +491,12 @@ def complete_week(user_id: str) -> dict:
     month_net = Decimal(str(month['net'])) if month else Decimal('0')
     month_sanity = int(month['sanity_change']) if month else 0
 
+    from app.game import life as life_mod
+    start_age, _, _, _ = _life_info(uid, week)
     receipt = {
         **meta,
+        'age': life_mod.age_at(week, start_age),
+        'birthday': life_mod.birthday_between(week, week + 1, start_age),
         'cards': lines,
         'month_summary': month,
         'totals': {
