@@ -62,3 +62,6 @@ seed_mentors.sql
 
 # Jobs (if you have scheduled tasks, these should be separate Lambda functions)
 jobs/
+
+# Developer scripts and manual checks (not part of the deployed app)
+scripts/

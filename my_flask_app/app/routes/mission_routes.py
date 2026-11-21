@@ -970,8 +970,24 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
                 )
             impacts_applied['cash_change'] = immediate_cash
         
-        # Note: Happiness, stress, and motivation changes would be applied
-        # to a player_emotions table if it exists. For now, we just return them.
+        # Emotions land on sanity, the game's single mental-health stat:
+        #   sanity += happiness + motivation / 2 - stress   (clamped 0-100)
+        # Keep in sync with storySanityDelta() in the app's MissionStoryEventModal.
+        happiness = int(event.get('happiness_change') or 0)
+        motivation = int(event.get('motivation_change') or 0)
+        stress = int(event.get('stress_change') or 0)
+        sanity_delta = happiness + int(motivation / 2) - stress
+        if sanity_delta != 0:
+            profile_row = supabase.table('profiles').select('sanity').eq(
+                'user_id', current_user_id
+            ).single().execute().data or {}
+            current_sanity = profile_row.get('sanity')
+            current_sanity = 100 if current_sanity is None else current_sanity
+            new_sanity = max(0, min(100, current_sanity + sanity_delta))
+            supabase.table('profiles').update({'sanity': new_sanity}).eq('user_id', current_user_id).execute()
+            impacts_applied['sanity_change'] = new_sanity - current_sanity
+            impacts_applied['new_sanity'] = new_sanity
+
         if event.get('happiness_change'):
             impacts_applied['happiness_change'] = event['happiness_change']
         if event.get('stress_change'):

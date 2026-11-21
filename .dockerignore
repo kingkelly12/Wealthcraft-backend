@@ -82,3 +82,6 @@ Thumbs.db
 **/.pytest_cache
 # 886 MB Google Cloud SDK accidentally installed inside the app folder
 my_flask_app/exec*
+
+# Developer scripts and manual checks (not part of the deployed app)
+my_flask_app/scripts/

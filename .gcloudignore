@@ -77,3 +77,6 @@ docs/
 my_flask_app/exec*
 venv/
 .venv/
+
+# Developer scripts and manual checks (not part of the deployed app)
+my_flask_app/scripts/
