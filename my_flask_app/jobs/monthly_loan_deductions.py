@@ -14,15 +14,80 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class _MonthSummary:
+    """Income/expenses for one player's month, as push text and as receipt lines."""
+
+    def __init__(self):
+        self.income = Decimal('0')
+        self.expenses = Decimal('0')
+        self.details = []   # human strings, for the push notification
+        self.lines = []     # structured, for the in-game receipt
+
+    def credit(self, amount, label, detail=None):
+        self.income += amount
+        self.details.append(detail or f"+${amount:,.2f} {label}")
+        self.lines.append({'label': label, 'amount': float(amount), 'missed': False})
+
+    def debit(self, amount, label, detail=None):
+        self.expenses += amount
+        self.details.append(detail or f"-${amount:,.2f} {label}")
+        self.lines.append({'label': label, 'amount': float(-amount), 'missed': False})
+
+    def missed(self, amount, label, detail):
+        self.details.append(detail)
+        self.lines.append({'label': label, 'amount': float(-amount), 'missed': True})
+
+    @property
+    def empty(self):
+        return self.expenses == 0 and self.income == 0 and not self.details
+
+    def as_dict(self):
+        return {
+            'income': float(self.income),
+            'expenses': float(self.expenses),
+            'net': float(self.income - self.expenses),
+            'lines': self.lines,
+        }
+
+
+class _Scope:
+    """
+    Which players a run covers.
+
+    The calendar job covers everyone NOT on game time (no player_game_clock
+    row); a game-clock month covers exactly one player.
+    """
+
+    def __init__(self, only_user=None, excluded=()):
+        self.only_user = str(only_user) if only_user else None
+        self.excluded = set(excluded)
+
+    def includes(self, uid):
+        uid = str(uid)
+        return uid == self.only_user if self.only_user else uid not in self.excluded
+
+    def filter(self, query, column):
+        return query.eq(column, self.only_user) if self.only_user else query
+
+
+def _clocked_user_ids():
+    """Players on turn-based game time; the calendar job leaves them alone."""
+    try:
+        res = supabase.table('player_game_clock').select('user_id').execute()
+        return {str(r['user_id']) for r in res.data or []}
+    except Exception as e:
+        # Table missing (migration not applied yet) means nobody is on game time.
+        logger.warning(f"Could not read player_game_clock ({e}); treating everyone as calendar players")
+        return set()
+
+
 def process_monthly_deductions():
     """
-    End of Month Processing Job.
-    - Deducts monthly loan payments (Bank and P2P) from liabilities table
-    - Credits P2P lenders
-    - Deducts player liabilities maintenance (luxury items)
-    - Deducts rent for user rentals
-    - Credits asset monthly income for user assets
-    - Sends a consolidated push notification with a summary of deductions and income
+    Calendar End-of-Month job (pg_cron, 1st of the month).
+
+    Runs the month for every player still on calendar time. Players on game
+    time (This Week) get their month from process_month_for_user() when their
+    4th week ends, so they are skipped here.
     """
     logger.info("Starting End of Month Processing cycle...")
 
@@ -34,326 +99,325 @@ def process_monthly_deductions():
         logger.warning("Monthly processing already ran this month; skipping.")
         return {'success': True, 'skipped': True}
 
-    notifications_to_send = []
-    summary_by_user = {}
-
-    def get_summary(uid):
-        if uid not in summary_by_user:
-            summary_by_user[uid] = {
-                'expenses': Decimal('0'),
-                'income': Decimal('0'),
-                'details': []
-            }
-        return summary_by_user[uid]
-
-    logger.info("Fetching profiles data for dynamic calculations...")
+    scope = _Scope(excluded=_clocked_user_ids())
     try:
-        profiles_res = supabase.table('profiles').select('user_id, username, monthly_income, base_monthly_income, credit_score, created_at, sanity').execute()
-        profiles_map = {p['user_id']: p for p in profiles_res.data}
+        profiles_res = supabase.table('profiles').select(_PROFILE_COLS).execute()
+        profiles_map = {p['user_id']: p for p in profiles_res.data if scope.includes(p['user_id'])}
     except Exception as e:
         logger.error(f"Error fetching profiles: {e}")
         profiles_map = {}
 
-    # --- 0. Payday: job salaries (annual / 12) + permanent income boosts ---
-    # Nothing paid salaries before: players only ever got a lump sum on hire,
-    # while living costs below were charged every month.
-    logger.info("Paying salaries...")
+    summaries = _run_month(scope, profiles_map, game_years=None)
+    _send_month_notifications(summaries, profiles_map)
+
+    # Advance missions one month; finish the ones that reached their end.
     try:
-        jobs_res = supabase.table('jobs').select('user_id, title, salary').eq('is_current', True).execute()
-        pay_by_user = {}
-        for job in jobs_res.data or []:
-            pay_by_user.setdefault(job['user_id'], []).append(job)
-        for uid, profile in profiles_map.items():
-            user_jobs = pay_by_user.get(uid, [])
-            salary = sum((Decimal(str(j.get('salary') or 0)) for j in user_jobs), Decimal('0')) / 12
-            boosts = Decimal(str(profile.get('base_monthly_income') or 0))
-            pay = (salary + boosts).quantize(Decimal('0.01'))
-            if pay <= 0:
-                continue
-            BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
-            summ = get_summary(uid)
-            summ['income'] += pay
-            summ['details'].append(f"+${pay:,.2f} Salary")
+        _advance_missions(scope=scope)
     except Exception as e:
-        logger.error(f"Error paying salaries: {e}")
+        logger.error(f"Error advancing missions: {e}")
 
-    # --- 1. Process Liabilities (Loans) ---
-    logger.info("Processing loans (Bank & P2P)...")
+    logger.info("End of Month Processing cycle complete.")
+    return {'success': True, 'period': period, 'players_on_game_time': len(scope.excluded)}
+
+
+def process_month_for_user(user_id, game_years=0.0):
+    """
+    One player's month on game time (called when their 4th week ends).
+
+    Same steps as the calendar job, scoped to this player. The caller has
+    already claimed the week, so this runs once per game month. Returns the
+    month's receipt: {'income', 'expenses', 'net', 'lines', 'sanity_change',
+    'stressed', 'missions_finished'}.
+    """
+    uid = str(user_id)
+    scope = _Scope(only_user=uid)
+    prof = supabase.table('profiles').select(_PROFILE_COLS).eq('user_id', uid).limit(1).execute()
+    profiles_map = {p['user_id']: p for p in prof.data or []}
+
+    summaries = _run_month(scope, profiles_map, game_years=game_years)
+    summ = summaries.get(uid) or _MonthSummary()
+    result = summ.as_dict()
+
+    stressed, sanity_change = _apply_stress(uid, summ, profiles_map.get(uid, {}))
+    result['stressed'] = stressed
+    result['sanity_change'] = sanity_change
+
+    finished = []
     try:
-        # Fetch active liabilities (remaining_balance > 0)
-        # Note: Some older records might use remaining_balance, others might be None
-        liabilities_data = supabase.table('liabilities').select('*').gt('remaining_balance', 0).execute()
-        for liability in liabilities_data.data:
-            user_id = liability['user_id']
-            liability_id = liability['id']
-            monthly_payment = Decimal(str(liability.get('monthly_payment', 0)))
-            if monthly_payment <= 0:
-                continue
-
-            current_balance = BalanceService.get_current_balance(user_id)
-            summ = get_summary(user_id)
-
-            remaining = Decimal(str(liability['remaining_balance']))
-            monthly_payment = min(monthly_payment, remaining)  # never overcharge the final instalment
-
-            if current_balance >= monthly_payment:
-                # Deduct
-                BalanceService.subtract_balance(
-                    user_id=user_id,
-                    amount=monthly_payment,
-                    reason=f"Monthly Loan Payment: {liability.get('name')}",
-                    category='loan_payment',
-                )
-                
-                new_bal = remaining - monthly_payment
-                
-                if new_bal <= 0:
-                    supabase.table('liabilities').delete().eq('id', liability_id).execute()
-                    if liability.get('bank_loan_id'):
-                        supabase.table('bank_loans').update({'status': 'completed'}).eq('id', liability['bank_loan_id']).execute()
-                else:
-                    supabase.table('liabilities').update({
-                        'remaining_balance': float(new_bal),
-                        'remaining_term': max(0, (liability.get('remaining_term') or 1) - 1),
-                    }).eq('id', liability_id).execute()
-                _adjust_credit_score(profiles_map, user_id, CREDIT_ON_TIME_PAYMENT)
-
-                # If P2P Loan, credit lender and update P2P table sync
-                if liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id'):
-                    try:
-                        p2p_loan_id = liability['p2p_loan_id']
-                        p2p_res = fetch_one(supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id))
-                        if p2p_res.data:
-                            lender_id = p2p_res.data['lender_id']
-                            # Credit lender
-                            BalanceService.add_balance(
-                                user_id=lender_id,
-                                amount=monthly_payment,
-                                reason=f"P2P Loan payment received",
-                                category='p2p_repayment',
-                            )
-                            lender_summ = get_summary(lender_id)
-                            lender_summ['income'] += monthly_payment
-                            lender_summ['details'].append(f"+${monthly_payment:,.2f} P2P Repayment")
-
-                            p2p_status = 'active'
-                            if new_bal <= 0:
-                                p2p_status = 'completed'
-                            supabase.table('p2p_loans').update({
-                                'remaining_balance': float(max(0, new_bal)),
-                                'status': p2p_status,
-                            }).eq('id', p2p_loan_id).execute()
-                    except Exception as e:
-                        logger.error(f"Error handling P2P lender credit for loan {liability_id}: {e}")
-
-                # Update Borrower Summary
-                summ['expenses'] += monthly_payment
-                summ['details'].append(f"-${monthly_payment:,.2f} {liability.get('name')}")
-            else:
-                # Missed payment: 5% late fee added to the debt and a credit hit.
-                # (Previously the penalty was computed and then thrown away, so
-                # skipping payments had no consequence at all.)
-                penalty = (monthly_payment * Decimal('0.05')).quantize(Decimal('0.01'))
-                supabase.table('liabilities').update({
-                    'remaining_balance': float(remaining + penalty),
-                }).eq('id', liability_id).execute()
-                _adjust_credit_score(profiles_map, user_id, CREDIT_MISSED_PAYMENT)
-                logger.warning(f"User {user_id} missed loan payment for {liability_id}. Late fee ${penalty}.")
-                summ['details'].append(f"⚠️ Missed {liability.get('name')} (${monthly_payment:,.2f}) +${penalty:,.2f} late fee, credit score {CREDIT_MISSED_PAYMENT}")
+        finished = _advance_missions(scope=scope)
     except Exception as e:
-        logger.error(f"Error processing liabilities: {e}")
+        logger.error(f"Error advancing missions for {uid}: {e}")
+    result['missions_finished'] = finished
+    return result
 
-    # --- 2. Process Player Liabilities Maintenance (Luxury Items) ---
-    logger.info("Processing maintenance for luxury items...")
+
+_PROFILE_COLS = 'user_id, username, monthly_income, base_monthly_income, credit_score, created_at, sanity'
+
+
+def _run_month(scope, profiles_map, game_years):
+    """Steps 0-5 of a month. Returns {user_id: _MonthSummary}."""
+    summary_by_user = {}
+
+    def get_summary(uid):
+        return summary_by_user.setdefault(uid, _MonthSummary())
+
+    steps = (
+        ('salaries', lambda: _pay_salaries(scope, profiles_map, get_summary)),
+        ('loans', lambda: _charge_loans(scope, profiles_map, get_summary)),
+        ('luxury maintenance', lambda: _charge_maintenance(scope, get_summary)),
+        ('rent', lambda: _charge_rent(scope, get_summary)),
+        ('living costs', lambda: _charge_living_costs(profiles_map, get_summary, game_years)),
+        ('asset income', lambda: _pay_asset_income(scope, get_summary)),
+    )
+    for name, step in steps:
+        logger.info(f"Processing {name}...")
+        try:
+            step()
+        except Exception as e:
+            logger.error(f"Error processing {name}: {e}")
+    return summary_by_user
+
+
+def _pay_salaries(scope, profiles_map, get_summary):
+    """Payday: job salaries (annual / 12) + permanent income boosts."""
+    jobs_res = scope.filter(supabase.table('jobs').select('user_id, title, salary').eq('is_current', True), 'user_id').execute()
+    pay_by_user = {}
+    for job in jobs_res.data or []:
+        pay_by_user.setdefault(job['user_id'], []).append(job)
+    for uid, profile in profiles_map.items():
+        salary = sum((Decimal(str(j.get('salary') or 0)) for j in pay_by_user.get(uid, [])), Decimal('0')) / 12
+        boosts = Decimal(str(profile.get('base_monthly_income') or 0))
+        pay = (salary + boosts).quantize(Decimal('0.01'))
+        if pay <= 0:
+            continue
+        BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
+        get_summary(uid).credit(pay, 'Salary')
+
+
+def _charge_loans(scope, profiles_map, get_summary):
+    """Bank and P2P loan instalments (P2P lenders are credited)."""
+    liabilities_data = scope.filter(supabase.table('liabilities').select('*').gt('remaining_balance', 0), 'user_id').execute()
+    for liability in liabilities_data.data or []:
+        user_id = liability['user_id']
+        if not scope.includes(user_id):
+            continue
+        liability_id = liability['id']
+        monthly_payment = Decimal(str(liability.get('monthly_payment', 0)))
+        if monthly_payment <= 0:
+            continue
+
+        current_balance = BalanceService.get_current_balance(user_id)
+        summ = get_summary(user_id)
+        remaining = Decimal(str(liability['remaining_balance']))
+        monthly_payment = min(monthly_payment, remaining)  # never overcharge the final instalment
+        name = liability.get('name') or 'Loan'
+
+        if current_balance < monthly_payment:
+            # Missed payment: 5% late fee added to the debt and a credit hit.
+            penalty = (monthly_payment * Decimal('0.05')).quantize(Decimal('0.01'))
+            supabase.table('liabilities').update({
+                'remaining_balance': float(remaining + penalty),
+            }).eq('id', liability_id).execute()
+            _adjust_credit_score(profiles_map, user_id, CREDIT_MISSED_PAYMENT)
+            logger.warning(f"User {user_id} missed loan payment for {liability_id}. Late fee ${penalty}.")
+            summ.missed(
+                monthly_payment, f"Missed: {name} (+${penalty:,.2f} late fee)",
+                f"⚠️ Missed {name} (${monthly_payment:,.2f}) +${penalty:,.2f} late fee, credit score {CREDIT_MISSED_PAYMENT}",
+            )
+            continue
+
+        BalanceService.subtract_balance(
+            user_id=user_id, amount=monthly_payment,
+            reason=f"Monthly Loan Payment: {name}", category='loan_payment',
+        )
+        new_bal = remaining - monthly_payment
+        if new_bal <= 0:
+            supabase.table('liabilities').delete().eq('id', liability_id).execute()
+            if liability.get('bank_loan_id'):
+                supabase.table('bank_loans').update({'status': 'completed'}).eq('id', liability['bank_loan_id']).execute()
+        else:
+            supabase.table('liabilities').update({
+                'remaining_balance': float(new_bal),
+                'remaining_term': max(0, (liability.get('remaining_term') or 1) - 1),
+            }).eq('id', liability_id).execute()
+        _adjust_credit_score(profiles_map, user_id, CREDIT_ON_TIME_PAYMENT)
+
+        # P2P: credit the lender and keep the p2p_loans row in sync.
+        if liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id'):
+            try:
+                p2p_loan_id = liability['p2p_loan_id']
+                p2p_res = fetch_one(supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id))
+                if p2p_res.data:
+                    lender_id = p2p_res.data['lender_id']
+                    BalanceService.add_balance(
+                        user_id=lender_id, amount=monthly_payment,
+                        reason="P2P Loan payment received", category='p2p_repayment',
+                    )
+                    get_summary(lender_id).credit(monthly_payment, 'P2P repayment received')
+                    supabase.table('p2p_loans').update({
+                        'remaining_balance': float(max(0, new_bal)),
+                        'status': 'completed' if new_bal <= 0 else 'active',
+                    }).eq('id', p2p_loan_id).execute()
+            except Exception as e:
+                logger.error(f"Error handling P2P lender credit for loan {liability_id}: {e}")
+
+        summ.debit(monthly_payment, name)
+
+
+def _charge_maintenance(scope, get_summary):
+    """Upkeep on lifestyle (luxury) items."""
+    player_liabs = scope.filter(
+        supabase.table('player_liabilities').select('*, liability_items(*)').eq('is_active', True), 'player_id'
+    ).execute()
+    for pliab in player_liabs.data or []:
+        user_id = pliab['player_id']
+        if not scope.includes(user_id):
+            continue
+        cost = Decimal(str(pliab.get('monthly_cost', 0)))
+        if cost <= 0:
+            continue
+        item_data = pliab.get('liability_items')
+        if isinstance(item_data, list) and len(item_data) > 0:
+            item_data = item_data[0]
+        name = item_data.get('name', 'Luxury Item') if item_data else 'Luxury Item'
+
+        summ = get_summary(user_id)
+        if BalanceService.get_current_balance(user_id) >= cost:
+            BalanceService.subtract_balance(user_id=user_id, amount=cost, reason=f"Maintenance Cost: {name}", category='lifestyle')
+            summ.debit(cost, f"{name} upkeep")
+        else:
+            logger.warning(f"User {user_id} missed maintenance for {pliab['id']}.")
+            summ.missed(cost, f"Missed: {name} upkeep", f"⚠️ Missed {name} maintenance (${cost:,.2f})")
+
+
+def _charge_rent(scope, get_summary):
+    active_rentals = scope.filter(
+        supabase.table('player_rentals').select('*, rental_properties(*)').eq('is_active', True), 'player_id'
+    ).execute()
+    for rental in active_rentals.data or []:
+        user_id = rental['player_id']
+        if not scope.includes(user_id):
+            continue
+        rent = Decimal(str(rental.get('monthly_rent', 0)))
+        if rent <= 0:
+            continue
+        prop_data = rental.get('rental_properties')
+        name = prop_data.get('name', 'Rent') if prop_data else 'Rent'
+
+        summ = get_summary(user_id)
+        if BalanceService.get_current_balance(user_id) >= rent:
+            BalanceService.subtract_balance(user_id=user_id, amount=rent, reason=f"Monthly Rent: {name}", category='rent')
+            summ.debit(rent, f"Rent: {name}")
+        else:
+            logger.warning(f"User {user_id} missed rent for {rental['id']}.")
+            summ.missed(rent, f"Missed rent: {name}", f"⚠️ Missed {name} (${rent:,.2f})")
+
+
+def _years_since(created_at_str, now):
+    if not created_at_str:
+        return 0.0
     try:
-        player_liabs = supabase.table('player_liabilities').select('*, liability_items(*)').eq('is_active', True).execute()
-        for pliab in player_liabs.data:
-            user_id = pliab['player_id']
-            cost = Decimal(str(pliab.get('monthly_cost', 0)))
-            if cost <= 0:
-                continue
+        time_part = created_at_str.split('+')[0]
+        created_dt = datetime.strptime(time_part[:19], "%Y-%m-%dT%H:%M:%S")
+        return max(0.0, (now - created_dt).days / 365.25)
+    except Exception:
+        return 0.0
 
-            # Identify name
-            item_data = pliab.get('liability_items')
-            if isinstance(item_data, list) and len(item_data) > 0:
-                item_data = item_data[0]
-            name = item_data.get('name', 'Luxury Item') if item_data else 'Luxury Item'
 
-            summ = get_summary(user_id)
-            current_balance = BalanceService.get_current_balance(user_id)
-            if current_balance >= cost:
-                BalanceService.subtract_balance(
-                    user_id=user_id,
-                    amount=cost,
-                    reason=f"Maintenance Cost: {name}",
-                    category='lifestyle',
-                )
-                summ['expenses'] += cost
-                summ['details'].append(f"-${cost:,.2f} {name} maintenance")
-            else:
-                logger.warning(f"User {user_id} missed maintenance for {pliab['id']}.")
-                summ['details'].append(f"⚠️ Missed {name} maintenance (${cost:,.2f})")
-    except Exception as e:
-        logger.error(f"Error processing luxury maintenance: {e}")
+def _charge_living_costs(profiles_map, get_summary, game_years):
+    """
+    Food, utilities, WiFi: 20% of income, inflated 5% a year. On game time the
+    years are game years (weeks lived / 52), not calendar years.
+    """
+    now = datetime.utcnow()
+    for user_id, profile in profiles_map.items():
+        monthly_income = Decimal(str(profile.get('monthly_income') or 0))
+        if monthly_income <= 0:
+            continue
+        years = game_years if game_years is not None else _years_since(profile.get('created_at'), now)
+        years = min(float(years), 20.0)
+        cost = (monthly_income * Decimal('0.20') * Decimal(str(1.05 ** years))).quantize(Decimal('0.01'))
 
-    # --- 3. Process Rent Deductions ---
-    logger.info("Processing rent deductions...")
+        summ = get_summary(user_id)
+        if BalanceService.get_current_balance(user_id) >= cost:
+            BalanceService.subtract_balance(user_id=user_id, amount=cost, reason="Living Costs (Food & WiFi)", category='living_costs')
+            summ.debit(cost, 'Food, bills & WiFi', f"-${cost:,.2f} Living Costs")
+        else:
+            logger.warning(f"User {user_id} missed living costs.")
+            summ.missed(cost, 'Missed: food & bills', f"⚠️ Missed Living Costs (${cost:,.2f})")
+
+
+def _pay_asset_income(scope, get_summary):
+    """Rental / dividend income from owned assets."""
+    assets_res = supabase.table('assets').select('name, monthly_income').execute()
+    income_map = {a['name']: Decimal(str(a.get('monthly_income') or 0)) for a in assets_res.data or []}
+
+    user_assets = scope.filter(supabase.table('user_assets').select('*'), 'user_id').execute()
+    for ua in user_assets.data or []:
+        user_id = ua['user_id']
+        if not scope.includes(user_id):
+            continue
+        name = ua['name']
+        total_income = income_map.get(name, Decimal('0')) * Decimal(str(ua.get('quantity', 1)))
+        if total_income > 0:
+            BalanceService.add_balance(user_id=user_id, amount=total_income, reason=f"Monthly Asset Income: {name}", category='asset_income')
+            get_summary(user_id).credit(total_income, f"{name} yield")
+
+
+STRESS_EXPENSE_RATIO = Decimal('0.60')
+STRESS_SANITY_HIT = -10
+
+
+def _is_stressed(summ, profile):
+    monthly_income = Decimal(str(profile.get('monthly_income') or 0))
+    return monthly_income > 0 and summ.expenses > monthly_income * STRESS_EXPENSE_RATIO
+
+
+def _apply_stress(uid, summ, profile):
+    """Spending over 60% of income costs sanity. Returns (stressed, sanity_change)."""
+    if not _is_stressed(summ, profile):
+        return False, 0
     try:
-        active_rentals = supabase.table('player_rentals').select('*, rental_properties(*)').eq('is_active', True).execute()
-        for rental in active_rentals.data:
-            user_id = rental['player_id']
-            rent = Decimal(str(rental.get('monthly_rent', 0)))
-            if rent <= 0:
-                continue
-
-            prop_data = rental.get('rental_properties')
-            name = prop_data.get('name', 'Rent') if prop_data else 'Rent'
-
-            summ = get_summary(user_id)
-            current_balance = BalanceService.get_current_balance(user_id)
-            if current_balance >= rent:
-                BalanceService.subtract_balance(
-                    user_id=user_id,
-                    amount=rent,
-                    reason=f"Monthly Rent: {name}",
-                    category='rent',
-                )
-                summ['expenses'] += rent
-                summ['details'].append(f"-${rent:,.2f} {name}")
-            else:
-                logger.warning(f"User {user_id} missed rent for {rental['id']}.")
-                summ['details'].append(f"⚠️ Missed {name} (${rent:,.2f})")
+        supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': STRESS_SANITY_HIT}).execute()
     except Exception as e:
-        logger.error(f"Error processing rent: {e}")
+        logger.error(f"Failed to deduct sanity for {uid}: {e}")
+        return True, 0
+    return True, STRESS_SANITY_HIT
 
-    # --- 4. Process Base Living Costs (Food, Utilities, WiFi) ---
-    logger.info("Processing base living costs with inflation...")
-    try:
-        current_date_dt = datetime.utcnow()
-        for user_id, profile in profiles_map.items():
-            monthly_income = Decimal(str(profile.get('monthly_income') or 0))
-            if monthly_income <= 0:
-                continue
-                
-            base_cost = monthly_income * Decimal('0.20')
-            
-            created_at_str = profile.get('created_at')
-            years_active = 0.0
-            if created_at_str:
-                try:
-                    # Parse ISO string safely
-                    time_part = created_at_str.split('+')[0]
-                    if '.' in time_part:
-                        created_dt = datetime.strptime(time_part[:19], "%Y-%m-%dT%H:%M:%S")
-                    else:
-                        created_dt = datetime.strptime(time_part, "%Y-%m-%dT%H:%M:%S")
-                    days_active = (current_date_dt - created_dt).days
-                    years_active = max(0.0, days_active / 365.25)
-                except Exception:
-                    pass
-            
-            # Cap years active reasonably
-            years_active = min(float(years_active), 20.0)
-            
-            inflation_multiplier = Decimal(str((1.05) ** years_active))
-            actual_living_cost = base_cost * inflation_multiplier
-            
-            summ = get_summary(user_id)
-            current_balance = BalanceService.get_current_balance(user_id)
-            
-            if current_balance >= actual_living_cost:
-                BalanceService.subtract_balance(
-                    user_id=user_id,
-                    amount=actual_living_cost,
-                    reason="Living Costs (Food & WiFi)",
-                    category='living_costs',
-                )
-                summ['expenses'] += actual_living_cost
-                summ['details'].append(f"-${actual_living_cost:,.2f} Living Costs")
-            else:
-                logger.warning(f"User {user_id} missed living costs.")
-                summ['details'].append(f"⚠️ Missed Living Costs (${actual_living_cost:,.2f})")
-    except Exception as e:
-        logger.error(f"Error processing living costs: {e}")
 
-    # --- 5. Process Asset Income (Rental / Dividend) ---
-    logger.info("Processing asset monthly incomes...")
-    try:
-        # Fetch base assets lookup map
-        assets_res = supabase.table('assets').select('name, monthly_income').execute()
-        income_map = {}
-        for a in assets_res.data:
-            income_map[a['name']] = Decimal(str(a.get('monthly_income', 0)))
-
-        user_assets = supabase.table('user_assets').select('*').execute()
-        for ua in user_assets.data:
-            user_id = ua['user_id']
-            name = ua['name']
-            qty = Decimal(str(ua.get('quantity', 1)))
-            base_income = income_map.get(name, Decimal('0'))
-            
-            total_income = base_income * qty
-            if total_income > 0:
-                BalanceService.add_balance(
-                    user_id=user_id,
-                    amount=total_income,
-                    reason=f"Monthly Asset Income: {name}",
-                    category='asset_income',
-                )
-                summ = get_summary(user_id)
-                summ['income'] += total_income
-                summ['details'].append(f"+${total_income:,.2f} {name} Yield")
-    except Exception as e:
-        logger.error(f"Error processing asset income: {e}")
-
-    # --- 6. Batch Send Notifications & Evaluate Sanity Penalties ---
+def _send_month_notifications(summary_by_user, profiles_map):
+    """Calendar job only: stress check (with an AI line) and one push per player."""
     from app.services.ai_service import AIService
     from app.services.mentor_service import MentorService
     import uuid
 
+    notifications_to_send = []
     logger.info(f"Checking financial stress and queueing notifications for {len(summary_by_user)} users...")
-    for uid, data in summary_by_user.items():
-        if data['expenses'] == 0 and data['income'] == 0 and not data['details']:
+    for uid, summ in summary_by_user.items():
+        if summ.empty:
             continue
-            
         profile = profiles_map.get(uid, {})
-        monthly_income = Decimal(str(profile.get('monthly_income') or 0))
-        current_sanity = int(profile.get('sanity', 100))
-        
-        is_stressed = False
+        is_stressed, _ = _apply_stress(uid, summ, profile)
+
         ai_stress_message = None
-        
-        if monthly_income > 0 and data['expenses'] > (monthly_income * Decimal('0.60')):
-            is_stressed = True
-            new_sanity = max(0, current_sanity - 10)
-            
-            # AI Analysis for Stress
+        if is_stressed:
             try:
                 metrics = MentorService.analyze_player_finances(uuid.UUID(uid))
-                metrics['sanity'] = current_sanity
-                stress_analysis = AIService.analyze_financial_stress(profile.get('username', 'Player'), metrics)
-                ai_stress_message = stress_analysis.get('message')
+                metrics['sanity'] = int(profile.get('sanity', 100))
+                ai_stress_message = AIService.analyze_financial_stress(profile.get('username', 'Player'), metrics).get('message')
             except Exception as e:
                 logger.error(f"Failed to generate AI stress message for {uid}: {e}")
 
-            try:
-                supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': -10}).execute()
-            except Exception as e:
-                logger.error(f"Failed to deduct sanity for {uid}: {e}")
-            
-        net_change = data['income'] - data['expenses']
-        
+        net_change = summ.income - summ.expenses
         if is_stressed:
             title = "🚨 Financial Stress!"
-            body = f"{ai_stress_message or 'Expenses exceeded 60% of income. Sanity dropped (-10).'}\n\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(data['details'])
+            body = f"{ai_stress_message or 'Expenses exceeded 60% of income. Sanity dropped (-10).'}\n\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(summ.details)
         else:
             title = "💰 End of Month Summary"
             if net_change > 0:
-                body = f"You gained a net +${net_change:,.2f} this month! \n\n" + "\n".join(data['details'])
+                body = f"You gained a net +${net_change:,.2f} this month! \n\n" + "\n".join(summ.details)
             else:
-                body = f"You had a net -${abs(net_change):,.2f} this month. \n\n" + "\n".join(data['details'])
-
-        # Truncate if too long
+                body = f"You had a net -${abs(net_change):,.2f} this month. \n\n" + "\n".join(summ.details)
         if len(body) > 200:
             body = body[:197] + "..."
 
@@ -361,32 +425,17 @@ def process_monthly_deductions():
             'user_id': uid,
             'title': title,
             'body': body,
-            'data': {
-                'type': 'financial_move',
-                'screen': '/banking'
-            }
+            'data': {'type': 'financial_move', 'screen': '/banking'},
         })
 
+    for i in range(0, len(notifications_to_send), 50):
+        ExpoPushService.send_notifications_to_users(
+            supabase_client=supabase,
+            user_notifications=notifications_to_send[i:i + 50],
+            notification_type='financial_move',
+        )
     if notifications_to_send:
-        # Batch in chunks of 50 just in case
-        chunk_size = 50
-        for i in range(0, len(notifications_to_send), chunk_size):
-            chunk = notifications_to_send[i:i + chunk_size]
-            ExpoPushService.send_notifications_to_users(
-                supabase_client=supabase,
-                user_notifications=chunk,
-                notification_type='financial_move'
-            )
         logger.info(f"Batched {len(notifications_to_send)} end of month notifications.")
-
-    # --- 7. Advance missions one month; finish the ones that reached their end ---
-    try:
-        _advance_missions()
-    except Exception as e:
-        logger.error(f"Error advancing missions: {e}")
-
-    logger.info("End of Month Processing cycle complete.")
-    return {'success': True, 'period': period}
 
 
 CREDIT_ON_TIME_PAYMENT = 2
@@ -435,16 +484,22 @@ def _criterion_met(criterion, profile):
     return ok, value
 
 
-def _advance_missions():
+def _advance_missions(scope=None):
     """
-    Missions never progressed before: nothing advanced current_month or wrote
-    mission_completion_results, so every mission stayed on month 1 forever.
+    Move each in-scope active mission one month on; close the ones that ran
+    their course. Returns [{'mission_id', 'name', 'completed'}] for missions
+    that finished in this run.
     """
-    active = supabase.table('player_mission_progress') \
+    scope = scope or _Scope()
+    query = supabase.table('player_mission_progress') \
         .select('*, integrated_missions!mission_id(name, duration_months, completion_reward)') \
-        .eq('is_active', True).execute()
+        .eq('is_active', True)
+    active = scope.filter(query, 'player_id').execute()
 
+    finished = []
     for pm in active.data or []:
+        if not scope.includes(pm['player_id']):
+            continue
         mission = pm.get('integrated_missions') or {}
         duration = int(mission.get('duration_months') or 1)
         next_month = int(pm.get('current_month') or 1) + 1
@@ -515,6 +570,10 @@ def _advance_missions():
                        + (f" Reward: ${reward:,.2f}" if reward > 0 else ''),
             'read': False,
         }).execute()
+        finished.append({'mission_id': pm['mission_id'], 'name': mission.get('name', 'Mission'), 'completed': success})
+
+    return finished
+
 
 if __name__ == "__main__":
     from app import create_app

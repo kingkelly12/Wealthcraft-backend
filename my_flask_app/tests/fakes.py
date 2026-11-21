@@ -3,9 +3,9 @@ In-memory stand-in for the supabase-py client, for route and job tests.
 
 Supports the query-builder subset the app uses:
     table(name).select(...).eq/neq/gt/gte/lt/lte/in_/is_(...)
-        .order(col, desc=...).limit(n).single().execute()
+        .or_('col.is.null,col.lt.x').order(col, desc=...).limit(n).single().execute()
     .insert(row|rows) .update(values) .delete() .upsert(row)
-    rpc(name, params).execute()
+    rpc(name, params).execute()   (adjust_sanity is built in; stub others)
 
 Rows are plain dicts held in `fake.tables[name]`. Embedded joins such as
 'integrated_missions!mission_id(name, duration_months)' are not resolved:
@@ -84,6 +84,20 @@ class _Query:
 
         return _Not()
 
+    def or_(self, expr):
+        """PostgREST or-filter, e.g. 'col.is.null,col.lt.2026-01-01T00:00:00'."""
+        tests = []
+        for part in expr.split(','):
+            col, op, val = part.split('.', 2)
+            if op == 'is':
+                target = None if val == 'null' else val
+                tests.append(lambda r, c=col, t=target: r.get(c) is t)
+            elif op in _OPS:
+                tests.append(lambda r, c=col, o=op, v=val: r.get(c) is not None and _OPS[o](str(r.get(c)), v))
+            else:
+                raise NotImplementedError(f'or_ operator {op}')
+        return self._filter(lambda r: any(t(r) for t in tests))
+
     def order(self, col, desc=False, **_kw):
         self.order_by = (col, desc)
         return self
@@ -158,6 +172,25 @@ class _Query:
         return _Result(data=match, count=total)
 
 
+_OPS = {
+    'eq': lambda a, b: a == b,
+    'neq': lambda a, b: a != b,
+    'lt': lambda a, b: a < b,
+    'lte': lambda a, b: a <= b,
+    'gt': lambda a, b: a > b,
+    'gte': lambda a, b: a >= b,
+}
+
+
+def _adjust_sanity(fake, p_user_id, p_delta):
+    """Mirrors public.adjust_sanity: clamp 0..100, return the new value."""
+    for row in fake.rows('profiles'):
+        if _norm(row.get('user_id')) == _norm(p_user_id):
+            row['sanity'] = max(0, min(100, int(row.get('sanity', 100)) + int(p_delta)))
+            return row['sanity']
+    return None
+
+
 def _norm(v):
     return str(v) if isinstance(v, uuid.UUID) else v
 
@@ -166,7 +199,7 @@ class FakeSupabase:
     def __init__(self, tables=None):
         self.tables = tables if tables is not None else {}
         self.calls = []
-        self.rpc_handlers = {}
+        self.rpc_handlers = {'adjust_sanity': _adjust_sanity}
         self._ids = itertools.count(1)
 
     def table(self, name):

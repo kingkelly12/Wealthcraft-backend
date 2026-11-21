@@ -712,6 +712,33 @@ create table public.cron_runs (
   primary key (job_name, period)
 );
 
+-- Turn-based time ("This Week"): one row per player on game time, one row per
+-- dealt week. See migrations/20261121000000_game_clock.sql.
+create table public.player_game_clock (
+  user_id          uuid primary key references public.profiles(user_id) on delete cascade,
+  week             integer not null default 1 check (week >= 1),   -- the week being played
+  banked_weeks     integer not null default 1 check (banked_weeks >= 0),
+  bank_updated_on  date not null default (now() at time zone 'utc')::date,
+  started_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+create trigger player_game_clock_updated_at before update on public.player_game_clock
+  for each row execute function public.set_updated_at();
+
+create table public.player_weeks (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references public.profiles(user_id) on delete cascade,
+  week          integer not null,
+  cards         jsonb not null default '[]',
+  version       integer not null default 0,     -- optimistic lock for card choices
+  status        text not null default 'open' check (status in ('open', 'completed')),
+  receipt       jsonb,
+  created_at    timestamptz not null default now(),
+  completed_at  timestamptz,
+  unique (user_id, week)
+);
+create index player_weeks_user_week_idx on public.player_weeks (user_id, week desc);
+
 -- =============================================================================
 -- Functions
 -- =============================================================================

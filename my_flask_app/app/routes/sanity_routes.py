@@ -38,12 +38,18 @@ def recover_sanity(current_user_id: str):
 
         if cost > 0:
             # Atomic debit; raises "Insufficient funds" instead of overdrawing
-            BalanceService.subtract_balance(
-                user_id=current_user_id,
-                amount=cost,
-                reason=f"Sanity Recovery: {action_key.replace('_', ' ').title()}",
-                category='sanity_recovery',
-            )
+            try:
+                BalanceService.subtract_balance(
+                    user_id=current_user_id,
+                    amount=cost,
+                    reason=f"Sanity Recovery: {action_key.replace('_', ' ').title()}",
+                    category='sanity_recovery',
+                )
+            except Exception as e:
+                if 'Insufficient funds' not in str(e):
+                    raise
+                return jsonify({'success': False, 'error': 'INSUFFICIENT_FUNDS',
+                                'message': f"You need ${cost:,.0f} for this."}), 400
         else:
             # Free action: once per 24h (it used to be unlimited, making sanity meaningless)
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()

@@ -41,6 +41,8 @@ select cron.schedule('inactive-users',   '0 10 * * *',  $$select public.call_bac
 select cron.schedule('market-monitor',   '0 */4 * * *', $$select public.call_backend_cron('/api/cron/market-monitor/')$$);
 select cron.schedule('depreciation',     '0 2 1 * *',   $$select public.call_backend_cron('/api/cron/depreciation/')$$);
 select cron.schedule('appreciation',     '0 3 1 * *',   $$select public.call_backend_cron('/api/cron/appreciation/')$$);
+-- monthly-payday only covers players still on calendar time. Players on game
+-- time (This Week, table player_game_clock) get their month every 4th game week.
 select cron.schedule('monthly-payday',   '0 4 1 * *',   $$select public.call_backend_cron('/api/cron/loan-deductions/')$$);
 
 -- Inspect:   select * from cron.job;   select * from cron.job_run_details order by start_time desc limit 20;

@@ -62,9 +62,17 @@ def trigger_random_events():
         logger.error(f"Error fetching life events: {e}")
         return {'error': str(e), 'events_triggered': 0, 'skipped': 0, 'errors': 0}
 
+    # Players on game time get life events in their weekly deck instead.
+    try:
+        clocked = {str(r['user_id']) for r in (supabase.table('player_game_clock').select('user_id').execute().data or [])}
+    except Exception as e:
+        logger.warning(f"Could not read player_game_clock ({e}); assuming no players on game time")
+        clocked = set()
+    active_profiles = [p for p in active_profiles if str(p['user_id']) not in clocked]
+
     events_triggered = 0
     errors = 0
-    skipped = 0
+    skipped = len(clocked)
     notifications_to_send = []
 
     for profile in active_profiles:
