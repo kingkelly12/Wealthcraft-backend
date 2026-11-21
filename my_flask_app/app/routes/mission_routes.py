@@ -455,7 +455,7 @@ def make_decision(current_user_id: str):
         # Get active mission
         progress_response = supabase.table('player_mission_progress').select(
             '*'
-        ).eq('player_id', current_user_id).eq('is_active', True).single().execute()
+        ).eq('player_id', current_user_id).eq('is_active', True).limit(1).execute()
         
         if not progress_response.data:
             return jsonify({
@@ -464,7 +464,7 @@ def make_decision(current_user_id: str):
                 'message': 'No active mission found'
             }), 404
         
-        progress = progress_response.data
+        progress = progress_response.data[0]
         
         # Validate decision point belongs to this mission
         decision_response = supabase.table('mission_decision_points').select(
@@ -560,7 +560,7 @@ def abandon_mission(current_user_id: str):
         # Get active mission
         progress_response = supabase.table('player_mission_progress').select(
             '*, integrated_missions!mission_id(*)'
-        ).eq('player_id', current_user_id).eq('is_active', True).single().execute()
+        ).eq('player_id', current_user_id).eq('is_active', True).limit(1).execute()
         
         if not progress_response.data:
             return jsonify({
@@ -569,7 +569,7 @@ def abandon_mission(current_user_id: str):
                 'message': 'No active mission to abandon'
             }), 404
         
-        progress = progress_response.data
+        progress = progress_response.data[0]
         mission_name = progress['integrated_missions']['name']
         
         # Update mission progress
@@ -789,7 +789,7 @@ def get_pending_story_events(current_user_id: str):
         # Get active mission
         progress_response = supabase.table('player_mission_progress').select(
             'id, mission_id, current_month, integrated_missions!mission_id(name, duration_months)'
-        ).eq('player_id', current_user_id).eq('is_active', True).single().execute()
+        ).eq('player_id', current_user_id).eq('is_active', True).limit(1).execute()
         
         if not progress_response.data:
             return jsonify({
@@ -798,7 +798,7 @@ def get_pending_story_events(current_user_id: str):
                 'message': 'No active mission'
             }), 200
         
-        progress = progress_response.data
+        progress = progress_response.data[0]
         player_mission_id = progress['id']
         mission_id = progress['mission_id']
         current_month = progress['current_month']
@@ -891,7 +891,7 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
         # Get active mission
         progress_response = supabase.table('player_mission_progress').select(
             'id, mission_id, current_month'
-        ).eq('player_id', current_user_id).eq('is_active', True).single().execute()
+        ).eq('player_id', current_user_id).eq('is_active', True).limit(1).execute()
         
         if not progress_response.data:
             return jsonify({
@@ -900,13 +900,13 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
                 'message': 'No active mission found'
             }), 404
         
-        progress = progress_response.data
+        progress = progress_response.data[0]
         player_mission_id = progress['id']
         
         # Get the story event
         event_response = supabase.table('mission_story_events').select(
             '*'
-        ).eq('id', event_id).eq('mission_id', progress['mission_id']).single().execute()
+        ).eq('id', event_id).eq('mission_id', progress['mission_id']).limit(1).execute()
         
         if not event_response.data:
             return jsonify({
@@ -915,7 +915,7 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
                 'message': 'Story event not found or does not belong to active mission'
             }), 404
         
-        event = event_response.data
+        event = event_response.data[0]
         
         # Check if already viewed
         existing_response = supabase.table('player_story_progress').select(
