@@ -156,6 +156,16 @@ def unfollow_user(current_user_id: str, target_user_id: str):
         }), 500
 
 
+def _with_avatars(rows):
+    """Players' game avatars alongside their photos; never fail a list over them."""
+    try:
+        from app.game.life import attach_avatars
+        return attach_avatars(rows)
+    except Exception as e:
+        print(f"Avatar lookup failed: {e}")
+        return rows
+
+
 @follow_bp.route('/leaderboard/', methods=['GET'])
 @require_auth
 def get_leaderboard(current_user_id: str):
@@ -195,6 +205,8 @@ def get_leaderboard(current_user_id: str):
             data = profile.to_dict()
             data['rank'] = index + 1
             leaderboard_data.append(data)
+
+        _with_avatars(leaderboard_data)
             
         return jsonify({
             'success': True,
@@ -224,7 +236,7 @@ def search_users(current_user_id: str):
         response = supabase.table('profiles') \
             .select('id, user_id, username, profile_picture_url, net_worth, wealth_level') \
             .ilike('username', f'%{safe}%').limit(25).execute()
-        return jsonify({'success': True, 'data': response.data}), 200
+        return jsonify({'success': True, 'data': _with_avatars(response.data or [])}), 200
     except Exception as e:
          return jsonify({'success': False, 'error': str(e)}), 500
 

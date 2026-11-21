@@ -719,6 +719,7 @@ create table public.player_game_clock (
   week             integer not null default 1 check (week >= 1),   -- the week being played
   banked_weeks     integer not null default 1 check (banked_weeks >= 0),
   bank_updated_on  date not null default (now() at time zone 'utc')::date,
+  last_nudged_on   date,                                            -- max one "week ready" push a day
   started_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
@@ -757,6 +758,46 @@ create table public.player_lives (
 -- At most one current life per player.
 create unique index player_lives_one_current on public.player_lives (user_id) where is_current;
 create index player_lives_user_idx on public.player_lives (user_id, life_number desc);
+
+-- The cast and roommates. See migrations/20261123000000_cast_and_roommates.sql.
+create table public.player_relationships (
+  user_id     uuid not null references public.profiles(user_id) on delete cascade,
+  character   text not null,
+  score       integer not null default 50 check (score between 0 and 100),
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, character)
+);
+
+create table public.cast_messages (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references public.profiles(user_id) on delete cascade,
+  character    text not null,
+  week         integer,
+  body         text not null,
+  from_player  boolean not null default false,
+  replies      jsonb,          -- [{id, label, ...effects}] or null
+  replied_with text,           -- the reply id chosen, once
+  read_at      timestamptz,
+  created_at   timestamptz not null default now()
+);
+create index cast_messages_thread_idx on public.cast_messages (user_id, character, created_at desc);
+
+create table public.roommates (
+  id              uuid primary key default gen_random_uuid(),
+  leaseholder_id  uuid not null references public.profiles(user_id) on delete cascade,
+  roommate_id     uuid not null references public.profiles(user_id) on delete cascade,
+  rental_id       uuid references public.player_rentals(id) on delete set null,
+  status          text not null default 'pending' check (status in ('pending', 'active', 'declined', 'ended')),
+  rent_share      numeric(4,3) not null default 0.5 check (rent_share > 0 and rent_share < 1),
+  created_at      timestamptz not null default now(),
+  accepted_at     timestamptz,
+  ended_at        timestamptz,
+  check (leaseholder_id <> roommate_id)
+);
+-- One active arrangement per person, on either side.
+create unique index roommates_active_leaseholder on public.roommates (leaseholder_id) where status = 'active';
+create unique index roommates_active_roommate on public.roommates (roommate_id) where status = 'active';
+create unique index roommates_one_pending_pair on public.roommates (leaseholder_id, roommate_id) where status = 'pending';
 
 -- =============================================================================
 -- Functions

@@ -38,6 +38,8 @@ revoke execute on function public.call_backend_cron(text) from public, anon, aut
 select cron.schedule('mentor-analysis',  '0 6 * * *',   $$select public.call_backend_cron('/api/cron/mentor-analysis/')$$);
 select cron.schedule('random-events',    '0 9 * * *',   $$select public.call_backend_cron('/api/cron/random-events/')$$);
 select cron.schedule('inactive-users',   '0 10 * * *',  $$select public.call_backend_cron('/api/cron/inactive-users-monitor/')$$);
+-- At most one "your week is ready" push per player per day, from a cast member.
+select cron.schedule('week-ready',       '0 16 * * *',  $$select public.call_backend_cron('/api/cron/week-ready/')$$);
 select cron.schedule('market-monitor',   '0 */4 * * *', $$select public.call_backend_cron('/api/cron/market-monitor/')$$);
 select cron.schedule('depreciation',     '0 2 1 * *',   $$select public.call_backend_cron('/api/cron/depreciation/')$$);
 select cron.schedule('appreciation',     '0 3 1 * *',   $$select public.call_backend_cron('/api/cron/appreciation/')$$);

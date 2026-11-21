@@ -15,19 +15,23 @@ Writing rules (keep the voice consistent when adding cards):
   * `teaser` is shown as next week's cliffhanger, so it hints, never spoils.
 
 Fields per choice: label, outcome, cash (signed $), sanity (signed), income
-(signed $/month, permanent; use sparingly).
+(signed $/month, permanent; use sparingly), rel (signed change to the card's
+character's relationship).
 `requires`: optional 'job' | 'no_job' | 'rental' | 'no_rental'.
+`character`: optional cast key (cast.py) the card is about.
+`min_rel` / `max_rel`: only deal the card when that relationship is at least /
+at most this value. `{roommate}` in text becomes your roommate's name.
 """
 
 CARDS = [
     # --- Social ---------------------------------------------------------------
     {
-        'key': 'birthday_dinner', 'icon': '🍕', 'category': 'social',
+        'key': 'birthday_dinner', 'character': 'bestie', 'icon': '🍕', 'category': 'social',
         'title': 'Birthday dinner',
         'body': "Jordan's birthday dinner is at the place with $18 fries. The group chat expects you.",
         'teaser': 'Someone in the group chat is planning something 👀',
-        'left': {'label': "Can't, I'm broke", 'outcome': 'You send a gif instead. The gif was not enough.', 'cash': 0, 'sanity': -4},
-        'right': {'label': "I'm in!", 'outcome': 'You split the bill evenly even though you had water. Worth it, mostly.', 'cash': -45, 'sanity': 6},
+        'left': {'rel': -4, 'label': "Can't, I'm broke", 'outcome': 'You send a gif instead. The gif was not enough.', 'cash': 0, 'sanity': -4},
+        'right': {'rel': 5, 'label': "I'm in!", 'outcome': 'You split the bill evenly even though you had water. Worth it, mostly.', 'cash': -45, 'sanity': 6},
     },
     {
         'key': 'concert_tickets', 'icon': '🎤', 'category': 'social',
@@ -38,21 +42,21 @@ CARDS = [
         'right': {'label': 'Buy it. Now.', 'outcome': 'You scream every lyric. Your bank account screams too.', 'cash': -120, 'sanity': 8},
     },
     {
-        'key': 'roommate_party', 'icon': '🎉', 'category': 'social',
+        'key': 'roommate_party', 'character': 'roommate', 'icon': '🎉', 'category': 'social',
         'title': 'House party',
-        'body': 'Your roommate wants to throw a party "for like 10 people". You know what that means.',
+        'body': '{roommate} wants to throw a party "for like 10 people". You know what that means.',
         'teaser': 'Your roommate has an idea. It is not a good idea.',
         'requires': 'rental',
-        'left': {'label': 'Absolutely not', 'outcome': 'You become the Responsible One. Nobody thanks you.', 'cash': 0, 'sanity': -2},
-        'right': {'label': 'Send it', 'outcome': '60 people came. Someone broke the blinds. Legendary night though.', 'cash': -60, 'sanity': 7},
+        'left': {'rel': -3, 'label': 'Absolutely not', 'outcome': 'You become the Responsible One. Nobody thanks you.', 'cash': 0, 'sanity': -2},
+        'right': {'rel': 4, 'label': 'Send it', 'outcome': '60 people came. Someone broke the blinds. Legendary night though.', 'cash': -60, 'sanity': 7},
     },
     {
-        'key': 'friend_loan', 'icon': '🤝', 'category': 'social',
+        'key': 'friend_loan', 'character': 'bestie', 'icon': '🤝', 'category': 'social',
         'title': 'Can I borrow $50?',
-        'body': 'Your friend needs $50 "until Friday". They said the same thing in March.',
+        'body': 'Jordan needs $50 "until Friday". They said the same thing in March.',
         'teaser': 'A friend is about to ask you for something 💸',
-        'left': {'label': 'Sorry, tight month', 'outcome': 'Slightly awkward. Your $50 is safe.', 'cash': 0, 'sanity': -2},
-        'right': {'label': 'Send it', 'outcome': "You'll never see that $50 again, but they owe you forever.", 'cash': -50, 'sanity': 4},
+        'left': {'rel': -3, 'label': 'Sorry, tight month', 'outcome': 'Slightly awkward. Your $50 is safe.', 'cash': 0, 'sanity': -2},
+        'right': {'rel': 4, 'label': 'Send it', 'outcome': "You'll never see that $50 again, but they owe you forever.", 'cash': -50, 'sanity': 4},
     },
     {
         'key': 'situationship', 'icon': '💬', 'category': 'social',
@@ -71,12 +75,12 @@ CARDS = [
         'right': {'label': 'Buy the spoon', 'outcome': 'It is a very nice spoon. You are now a Gift Person.', 'cash': -85, 'sanity': 3},
     },
     {
-        'key': 'group_trip', 'icon': '🏖️', 'category': 'social',
+        'key': 'group_trip', 'character': 'bestie', 'icon': '🏖️', 'category': 'social',
         'title': 'Group trip',
-        'body': 'The group chat is planning a beach weekend. Deposit is $150 by tonight.',
+        'body': 'Jordan is planning a beach weekend for the group. Deposit is $150 by tonight.',
         'teaser': 'The group chat is about to propose a trip 🧳',
-        'left': {'label': 'FOMO it out', 'outcome': 'You watch their stories from your bed. The sand looks soft.', 'cash': 0, 'sanity': -6},
-        'right': {'label': 'Pay the deposit', 'outcome': 'Best weekend in months. You come back tanned and broke.', 'cash': -150, 'sanity': 8},
+        'left': {'rel': -3, 'label': 'FOMO it out', 'outcome': 'You watch their stories from your bed. The sand looks soft.', 'cash': 0, 'sanity': -6},
+        'right': {'rel': 5, 'label': 'Pay the deposit', 'outcome': 'Best weekend in months. You come back tanned and broke.', 'cash': -150, 'sanity': 8},
     },
 
     # --- Money / temptation ----------------------------------------------------
@@ -252,12 +256,12 @@ CARDS = [
         'right': {'label': 'Call a plumber', 'outcome': 'Fixed in 20 minutes. You pay, then send the landlord the receipt. Bold.', 'cash': -75, 'sanity': 3},
     },
     {
-        'key': 'roommate_dishes', 'icon': '🍽️', 'category': 'home',
+        'key': 'roommate_dishes', 'character': 'roommate', 'icon': '🍽️', 'category': 'home',
         'title': 'The dishes',
-        'body': 'The dishes have been in the sink for 6 days. They are developing a culture.',
+        'body': 'The dishes have been in the sink for 6 days. {roommate} swears they\'re "soaking".',
         'teaser': 'Something in the kitchen is evolving 🦠',
-        'left': {'label': 'Just do them', 'outcome': 'Clean kitchen, quiet resentment. Very adult of you.', 'cash': 0, 'sanity': -2},
-        'right': {'label': 'Passive-aggressive note', 'outcome': 'The note started a war. The dishes remain.', 'cash': 0, 'sanity': -4},
+        'left': {'rel': 2, 'label': 'Just do them', 'outcome': 'Clean kitchen, quiet resentment. Very adult of you.', 'cash': 0, 'sanity': -2},
+        'right': {'rel': -5, 'label': 'Passive-aggressive note', 'outcome': 'The note started a war. The dishes remain.', 'cash': 0, 'sanity': -4},
     },
     {
         'key': 'thrift_furniture', 'icon': '🛋️', 'category': 'home',
@@ -268,13 +272,13 @@ CARDS = [
         'right': {'label': 'Carry it home', 'outcome': 'It smells like 2009, but it is YOUR couch now.', 'cash': 0, 'sanity': 4},
     },
     {
-        'key': 'moving_home', 'icon': '🏠', 'category': 'home',
+        'key': 'moving_home', 'character': 'mom', 'icon': '🏠', 'category': 'home',
         'title': 'Mom calls',
         'body': '"You know your old room is still here." She means it kindly. You feel it anyway.',
         'teaser': 'Your mom is about to call 📞',
         'requires': 'no_rental',
-        'left': {'label': 'Stay home a bit', 'outcome': 'Free food, free laundry, zero privacy. You call it "saving".', 'cash': 40, 'sanity': -2},
-        'right': {'label': 'Start apartment hunting', 'outcome': 'You save 14 listings. One has a "cozy" (tiny) bedroom.', 'cash': 0, 'sanity': 2},
+        'left': {'rel': 4, 'label': 'Stay home a bit', 'outcome': 'Free food, free laundry, zero privacy. You call it "saving".', 'cash': 40, 'sanity': -2},
+        'right': {'rel': -1, 'label': 'Start apartment hunting', 'outcome': 'You save 14 listings. One has a "cozy" (tiny) bedroom.', 'cash': 0, 'sanity': 2},
     },
 
     # --- Weird / rare ------------------------------------------------------------
@@ -309,6 +313,40 @@ CARDS = [
         'teaser': 'The Void has a question for you 🕳️',
         'left': {'label': 'Lurk', 'outcome': "Someone bought a $200 lamp shaped like a duck. You feel better.", 'cash': 0, 'sanity': 2},
         'right': {'label': 'Confess', 'outcome': '43 people replied "same". You are not alone in the Void.', 'cash': 0, 'sanity': 5},
+    },
+
+    # --- The cast (relationship-gated) ----------------------------------------------
+    {
+        'key': 'mom_care_package', 'icon': '📦', 'category': 'family', 'character': 'mom', 'min_rel': 70,
+        'title': 'Care package',
+        'body': 'Mom sent a box: snacks, socks, $60 in a card, and a note that says "eat vegetables". You are loved.',
+        'teaser': 'Something is in the mail for you 📦',
+        'left': {'label': 'Call to say thanks', 'outcome': 'You talk for an hour. She cries a bit. So do you.', 'cash': 60, 'sanity': 6, 'rel': 3},
+        'right': {'label': 'Text "thx ❤️"', 'outcome': 'Efficient. She screenshots it for the family group chat.', 'cash': 60, 'sanity': 2, 'rel': -1},
+    },
+    {
+        'key': 'mom_worried', 'icon': '📞', 'category': 'family', 'character': 'mom', 'max_rel': 30,
+        'title': '4 missed calls',
+        'body': "Mom has called four times. The last voicemail just says your full name.",
+        'teaser': 'Your phone is about to ring. A lot.',
+        'left': {'label': 'Call her back', 'outcome': "Twenty minutes of guilt, then she asks if you're eating. You make up.", 'cash': 0, 'sanity': -2, 'rel': 12},
+        'right': {'label': 'Let it ring', 'outcome': 'The silence is loud. She emails you a link about "staying connected".', 'cash': 0, 'sanity': -3, 'rel': -5},
+    },
+    {
+        'key': 'bestie_covers', 'icon': '🫶', 'category': 'social', 'character': 'bestie', 'min_rel': 70,
+        'title': 'Jordan has your back',
+        'body': 'Jordan noticed you\'ve been skipping meals to save money and sends you $80. "pay me back whenever. or never. idc"',
+        'teaser': 'Someone has been paying attention 🫶',
+        'left': {'label': 'Accept it', 'outcome': "You're lucky to have them. You'll pay it back. Eventually. Probably.", 'cash': 80, 'sanity': 4, 'rel': -1},
+        'right': {'label': "I'm good, thank you", 'outcome': "Pride intact, wallet empty. They respect it, and they're still worried.", 'cash': 0, 'sanity': 1, 'rel': 3},
+    },
+    {
+        'key': 'ex_wants_to_talk', 'icon': '🥀', 'category': 'social', 'character': 'ex', 'min_rel': 65,
+        'title': 'Riley wants to "talk"',
+        'body': 'Riley asks to grab coffee "just to catch up". Your heart and your brain are not on speaking terms.',
+        'teaser': 'Someone from your past is back 👀',
+        'left': {'label': 'Protect your peace', 'outcome': 'You say no. It stings for a day, then it feels like freedom.', 'cash': 0, 'sanity': 4, 'rel': -10},
+        'right': {'label': 'Go for coffee', 'outcome': 'Two hours, $14 lattes, zero closure. You do feel seen though.', 'cash': -14, 'sanity': -5, 'rel': 8},
     },
 ]
 

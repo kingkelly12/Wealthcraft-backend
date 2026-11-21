@@ -5,6 +5,7 @@ GET   /api/life/           current life, backgrounds, past lives
 POST  /api/life/begin/     {"background": key | "original", "avatar": {...}}
 POST  /api/life/end/       end the current life -> summary with an ending
 PUT   /api/life/avatar/    {"avatar": {...}}
+GET   /api/life/avatars/?ids=a,b,c   other players' avatars (max 200)
 """
 import logging
 
@@ -51,3 +52,10 @@ def end(current_user_id: str):
 @require_auth
 def avatar(current_user_id: str):
     return _run(life.update_avatar, current_user_id, (request.get_json(silent=True) or {}).get('avatar'))
+
+
+@life_bp.route('/avatars/', methods=['GET'])
+@require_auth
+def avatars(current_user_id: str):
+    ids = [i for i in (request.args.get('ids') or '').split(',') if i][:200]
+    return _run(life.avatars_for, ids)

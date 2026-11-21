@@ -153,6 +153,42 @@ def _has_progress(uid):
     return False
 
 
+def avatars_for(user_ids):
+    """
+    Public look of other players: {user_id: {'avatar', 'age', 'background_emoji'}}.
+    Players without a current life are left out (the app falls back to their photo).
+    """
+    ids = list({str(i) for i in user_ids if i})[:200]
+    if not ids:
+        return {}
+    lives = supabase.table('player_lives').select('user_id, avatar, start_age, background') \
+        .in_('user_id', ids).eq('is_current', True).execute().data or []
+    if not lives:
+        return {}
+    clocks = supabase.table('player_game_clock').select('user_id, week').in_('user_id', ids).execute().data or []
+    weeks = {str(c['user_id']): int(c['week']) for c in clocks}
+    out = {}
+    for l in lives:
+        uid = str(l['user_id'])
+        info = background_info(l['background']) or ORIGINAL
+        out[uid] = {
+            'avatar': l.get('avatar') or {},
+            'age': age_at(weeks.get(uid, 1), l['start_age'])['years'],
+            'background_emoji': info['emoji'],
+        }
+    return out
+
+
+def attach_avatars(rows, key='user_id'):
+    """Add 'avatar' and 'age' to each row (in place) for rows that have a current life."""
+    found = avatars_for([r.get(key) for r in rows])
+    for r in rows:
+        a = found.get(str(r.get(key)))
+        r['avatar'] = a['avatar'] if a else None
+        r['age'] = a['age'] if a else None
+    return rows
+
+
 def public_life(life, week=None):
     if not life:
         return None
@@ -332,6 +368,11 @@ def _reset_run(uid, bg):
     supabase.table('user_courses').delete().eq('user_id', uid).is_('completed_at', 'null').execute()
     supabase.table('player_mission_progress').update({'is_active': False, 'abandoned_at': now}) \
         .eq('player_id', uid).eq('is_active', True).execute()
+
+    # New person, new relationships; any shared flat is left behind.
+    from app.game import cast, roommates
+    roommates.end_all_for(uid)
+    cast.reset(uid)
 
     # A fresh clock: week 1, one week ready to play.
     supabase.table('player_weeks').delete().eq('user_id', uid).execute()

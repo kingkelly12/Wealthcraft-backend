@@ -65,6 +65,12 @@ class _Query:
     def lte(self, col, val):
         return self._filter(lambda r: r.get(col) is not None and r.get(col) <= val)
 
+    def ilike(self, col, pattern):
+        """SQL ILIKE with % wildcards (escapes ignored: tests don't need them)."""
+        import re
+        rx = re.compile('^' + '.*'.join(re.escape(p) for p in pattern.split('%')) + '$', re.I | re.S)
+        return self._filter(lambda r: r.get(col) is not None and bool(rx.match(str(r.get(col)))))
+
     def in_(self, col, vals):
         vals = {_norm(v) for v in vals}
         return self._filter(lambda r: _norm(r.get(col)) in vals)

@@ -17,6 +17,7 @@ from jobs.monthly_apreciation import run_monthly_appreciation
 from jobs.monthly_loan_deductions import process_monthly_deductions
 from jobs.trigger_random_events import trigger_random_events
 from jobs.inactive_users_monitor import run_inactive_users_monitor
+from jobs.week_ready_nudge import run_week_ready_nudge
 
 cron_bp = Blueprint('cron', __name__)
 
@@ -181,6 +182,18 @@ def cron_loan_deductions():
             'error': str(e),
             'type': type(e).__name__
         }), 500
+
+
+@cron_bp.route('/week-ready/', methods=['POST'], strict_slashes=False)
+@require_cron_secret
+def cron_week_ready():
+    """'Your week is ready' push from a cast member, max one a day — Schedule: 0 16 * * *"""
+    try:
+        return jsonify({'success': True, 'data': run_week_ready_nudge()}), 200
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception('Week-ready nudge failed')
+        return jsonify({'success': False, 'error': str(e), 'type': type(e).__name__}), 500
 
 
 # ── Diagnostic Endpoint ─────────────────────────────────────────

@@ -150,6 +150,11 @@ def get_consolidated_dashboard(current_user_id: str):
                 'profile_picture_url': player.get('profile_picture_url'),
                 'rank': idx + 1
             })
+        try:
+            from app.game.life import attach_avatars
+            attach_avatars(top_players_with_rank)
+        except Exception as avatar_err:
+            logger.warning(f"Leaderboard avatars failed: {avatar_err}")
 
         # 11. Market News (latest 10 headlines for MarketNewsTicker)
         try:

@@ -132,35 +132,60 @@ def _check_life(uid, week):
 # --- deck ---------------------------------------------------------------------
 
 def _player_context(uid: str) -> dict:
+    from app.game import cast, roommates
     jobs = supabase.table('jobs').select('id').eq('user_id', uid).eq('is_current', True).limit(1).execute()
     rentals = supabase.table('player_rentals').select('id').eq('player_id', uid).eq('is_active', True).limit(1).execute()
+    roommate = roommates.roommate_name(uid)
     return {
         'job': bool(jobs.data),
-        'rental': bool(rentals.data),
+        # Living in a friend's place counts as renting, for the cards.
+        'rental': bool(rentals.data) or bool(roommate),
         'balance': BalanceService.get_current_balance(uid),
+        'rel': cast.relationships(uid),
+        'roommate_name': roommate or cast.CAST['roommate']['name'],
     }
 
 
 def _eligible(card, ctx) -> bool:
     req = card.get('requires')
-    return {
+    ok = {
         None: True,
         'job': ctx['job'],
         'no_job': not ctx['job'],
         'rental': ctx['rental'],
         'no_rental': not ctx['rental'],
     }.get(req, True)
+    if card.get('character') == 'roommate' and not ctx['rental']:
+        ok = False
+    who = card.get('character')
+    if who and 'min_rel' in card and ctx['rel'].get(who, 50) < card['min_rel']:
+        ok = False
+    if who and 'max_rel' in card and ctx['rel'].get(who, 50) > card['max_rel']:
+        ok = False
+    return ok
 
 
-def _everyday_card(card) -> dict:
+def _everyday_card(card, ctx=None) -> dict:
+    from app.game.cast import CAST
+    name = (ctx or {}).get('roommate_name') or CAST['roommate']['name']
+
+    def fill(text):
+        return text.replace('{roommate}', name)
+
     def side(sid, c):
         return {
-            'id': sid, 'label': c['label'], 'outcome': c['outcome'],
+            'id': sid, 'label': fill(c['label']), 'outcome': fill(c['outcome']),
             'cash': float(c.get('cash', 0)), 'sanity': int(c.get('sanity', 0)), 'income': float(c.get('income', 0)),
+            'rel': int(c.get('rel', 0)),
         }
+    who = card.get('character')
+    person = None
+    if who:
+        person = {'key': who, 'name': name if who == 'roommate' else CAST[who]['name'], 'emoji': CAST[who]['emoji']}
     return {
         'kind': 'everyday', 'key': card['key'], 'category': card['category'], 'icon': card['icon'],
-        'title': card['title'], 'body': card['body'], 'teaser': card['teaser'],
+        'character': person,
+        'title': fill(card['title']), 'body': fill(card['body']), 'teaser': fill(card['teaser']),
         'choices': [side('left', card['left']), side('right', card['right'])],
     }
 
@@ -253,8 +278,12 @@ def build_deck(user_id: str, week: int) -> list:
     pool = [c for c in CARDS if _eligible(c, ctx) and c['key'] not in recent]
     if len(pool) < CARDS_PER_WEEK:
         pool = [c for c in CARDS if _eligible(c, ctx)]
-    picks = rng.sample(pool, k=min(CARDS_PER_WEEK - len(cards), len(pool)))
-    cards += [_everyday_card(c) for c in picks]
+    slots = CARDS_PER_WEEK - len(cards)
+    gated = [c for c in pool if 'min_rel' in c or 'max_rel' in c]
+    picks = rng.sample(gated, k=min(1, len(gated), slots))
+    rest = [c for c in pool if c not in picks]
+    picks += rng.sample(rest, k=min(slots - len(picks), len(rest)))
+    cards += [_everyday_card(c, ctx) for c in picks]
 
     rng.shuffle(cards)
     for i, card in enumerate(cards):
@@ -415,6 +444,13 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
         res = supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': int(choice['sanity'])}).execute()
         new_sanity = int(res.data) if res.data is not None else before
 
+    rel_delta = 0
+    who = (card.get('character') or {}).get('key') if isinstance(card.get('character'), dict) else None
+    if who and choice.get('rel'):
+        from app.game import cast
+        before_rel = cast.relationships(uid)[who]
+        rel_delta = cast.adjust(uid, who, choice['rel']) - before_rel
+
     # 4. Life events keep their history (mentors and analytics read it).
     if card['kind'] == 'life_event':
         try:
@@ -434,6 +470,7 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
         'cash': float(cash),
         'sanity': new_sanity - before,
         'income': float(income),
+        'rel': rel_delta,
         'new_sanity': new_sanity,
         'new_balance': float(BalanceService.get_current_balance(uid)),
         'game_over': new_sanity <= 0 < before,
@@ -484,6 +521,7 @@ def complete_week(user_id: str) -> dict:
         choice = next((ch for ch in c['choices'] if ch['id'] == c.get('chosen')), {})
         lines.append({
             'title': c['title'], 'icon': c.get('icon'), 'event_type': c.get('event_type'),
+            'category': c.get('category'), 'character': c.get('character'),
             'choice': choice.get('label'), 'cash': r.get('cash', 0), 'sanity': r.get('sanity', 0), 'income': r.get('income', 0),
         })
     card_cash = sum(Decimal(str(l['cash'])) for l in lines)
@@ -507,6 +545,9 @@ def complete_week(user_id: str) -> dict:
         'sanity_after': _sanity_of(uid),
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
+    from app.game import cast
+    receipt['texts'] = cast.react_to_week(uid, receipt)
+
     supabase.table('player_weeks').update({
         'status': 'completed', 'receipt': receipt, 'completed_at': receipt['completed_at'],
     }).eq('id', deck['id']).execute()

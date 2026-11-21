@@ -166,6 +166,7 @@ def _run_month(scope, profiles_map, game_years):
         ('loans', lambda: _charge_loans(scope, profiles_map, get_summary)),
         ('luxury maintenance', lambda: _charge_maintenance(scope, get_summary)),
         ('rent', lambda: _charge_rent(scope, get_summary)),
+        ('roommate rent', lambda: _roommate_rent(scope, get_summary)),
         ('living costs', lambda: _charge_living_costs(profiles_map, get_summary, game_years)),
         ('asset income', lambda: _pay_asset_income(scope, get_summary)),
     )
@@ -311,6 +312,35 @@ def _charge_rent(scope, get_summary):
         else:
             logger.warning(f"User {user_id} missed rent for {rental['id']}.")
             summ.missed(rent, f"Missed rent: {name}", f"⚠️ Missed {name} (${rent:,.2f})")
+
+
+def _roommate_rent(scope, get_summary):
+    """A roommate pays their share of the rent to the leaseholder, on the roommate's month."""
+    arrangements = scope.filter(supabase.table('roommates').select('*').eq('status', 'active'), 'roommate_id').execute()
+    for arr in arrangements.data or []:
+        mate, holder = str(arr['roommate_id']), str(arr['leaseholder_id'])
+        if not scope.includes(mate):
+            continue
+        rental = supabase.table('player_rentals').select('*, rental_properties(*)') \
+            .eq('player_id', holder).eq('is_active', True).limit(1).execute().data
+        if not rental:
+            # The leaseholder moved out: the arrangement is over.
+            supabase.table('roommates').update({'status': 'ended', 'ended_at': datetime.now(timezone.utc).isoformat()}) \
+                .eq('id', arr['id']).execute()
+            continue
+        rental = rental[0]
+        place = (rental.get('rental_properties') or {}).get('name') or 'the flat'
+        share = (Decimal(str(rental.get('monthly_rent') or 0)) * Decimal(str(arr.get('rent_share') or 0.5))).quantize(Decimal('0.01'))
+        if share <= 0:
+            continue
+        summ = get_summary(mate)
+        if BalanceService.get_current_balance(mate) < share:
+            summ.missed(share, f"Missed rent share: {place}", f"⚠️ Missed rent share for {place} (${share:,.2f})")
+            continue
+        BalanceService.subtract_balance(mate, share, f"Rent share: {place}", category='rent')
+        BalanceService.add_balance(holder, share, "Roommate's rent share", category='rent')
+        summ.debit(share, f"Rent share: {place}")
+        get_summary(holder).credit(share, "Roommate's rent share")
 
 
 def _years_since(created_at_str, now):
