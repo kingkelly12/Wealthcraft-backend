@@ -15,7 +15,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from my_flask_app.app import create_app
+from app import create_app
 import argparse
 import uuid
 import random

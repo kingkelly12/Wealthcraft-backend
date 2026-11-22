@@ -1,13 +1,11 @@
 from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
 from flask_cors import CORS
 from config import config
 
 from supabase import create_client, Client
 
 db = SQLAlchemy()
-migrate = Migrate()
 supabase: Client = None
 
 def create_app(config_name='default'):
@@ -17,7 +15,6 @@ def create_app(config_name='default'):
 
     # Initialize extensions
     db.init_app(app)
-    migrate.init_app(app, db)
     
     # Initialize Supabase
     global supabase

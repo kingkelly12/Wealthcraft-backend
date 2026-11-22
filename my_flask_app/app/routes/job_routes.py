@@ -67,9 +67,18 @@ def get_current_jobs(current_user_id: str):
 def get_jobs_overview(current_user_id: str):
     """Consolidated jobs market and current user jobs"""
     try:
-        # 1. Available Market
+        # 1. Available Market, each listing with whether you have the experience for it
+        from app.game import careers
         market_res = supabase.table('job_market').select('*').execute()
-        
+        exp = careers.experience(current_user_id)
+        market = []
+        for j in market_res.data or []:
+            fit = careers.check(j, exp)
+            market.append({**j, **fit, 'level_label': careers.LEVEL_LABEL.get((j.get('level') or 'entry').lower())})
+        rank = {lvl: i for i, lvl in enumerate(careers.LEVELS)}
+        market.sort(key=lambda j: ((j.get('kind') or 'job') == 'gig', j.get('industry') or '',
+                                   rank.get((j.get('level') or 'entry').lower(), 0), float(j.get('salary') or 0)))
+
         # 2. Current User Jobs
         user_ids = resolve_user_ids(current_user_id)
         current_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
@@ -85,8 +94,10 @@ def get_jobs_overview(current_user_id: str):
         return jsonify({
             'success': True,
             'data': {
-                'market': market_res.data or [],
+                'market': market,
                 'current': current_res.data or [],
+                # Months worked per industry in this life.
+                'experience': exp,
                 'news': news_res.data or []
             }
         }), 200
@@ -160,6 +171,18 @@ def apply_for_job(current_user_id: str):
                 'message': 'You already have a main job. Quit it to take this one, or pick up a gig on the side.'
             }), 400
         
+        # 2b. Careers are a ladder: higher rungs need experience in the industry.
+        from app.game import careers
+        if not is_gig:
+            fit = careers.check(job, careers.experience(current_user_id))
+            if not fit['eligible']:
+                return jsonify({
+                    'success': False,
+                    'error': 'NEEDS_EXPERIENCE',
+                    'message': careers.blocked_message(job, fit),
+                    'data': fit,
+                }), 403
+
         # 3. Check for duplicate job
         existing_jobs = supabase.table('jobs').select('id').in_('user_id', user_ids).eq('title', job['title']).eq('company', job['company']).eq('is_current', True).execute()
         
@@ -188,6 +211,8 @@ def apply_for_job(current_user_id: str):
             'salary': 0 if is_gig else job['salary'],
             'level': job.get('level', 'entry'),
             'experience_months': job.get('experience_months', 0),
+            'industry': job.get('industry'),
+            'months_worked': 0,
             'is_current': True,
             'kind': 'gig' if is_gig else 'job',
             'weekly_pay': float(job.get('weekly_pay') or 0) if is_gig else 0,

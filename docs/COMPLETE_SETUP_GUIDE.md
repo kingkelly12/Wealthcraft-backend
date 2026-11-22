@@ -154,23 +154,14 @@ npx expo start --dev-client
 
 ### Create Mentor Tables
 
-**Option A: Supabase Dashboard**
-1. Go to SQL Editor
-2. Copy contents of: `supabase/migrations/20250126_create_mentor_tables.sql`
-3. Paste and click "Run"
-
-**Option B: Using psql**
-```bash
-# Get your connection string from Supabase Dashboard → Settings → Database
-psql "postgresql://postgres.lllydwymcuulrsqxumvl:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres" \
-  -f supabase/migrations/20250126_create_mentor_tables.sql
-```
+The mentor tables (`mentors`, `mentor_messages`, `player_mentor_interactions`)
+are created by `supabase/schema.sql`. Nothing extra to run.
 
 ### Seed Mentor Data
 
 **Supabase Dashboard:**
 1. Go to SQL Editor
-2. Copy contents of: `my_flask_app/seed_mentors.sql`
+2. Copy contents of: `supabase/seed_mentors.sql`
 3. Paste and click "Run"
 
 ---
@@ -243,8 +234,8 @@ curl -X POST 'https://lllydwymcuulrsqxumvl.supabase.co/functions/v1/daily-mentor
 
 ### Important Files
 - Edge Function: `supabase/functions/daily-mentor-analysis/index.ts`
-- Migration: `supabase/migrations/20250126_create_mentor_tables.sql`
-- Seed Data: `my_flask_app/seed_mentors.sql`
+- Tables: `supabase/schema.sql`
+- Seed Data: `supabase/seed_mentors.sql`
 - Mobile Setup: `mobile/ANDROID_INSTALL.md`
 
 ### Important Commands

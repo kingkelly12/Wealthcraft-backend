@@ -366,6 +366,9 @@ def _reset_run(uid, bg):
             raise LifeError('P2P_OPEN', 'Settle or cancel your P2P loans before starting a new life.', 409)
 
     supabase.table('jobs').update({'is_current': False}).eq('user_id', uid).eq('is_current', True).execute()
+    from app.game import careers, market
+    careers.reset_for_new_life(uid)
+    market.reset_for_new_life(uid)
     supabase.table('player_rentals').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('player_liabilities').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('user_assets').delete().eq('user_id', uid).execute()

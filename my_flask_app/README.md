@@ -1,67 +1,51 @@
-# Adulting Flask Backend
+# Adulting Flask backend
 
-Scalable Python/Flask backend with 20 SQLAlchemy models, service layer, and RESTful API.
+Flask API for the Adulting mobile app. Data lives in Supabase (Postgres); the
+schema and all seed data are owned by `../supabase/`, not by this app.
 
-## Quick Start
+## Layout
+
+```
+my_flask_app/
+├── run.py              # app entry point (gunicorn run:app in Docker; python run.py locally)
+├── config.py           # env-driven config (development / production / testing)
+├── run_local.sh        # serve on your LAN so a phone can reach it
+├── app/
+│   ├── routes/         # HTTP endpoints, one blueprint per area
+│   ├── services/       # business logic (balances, mentors, AI, push, ...)
+│   ├── game/           # weekly game loop: cards, careers, homes, market, squads, ...
+│   ├── models/         # SQLAlchemy models (mirrors of supabase/schema.sql tables)
+│   ├── schemas/        # Pydantic request/response validation
+│   └── utils/          # auth (JWT), DB helpers, mission constraints, caching
+├── jobs/               # scheduled jobs, triggered via /api/cron/* (see ../supabase/cron.sql)
+├── tests/              # automated pytest suite (offline)
+└── scripts/            # manual tools against a real project (see scripts/README.md)
+```
+
+## Quick start
+
+```bash
+# from the repo root
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example my_flask_app/.env      # fill in Supabase URL/keys and DATABASE_URL
+
+cd my_flask_app
+../.venv/bin/python run.py --host 0.0.0.0     # http://localhost:5000
+```
+
+Database setup (once per Supabase project), all in `../supabase/`: run
+`schema.sql`, then `seed.sql`, `seed_mentors.sql`, `seed_life_events.sql`, then
+the files in `migrations/` in order, then `cron.sql`.
+
+## Tests
 
 ```bash
 cd my_flask_app
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Initialize database
-flask db init
-flask db migrate
-flask db upgrade
-
-# Run development server
-flask run
+../.venv/bin/python -m pytest
 ```
 
-## API Endpoints
+## Deploy
 
-### Authentication
-- `POST /api/auth/register` - Register new user
-
-### Profile Management
-- `GET /api/profile/<user_id>` - Get profile
-- `POST /api/profile/` - Create profile
-- `PUT /api/profile/<user_id>` - Update profile
-
-### Asset Marketplace
-- `GET /api/assets/marketplace` - List all assets
-- `GET /api/assets/marketplace?category=stocks` - Filter by category
-- `GET /api/assets/user/<user_id>` - Get user's portfolio
-- `POST /api/assets/buy/<user_id>` - Purchase asset
-- `DELETE /api/assets/sell/<user_id>/<asset_id>` - Sell asset
-
-## Models (20 Total)
-
-**Core**: User, Profile, UserBalance, Transaction, Notification  
-**Assets**: Asset, UserAsset, Job, Course  
-**Liabilities**: Liability, LiabilityItem, P2PLoan, BankLoan  
-**Housing**: RentalProperty, PlayerRental  
-**Social**: UserFollow, ChatMessage, LifeEvent  
-**Missions**: IntegratedMission, PlayerMissionProgress
-
-## Testing
-
-```bash
-export PYTHONPATH=$PYTHONPATH:.
-pytest -v
-```
-
-## Production Deployment
-
-```bash
-gunicorn -w 4 -b 0.0.0.0:8000 run:app
-```
-
-## Architecture
-
-```
-Routes (API) → Services (Logic) → Models (Data) → Database
-```
-
-Each layer is independent and testable.
+Cloud Run via the root `Dockerfile` and `deploy.sh` (see `../docs/CLOUDRUN_DEPLOYMENT_GUIDE.md`).
+The full endpoint list is in `../docs/FLASK_API_ENDPOINTS.md`.

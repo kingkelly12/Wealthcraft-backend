@@ -188,9 +188,9 @@ update life_event_choices set outcome_description = '"Heyyy you!" They know. The
 update life_event_choices set outcome_description = 'You admit it. They forgot yours too. Instant friends.', cost = 0, benefit = 0, impact_sanity = 3, impact_income = 0
   where choice_order = 2 and life_event_id in (select id from life_events where title = 'Forgot Name');
 update life_event_choices set outcome_description = 'You hide behind the cereal for nine minutes. Dignity: lost.', cost = 0, benefit = 0, impact_sanity = -3, impact_income = 0
-  where choice_order = 1 and life_event_id in (select id from life_events where title = 'Ran into Ex');
+  where choice_order = 1 and life_event_id in (select id from life_events where title = 'The Ex Sighting');
 update life_event_choices set outcome_description = 'Painful, polite and over in a minute. Growth.', cost = 0, benefit = 0, impact_sanity = 2, impact_income = 0
-  where choice_order = 2 and life_event_id in (select id from life_events where title = 'Ran into Ex');
+  where choice_order = 2 and life_event_id in (select id from life_events where title = 'The Ex Sighting');
 update life_event_choices set outcome_description = 'You delete the app for a week. The world keeps spinning.', cost = 0, benefit = 0, impact_sanity = 5, impact_income = 0
   where choice_order = 1 and life_event_id in (select id from life_events where title = 'Everyone is Engaged');
 update life_event_choices set outcome_description = 'You compare your life to strangers'' best days until 2am.', cost = 0, benefit = 0, impact_sanity = -8, impact_income = 0
@@ -297,7 +297,7 @@ update life_events set impact_sanity = 0 where title in (
   'Awkward Date',
   'Social Battery Dead',
   'Forgot Name',
-  'Ran into Ex',
+  'The Ex Sighting',
   'Everyone is Engaged',
   'Cancelled Plans',
   'Accidental Like',

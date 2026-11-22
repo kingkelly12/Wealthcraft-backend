@@ -2,8 +2,8 @@
 -- Adulting / Wealthcraft — consolidated Supabase schema
 -- =============================================================================
 -- Run this ONCE on a brand-new Supabase project (SQL Editor → paste → Run),
--- then run supabase/seed.sql, my_flask_app/seed_mentors.sql and
--- my_flask_app/seed_life_events.sql.
+-- then run supabase/seed.sql, supabase/seed_mentors.sql and
+-- supabase/seed_life_events.sql.
 --
 -- Design rules this schema enforces:
 --   * Every per-player table keys on auth.users.id (stored as `user_id` /
@@ -840,6 +840,9 @@ alter table public.job_market add column if not exists hours_per_week integer;
 alter table public.job_market add column if not exists sanity_per_week integer not null default 0;
 alter table public.jobs add column if not exists kind text not null default 'job';
 alter table public.jobs add column if not exists weekly_pay numeric(12,2) not null default 0;
+-- Careers (app/game/careers.py): months of experience earned on this job, and its industry.
+alter table public.jobs add column if not exists months_worked integer not null default 0;
+alter table public.jobs add column if not exists industry text;
 alter table public.jobs add column if not exists sanity_per_week integer not null default 0;
 do $$ begin
   alter table public.job_market add constraint job_market_kind_check check (kind in ('job', 'gig'));
@@ -1146,6 +1149,38 @@ grant  execute on function public.adjust_sanity(uuid, integer)                to
 grant  execute on function public.refresh_void_post_counts(uuid)              to service_role;
 grant  execute on function public.start_integrated_mission(uuid, uuid)        to service_role;
 grant  execute on function public.get_top_players(integer)                    to anon, authenticated, service_role;
+
+-- =============================================================================
+-- The market on game time (app/game/market.py): each player's own prices.
+-- =============================================================================
+alter table public.assets add column if not exists annual_drift numeric(6,4);
+alter table public.assets add column if not exists annual_volatility numeric(6,4);
+
+
+create table public.player_market_prices (
+  user_id    uuid not null references public.profiles(user_id) on delete cascade,
+  asset_id   text not null references public.assets(id) on delete cascade,
+  price      numeric(18,2) not null check (price > 0),
+  prev_price numeric(18,2),
+  week       integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, asset_id)
+);
+
+create table public.player_market_events (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.profiles(user_id) on delete cascade,
+  week       integer not null,
+  kind       text not null,
+  emoji      text,
+  title      text not null,
+  body       text,
+  shock_pct  numeric(6,1),
+  assets     text[] not null default '{}',
+  created_at timestamptz not null default now()
+);
+create index player_market_events_user_week_idx on public.player_market_events (user_id, week desc);
+
 
 -- =============================================================================
 -- Row Level Security

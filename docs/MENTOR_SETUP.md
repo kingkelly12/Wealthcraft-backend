@@ -10,18 +10,9 @@ cd /home/kelly_koome/Devops/wealthcraft-legacy-sim
 supabase db push
 ```
 
-### Option B: Using psql with your Supabase connection string
-```bash
-# Replace with your actual Supabase connection string from .env
-psql "postgresql://postgres.lllydwymcuulrsqxumvl:[YOUR_PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres" -f supabase/migrations/20250126_create_mentor_tables.sql
-```
-
-### Option C: Using Supabase Dashboard
-1. Go to https://supabase.com/dashboard
-2. Select your project
-3. Go to SQL Editor
-4. Copy the contents of `supabase/migrations/20250126_create_mentor_tables.sql`
-5. Paste and run
+### The tables
+The mentor tables are created by `supabase/schema.sql` (the old
+`20250126_create_mentor_tables.sql` migration was folded into it and removed).
 
 ## 2. Seed Mentor Data
 
@@ -29,12 +20,12 @@ After creating the tables, seed the mentor data:
 
 ### Using psql:
 ```bash
-psql "postgresql://postgres.lllydwymcuulrsqxumvl:[YOUR_PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres" -f my_flask_app/seed_mentors.sql
+psql "postgresql://postgres.lllydwymcuulrsqxumvl:[YOUR_PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres" -f supabase/seed_mentors.sql
 ```
 
 ### Using Supabase Dashboard:
 1. Go to SQL Editor
-2. Copy contents of `my_flask_app/seed_mentors.sql`
+2. Copy contents of `supabase/seed_mentors.sql`
 3. Paste and run
 
 ## 3. Setup Scheduled Job

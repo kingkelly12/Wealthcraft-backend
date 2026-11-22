@@ -4,608 +4,788 @@
 
 BEGIN;
 
--- TRUNCATE existing tables to ensure clean slate (optional, but good for seed)
--- TRUNCATE TABLE life_events CASCADE; 
+
+-- Safe to re-run: each event is skipped if one with the same title exists.
 
 -- 1. The Dental Gamble (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Dental Gamble', 'You feel a twinge in your molar. Pay now or pray later?', 'challenge', -200.00, 0, 0, -10, 'Smile', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Dental Gamble', 'You feel a twinge in your molar. Pay now or pray later?', 'challenge', -200.00, 0, 0, -10, 'Smile', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Dental Gamble')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Ignore it and pray', 'You turn up the music to drown out the pain.', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Book the Dentist', 'You pay the copay. You survive.', 200, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Ignore it and pray', 'You turn up the music to drown out the pain.', 0, 0, 1),
+    ('Book the Dentist', 'You pay the copay. You survive.', 200, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 2. The Subscription Vampire (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Subscription Vampire', 'You are paying for a gym you haven''t visited since 2023.', 'neutral', -45.00, 0, 0, -5, 'CreditCard', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Subscription Vampire', 'You are paying for a gym you haven''t visited since 2023.', 'neutral', -45.00, 0, 0, -5, 'CreditCard', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Subscription Vampire')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'The Great Purge', 'You cancel everything. Silence is free.', 0, 45, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Keep ''em', 'At least you can watch "The Office" again.', 45, 2, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('The Great Purge', 'You cancel everything. Silence is free.', 0, 45, 1),
+    ('Keep ''em', 'At least you can watch "The Office" again.', 45, 2, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 3. Therapy vs. Savings (Finance/Health)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Therapy vs. Savings', 'Existential dread is hitting hard. Budget allows for one.', 'challenge', -150.00, 0, 0, 20, 'Heart', true) RETURNING id
+    SELECT gen_random_uuid(), 'Therapy vs. Savings', 'Existential dread is hitting hard. Budget allows for one.', 'challenge', -150.00, 0, 0, 20, 'Heart', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Therapy vs. Savings')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Go to Therapy', 'You cry for 50 minutes. It helps.', 150, 10, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Raw dog reality', 'You bottle it up. Free but heavy.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Go to Therapy', 'You cry for 50 minutes. It helps.', 150, 10, 1),
+    ('Raw dog reality', 'You bottle it up. Free but heavy.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 4. The Destination Wedding (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Destination Wedding', 'Cousin getting married in Bali. Flight is $2,000.', 'opportunity', -2000.00, 0, 0, 10, 'Plane', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Destination Wedding', 'Cousin getting married in Bali. Flight is $2,000.', 'opportunity', -2000.00, 0, 0, 10, 'Plane', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Destination Wedding')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Go (YOLO)', 'Great photos, empty wallet.', 2000, 15, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Decline politely', 'You send a toaster and stay home.', 50, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Go (YOLO)', 'Great photos, empty wallet.', 2000, 15, 1),
+    ('Decline politely', 'You send a toaster and stay home.', 50, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 5. The "Buy Now Pay Later" Trap (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The "Buy Now Pay Later" Trap', 'Shiny gadget. 4 easy payments of $50.', 'opportunity', 0, 0, 0, 5, 'ShoppingBag', true) RETURNING id
+    SELECT gen_random_uuid(), 'The "Buy Now Pay Later" Trap', 'Shiny gadget. 4 easy payments of $50.', 'opportunity', 0, 0, 0, 5, 'ShoppingBag', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The "Buy Now Pay Later" Trap')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Split it up!', 'Future You hates Present You.', 50, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Wait', 'Delayed gratification is boring.', 0, 2, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Split it up!', 'Future You hates Present You.', 50, 5, 1),
+    ('Wait', 'Delayed gratification is boring.', 0, 2, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 6. The Student Loan Email (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Student Loan Email', 'ACTION REQUIRED. Recertify income plan.', 'neutral', 0, 0, 0, -15, 'FileText', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Student Loan Email', 'ACTION REQUIRED. Recertify income plan.', 'neutral', 0, 0, 0, -15, 'FileText', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Student Loan Email')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Do the Paperwork', '3 hours later, you are safe.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Ignore it', 'Future panic awaits.', 0, -10, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Do the Paperwork', '3 hours later, you are safe.', 0, 5, 1),
+    ('Ignore it', 'Future panic awaits.', 0, -10, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 7. The Avocado Toast Moment (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Avocado Toast Moment', 'Bottomless brunch invites ($50 min).', 'opportunity', -50.00, 0, 0, 10, 'Coffee', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Avocado Toast Moment', 'Bottomless brunch invites ($50 min).', 'opportunity', -50.00, 0, 0, 10, 'Coffee', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Avocado Toast Moment')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Go to Brunch', 'Mediocre toast, top tier gossip.', 50, 8, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Eat leftovers', 'Responsible but lonely.', 0, -2, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Go to Brunch', 'Mediocre toast, top tier gossip.', 50, 8, 1),
+    ('Eat leftovers', 'Responsible but lonely.', 0, -2, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 8. The Check Engine Light (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Check Engine Light', 'Orange light + weird clunking sound.', 'emergency', -400.00, 0, 0, -20, 'Tool', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Check Engine Light', 'Orange light + weird clunking sound.', 'emergency', -400.00, 0, 0, -20, 'Tool', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Check Engine Light')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Turn up Radio', 'Can''t hear it, not happening.', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Go to Mechanic', 'Safe, but expensive.', 400, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Turn up Radio', 'Can''t hear it, not happening.', 0, 0, 1),
+    ('Go to Mechanic', 'Safe, but expensive.', 400, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 9. The 9 PM Email (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The 9 PM "Urgent" Email', 'Boss needs this for Monday morning.', 'challenge', 0, 0, 0, -10, 'Mail', true) RETURNING id
+    SELECT gen_random_uuid(), 'The 9 PM "Urgent" Email', 'Boss needs this for Monday morning.', 'challenge', 0, 0, 0, -10, 'Mail', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The 9 PM "Urgent" Email')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Quiet Quit', 'Reply Monday. Enjoy weekend.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Do it', 'Work late. No bonus.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Quiet Quit', 'Reply Monday. Enjoy weekend.', 0, 5, 1),
+    ('Do it', 'Work late. No bonus.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 10. The "Voluntold" Committee (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The "Voluntold" Committee', 'Boss asks for "Office Fun" committee leader.', 'neutral', 0, 0, 0, -5, 'Users', true) RETURNING id
+    SELECT gen_random_uuid(), 'The "Voluntold" Committee', 'Boss asks for "Office Fun" committee leader.', 'neutral', 0, 0, 0, -5, 'Users', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The "Voluntold" Committee')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Accept burden', 'Lose 5 hours/week.', 0, 2, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Stare at floor', 'Avoid eye contact. Freedom!', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Accept burden', 'Lose 5 hours/week.', 0, 2, 1),
+    ('Stare at floor', 'Avoid eye contact. Freedom!', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 11. Return to Office Mandate (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Return to Office Mandate', 'CEO misses "hallway collisions". 3 days/week.', 'challenge', -100.00, 0, 0, -10, 'Briefcase', true) RETURNING id
+    SELECT gen_random_uuid(), 'Return to Office Mandate', 'CEO misses "hallway collisions". 3 days/week.', 'challenge', -100.00, 0, 0, -10, 'Briefcase', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Return to Office Mandate')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Buy Train Pass', 'Commute is brutal.', 100, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Fight for Remote', 'Might work or get labeled.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Buy Train Pass', 'Commute is brutal.', 100, 0, 1),
+    ('Fight for Remote', 'Might work or get labeled.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 12. The LinkedIn Gloat Post (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The LinkedIn Gloat Post', 'Nemesis made 30 Under 30.', 'neutral', 0, 0, 0, -5, 'Linkedin', true) RETURNING id
+    SELECT gen_random_uuid(), 'The LinkedIn Gloat Post', 'Nemesis made 30 Under 30.', 'neutral', 0, 0, 0, -5, 'Linkedin', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The LinkedIn Gloat Post')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Congratulate', 'Fake smiles.', 0, 2, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Mute and Scroll', 'Inner peace.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Congratulate', 'Fake smiles.', 0, 2, 1),
+    ('Mute and Scroll', 'Inner peace.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 13. Pizza Party (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Pizza Party', 'Record profits = Lukewarm pepperoni.', 'neutral', 0, 0, 0, -5, 'Pizza', true) RETURNING id
+    SELECT gen_random_uuid(), 'Pizza Party', 'Record profits = Lukewarm pepperoni.', 'neutral', 0, 0, 0, -5, 'Pizza', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Pizza Party')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Eat pizza', 'Free food.', 0, 2, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Skip it', 'Sad desk salad protest.', 0, 3, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Eat pizza', 'Free food.', 0, 2, 1),
+    ('Skip it', 'Sad desk salad protest.', 0, 3, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 14. Spinach Standoff (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Spinach Standoff', 'Rotting spinach judging you.', 'neutral', 0, 0, 0, -2, 'Leaf', true) RETURNING id
+    SELECT gen_random_uuid(), 'Spinach Standoff', 'Rotting spinach judging you.', 'neutral', 0, 0, 0, -2, 'Leaf', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Spinach Standoff')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Cook it', 'Health god.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Order Thai', 'Spinach dies.', 40, 3, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Cook it', 'Health god.', 0, 5, 1),
+    ('Order Thai', 'Spinach dies.', 40, 3, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 15. The YouTube Ph.D. (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The YouTube Ph.D.', 'Sink clogged.', 'challenge', -15.00, 0, 0, -5, 'Youtube', true) RETURNING id
+    SELECT gen_random_uuid(), 'The YouTube Ph.D.', 'Sink clogged.', 'challenge', -15.00, 0, 0, -5, 'Youtube', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The YouTube Ph.D.')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'DIY', 'Feel powerful.', 15, 10, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Call Pro', 'Solved but pricey.', 150, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('DIY', 'Feel powerful.', 15, 10, 1),
+    ('Call Pro', 'Solved but pricey.', 150, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 16. IKEA Meltdown (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The IKEA Meltdown', '5,000 parts, no words.', 'challenge', 0, 0, 0, -10, 'Hammer', true) RETURNING id
+    SELECT gen_random_uuid(), 'The IKEA Meltdown', '5,000 parts, no words.', 'challenge', 0, 0, 0, -10, 'Hammer', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The IKEA Meltdown')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Hire TaskRabbit', 'Money well spent.', 100, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'DIY', 'Leans to the left.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Hire TaskRabbit', 'Money well spent.', 100, 5, 1),
+    ('DIY', 'Leans to the left.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 17. Laundry Mountain (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Laundry Mountain', 'Out of underwear.', 'neutral', 0, 0, 0, -5, 'Shirt', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Laundry Mountain', 'Out of underwear.', 'neutral', 0, 0, 0, -5, 'Shirt', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Laundry Mountain')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Do Wash', 'Accomplished.', 5, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Buy New', 'Lazy but effective.', 20, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Do Wash', 'Accomplished.', 5, 5, 1),
+    ('Buy New', 'Lazy but effective.', 20, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 18. Plant Parent (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Plant Parent', 'Succulent looking sad.', 'neutral', -20.00, 0, 0, 5, 'Flower', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Plant Parent', 'Succulent looking sad.', 'neutral', -20.00, 0, 0, 5, 'Flower', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Plant Parent')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Buy Fake', 'Pragmatic.', 20, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Research', 'Hope it lives.', 0, 2, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Buy Fake', 'Pragmatic.', 20, 0, 1),
+    ('Research', 'Hope it lives.', 0, 2, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 19. Internet Outage (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Internet Outage', 'WiFi down.', 'emergency', 0, 0, 0, -20, 'WifiOff', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Internet Outage', 'WiFi down.', 'emergency', 0, 0, 0, -20, 'WifiOff', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Internet Outage')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Call Support', 'Hold music.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Hotspot', 'Expensive data.', 20, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Call Support', 'Hold music.', 0, -5, 1),
+    ('Hotspot', 'Expensive data.', 20, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 20. Grocery Tetris (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The Grocery Tetris', '15 bags. One trip?', 'neutral', 0, 0, 0, -5, 'ShoppingBag', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Grocery Tetris', '15 bags. One trip?', 'neutral', 0, 0, 0, -5, 'ShoppingBag', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Grocery Tetris')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'One Trip', 'Heroic.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Two Trips', 'Shame.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('One Trip', 'Heroic.', 0, 5, 1),
+    ('Two Trips', 'Shame.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 21. Zoom Cat Filter (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Zoom Cat Filter', 'You are stuck as a cat in a serious meeting.', 'challenge', 0, 0, 0, -10, 'Video', true) RETURNING id
+    SELECT gen_random_uuid(), 'Zoom Cat Filter', 'You are stuck as a cat in a serious meeting.', 'challenge', 0, 0, 0, -10, 'Video', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Zoom Cat Filter')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Embrace it', 'Accept your feline fate.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Panic Leave', 'Fake a connection error.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Embrace it', 'Accept your feline fate.', 0, 5, 1),
+    ('Panic Leave', 'Fake a connection error.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 22. "Reply All" Apocalypse (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Reply All Apocalypse', 'You replied all with a snarky comment.', 'emergency', 0, 0, 0, -25, 'AlertTriangle', true) RETURNING id
+    SELECT gen_random_uuid(), 'Reply All Apocalypse', 'You replied all with a snarky comment.', 'emergency', 0, 0, 0, -25, 'AlertTriangle', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Reply All Apocalypse')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Own it', 'Claim it was satire.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Hide', 'Turn off phone.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Own it', 'Claim it was satire.', 0, -5, 1),
+    ('Hide', 'Turn off phone.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 23. Forgot to Mute (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Forgot to Mute', 'You sighed loudly while the CEO was talking.', 'challenge', 0, 0, 0, -15, 'MicOff', true) RETURNING id
+    SELECT gen_random_uuid(), 'Forgot to Mute', 'You sighed loudly while the CEO was talking.', 'challenge', 0, 0, 0, -15, 'MicOff', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Forgot to Mute')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Pretend it wasn''t you', 'Gaslight the room.', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Apologize', 'Awkward silence.', 0, -2, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Pretend it wasn''t you', 'Gaslight the room.', 0, 0, 1),
+    ('Apologize', 'Awkward silence.', 0, -2, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 24. Printer Jam (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Printer Jam', 'PC Load Letter? What does that mean?', 'neutral', 0, 0, 0, -5, 'Printer', true) RETURNING id
+    SELECT gen_random_uuid(), 'Printer Jam', 'PC Load Letter? What does that mean?', 'neutral', 0, 0, 0, -5, 'Printer', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Printer Jam')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Kick it', 'Percussive maintenance.', 0, 2, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Call IT', 'Submit a ticket.', 0, -2, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Kick it', 'Percussive maintenance.', 0, 2, 1),
+    ('Call IT', 'Submit a ticket.', 0, -2, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 25. Coworker Oversharing (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Coworker Oversharing', 'Dave is talking about his divorce... again.', 'neutral', 0, 0, 0, -10, 'MessageSquare', true) RETURNING id
+    SELECT gen_random_uuid(), 'Coworker Oversharing', 'Dave is talking about his divorce... again.', 'neutral', 0, 0, 0, -10, 'MessageSquare', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Coworker Oversharing')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Listen knowingly', 'You are now his therapist.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Fake phone call', 'Escape!', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Listen knowingly', 'You are now his therapist.', 0, -5, 1),
+    ('Fake phone call', 'Escape!', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 26. Performance Review (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Performance Review', 'Time to justify your existence.', 'challenge', 0, 0, 0, -15, 'Clipboard', true) RETURNING id
+    SELECT gen_random_uuid(), 'Performance Review', 'Time to justify your existence.', 'challenge', 0, 0, 0, -15, 'Clipboard', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Performance Review')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Hype yourself', 'Confidence is key.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Panic', 'Sweat through shirt.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Hype yourself', 'Confidence is key.', 0, 5, 1),
+    ('Panic', 'Sweat through shirt.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 27. Free Snacks vs Dignity (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Free Snacks', 'Leftover sandwiches from a client meeting.', 'opportunity', 0, 0, 0, 0, 'Coffee', true) RETURNING id
+    SELECT gen_random_uuid(), 'Free Snacks', 'Leftover sandwiches from a client meeting.', 'opportunity', 0, 0, 0, 0, 'Coffee', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Free Snacks')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Take them all', 'Groceries for the week.', 0, 10, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Abstain', 'Keep your pride.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Take them all', 'Groceries for the week.', 0, 10, 1),
+    ('Abstain', 'Keep your pride.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 28. "Quick Sync" (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'The "Quick Sync"', 'Calendar invite with no subject.', 'challenge', 0, 0, 0, -10, 'Calendar', true) RETURNING id
+    SELECT gen_random_uuid(), 'The "Quick Sync"', 'Calendar invite with no subject.', 'challenge', 0, 0, 0, -10, 'Calendar', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The "Quick Sync"')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Prepare for worst', 'Anxiety spike.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Assume it''s fine', 'Ignorance is bliss.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Prepare for worst', 'Anxiety spike.', 0, -5, 1),
+    ('Assume it''s fine', 'Ignorance is bliss.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 29. Jargon Overload (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Jargon Overload', 'Let''s circle back and synergy the low hanging fruit.', 'neutral', 0, 0, 0, -5, 'Hash', true) RETURNING id
+    SELECT gen_random_uuid(), 'Jargon Overload', 'Let''s circle back and synergy the low hanging fruit.', 'neutral', 0, 0, 0, -5, 'Hash', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Jargon Overload')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Nod along', 'Dissociate.', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Use more jargon', 'Become the problem.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Nod along', 'Dissociate.', 0, 0, 1),
+    ('Use more jargon', 'Become the problem.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 30. Friday 4PM Meeting (Work)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Friday 4PM Meeting', 'Why does this exist?', 'challenge', 0, 0, 0, -15, 'Clock', true) RETURNING id
+    SELECT gen_random_uuid(), 'Friday 4PM Meeting', 'Why does this exist?', 'challenge', 0, 0, 0, -15, 'Clock', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Friday 4PM Meeting')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Attend', 'Soul crushing.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Decline', 'Risky move.', 0, 10, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Attend', 'Soul crushing.', 0, -5, 1),
+    ('Decline', 'Risky move.', 0, 10, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 31. Forgot Free Trial (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Forgot Free Trial', 'Charged $99 for an app you used once.', 'neutral', -99.00, 0, 0, -10, 'CreditCard', true) RETURNING id
+    SELECT gen_random_uuid(), 'Forgot Free Trial', 'Charged $99 for an app you used once.', 'neutral', -99.00, 0, 0, -10, 'CreditCard', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Forgot Free Trial')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Beg for refund', 'Customer service hold.', 99, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Accept defeat', 'Expensive lesson.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Beg for refund', 'Customer service hold.', 99, 5, 1),
+    ('Accept defeat', 'Expensive lesson.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 32. Splitting the Bill (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Splitting the Bill', 'Friend ordered 3 cocktails, you had water.', 'neutral', -20.00, 0, 0, -10, 'Divide', true) RETURNING id
+    SELECT gen_random_uuid(), 'Splitting the Bill', 'Friend ordered 3 cocktails, you had water.', 'neutral', -20.00, 0, 0, -10, 'Divide', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Splitting the Bill')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Pay excess', 'Avoid conflict.', 20, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Itemize it', 'Be "that guy".', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Pay excess', 'Avoid conflict.', 20, 0, 1),
+    ('Itemize it', 'Be "that guy".', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 33. Impulse Buy Regret (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Impulse Buy Regret', 'You bought a kayak. You live in a desert.', 'neutral', -300.00, 0, 0, -5, 'ShoppingBag', true) RETURNING id
+    SELECT gen_random_uuid(), 'Impulse Buy Regret', 'You bought a kayak. You live in a desert.', 'neutral', -300.00, 0, 0, -5, 'ShoppingBag', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Impulse Buy Regret')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Return it', 'Hassle.', 300, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Keep it', 'Aspirational decor.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Return it', 'Hassle.', 300, 5, 1),
+    ('Keep it', 'Aspirational decor.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 34. Tax Season Panic (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Tax Season Panic', 'Where are your W2s?', 'emergency', 0, 0, 0, -20, 'FileText', true) RETURNING id
+    SELECT gen_random_uuid(), 'Tax Season Panic', 'Where are your W2s?', 'emergency', 0, 0, 0, -20, 'FileText', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Tax Season Panic')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Do it now', 'Get it over with.', 0, 10, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Procrastinate', 'File extension.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Do it now', 'Get it over with.', 0, 10, 1),
+    ('Procrastinate', 'File extension.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 35. Overdraft Fee (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Overdraft Fee', 'You have -$4. Bank charges you $35.', 'neutral', -35.00, 0, 0, -15, 'DollarSign', true) RETURNING id
+    SELECT gen_random_uuid(), 'Overdraft Fee', 'You have -$4. Bank charges you $35.', 'neutral', -35.00, 0, 0, -15, 'DollarSign', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Overdraft Fee')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Call Bank', 'Plead poverty.', 35, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Cry', 'It is unfair.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Call Bank', 'Plead poverty.', 35, 5, 1),
+    ('Cry', 'It is unfair.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 36. Wedding Gift Inflation (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Wedding Gift Inflation', 'Registry starts at $150.', 'neutral', -150.00, 0, 0, -5, 'Gift', true) RETURNING id
+    SELECT gen_random_uuid(), 'Wedding Gift Inflation', 'Registry starts at $150.', 'neutral', -150.00, 0, 0, -5, 'Gift', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Wedding Gift Inflation')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Buy the blender', 'Standard.', 150, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Cash in card', 'Easy.', 100, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Buy the blender', 'Standard.', 150, 0, 1),
+    ('Cash in card', 'Easy.', 100, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 37. Gym Cancellation (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Gym Cancellation', 'Requires certified letter and blood sacrifice.', 'challenge', 0, 0, 0, -15, 'Activity', true) RETURNING id
+    SELECT gen_random_uuid(), 'Gym Cancellation', 'Requires certified letter and blood sacrifice.', 'challenge', 0, 0, 0, -15, 'Activity', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Gym Cancellation')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Do it', 'Freedom.', 0, 10, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Stay member', 'Waste money.', -30, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Do it', 'Freedom.', 0, 10, 1),
+    ('Stay member', 'Waste money.', -30, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 38. Crypto FOMO (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Crypto FOMO', 'Dogecoin is up. Should you buy?', 'opportunity', -100.00, 0, 0, -5, 'TrendingUp', true) RETURNING id
+    SELECT gen_random_uuid(), 'Crypto FOMO', 'Dogecoin is up. Should you buy?', 'opportunity', -100.00, 0, 0, -5, 'TrendingUp', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Crypto FOMO')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Buy!', 'Gambling.', 100, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Ignore', 'Safe.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Buy!', 'Gambling.', 100, 5, 1),
+    ('Ignore', 'Safe.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 39. Rent Increase (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Rent Increase', 'Landlord wants $200 more.', 'challenge', 0, 0, 200, -20, 'Home', true) RETURNING id
+    SELECT gen_random_uuid(), 'Rent Increase', 'Landlord wants $200 more.', 'challenge', 0, 0, 200, -20, 'Home', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Rent Increase')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Pay it', 'No choice.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Move', 'Packing hell.', -500, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Pay it', 'No choice.', 0, -5, 1),
+    ('Move', 'Packing hell.', -500, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 40. Generic Brand Disappointment (Finance)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Generic Brand Fail', 'The "Oat Circles" taste like cardboard.', 'neutral', -5.00, 0, 0, -2, 'ShoppingCart', true) RETURNING id
+    SELECT gen_random_uuid(), 'Generic Brand Fail', 'The "Oat Circles" taste like cardboard.', 'neutral', -5.00, 0, 0, -2, 'ShoppingCart', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Generic Brand Fail')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Eat them', 'Sad breakfast.', 0, -2, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Throw away', 'Waste.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Eat them', 'Sad breakfast.', 0, -2, 1),
+    ('Throw away', 'Waste.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 41. Ghosted (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Ghosted', 'Three great dates within silence.', 'neutral', 0, 0, 0, -15, 'Ghost', true) RETURNING id
+    SELECT gen_random_uuid(), 'Ghosted', 'Three great dates within silence.', 'neutral', 0, 0, 0, -15, 'Ghost', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Ghosted')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Check story', 'Stalking.', 0, -5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Move on', 'Healthy.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Check story', 'Stalking.', 0, -5, 1),
+    ('Move on', 'Healthy.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 42. Awkward Date (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Awkward Date', 'They talked about their ex... for 2 hours.', 'neutral', -50.00, 0, 0, -10, 'Heart', true) RETURNING id
+    SELECT gen_random_uuid(), 'Awkward Date', 'They talked about their ex... for 2 hours.', 'neutral', -50.00, 0, 0, -10, 'Heart', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Awkward Date')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Fake emergency', 'Classic exit.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Endure', 'Polite.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Fake emergency', 'Classic exit.', 0, 5, 1),
+    ('Endure', 'Polite.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 43. Social Battery Drained (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Social Battery Dead', 'You are at a party and want to leave.', 'neutral', 0, 0, 0, -10, 'Battery', true) RETURNING id
+    SELECT gen_random_uuid(), 'Social Battery Dead', 'You are at a party and want to leave.', 'neutral', 0, 0, 0, -10, 'Battery', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Social Battery Dead')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Irish Exit', 'Disappear.', 0, 10, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Stay', 'Suffer.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Irish Exit', 'Disappear.', 0, 10, 1),
+    ('Stay', 'Suffer.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 44. Forgot Name (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Forgot Name', 'Someone says hi. You have no idea who they are.', 'challenge', 0, 0, 0, -5, 'HelpCircle', true) RETURNING id
+    SELECT gen_random_uuid(), 'Forgot Name', 'Someone says hi. You have no idea who they are.', 'challenge', 0, 0, 0, -5, 'HelpCircle', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Forgot Name')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Say "Hey You!"', 'Risky.', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Admit it', 'Awkward honesty.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Say "Hey You!"', 'Risky.', 0, 0, 1),
+    ('Admit it', 'Awkward honesty.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
--- 45. Ran into Ex (Social)
+-- 45. The Ex Sighting (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Ran into Ex', 'You look terrible. They look great.', 'emergency', 0, 0, 0, -20, 'Eye', true) RETURNING id
+    SELECT gen_random_uuid(), 'The Ex Sighting', 'You look terrible. They look great.', 'emergency', 0, 0, 0, -20, 'Eye', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'The Ex Sighting')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Hide in aisle', 'Dignity lost.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Say Hi', 'Painful.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Hide in aisle', 'Dignity lost.', 0, 5, 1),
+    ('Say Hi', 'Painful.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 46. Everyone is Engaged (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Everyone is Engaged', 'Your feed is just ring photos.', 'neutral', 0, 0, 0, -5, 'Heart', true) RETURNING id
+    SELECT gen_random_uuid(), 'Everyone is Engaged', 'Your feed is just ring photos.', 'neutral', 0, 0, 0, -5, 'Heart', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Everyone is Engaged')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Delete App', 'Cleanse.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Compare self', 'Spiral.', 0, -10, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Delete App', 'Cleanse.', 0, 5, 1),
+    ('Compare self', 'Spiral.', 0, -10, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 47. Cancelled Plans (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Cancelled Plans', 'They cancelled! You can stay in.', 'opportunity', 0, 0, 0, 15, 'Smile', true) RETURNING id
+    SELECT gen_random_uuid(), 'Cancelled Plans', 'They cancelled! You can stay in.', 'opportunity', 0, 0, 0, 15, 'Smile', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Cancelled Plans')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Order Pizza', 'Celebration.', -20, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Sleep', 'Best night ever.', 0, 10, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Order Pizza', 'Celebration.', -20, 5, 1),
+    ('Sleep', 'Best night ever.', 0, 10, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 48. Accidental Like (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Accidental Like', 'You liked a photo from 2016.', 'emergency', 0, 0, 0, -20, 'ThumbsUp', true) RETURNING id
+    SELECT gen_random_uuid(), 'Accidental Like', 'You liked a photo from 2016.', 'emergency', 0, 0, 0, -20, 'ThumbsUp', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Accidental Like')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Unlike immediately', 'They still saw it.', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Move to Nepal', 'Start new life.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Unlike immediately', 'They still saw it.', 0, 0, 1),
+    ('Move to Nepal', 'Start new life.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 49. Bad Haircut (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Bad Haircut', 'You asked for a trim. You got a bowl cut.', 'challenge', -50.00, 0, 0, -15, 'Scissors', true) RETURNING id
+    SELECT gen_random_uuid(), 'Bad Haircut', 'You asked for a trim. You got a bowl cut.', 'challenge', -50.00, 0, 0, -15, 'Scissors', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Bad Haircut')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Wear hat', 'For 3 months.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Cry', 'Therapeutic.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Wear hat', 'For 3 months.', 0, 5, 1),
+    ('Cry', 'Therapeutic.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 50. Same Outfit (Social)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Same Outfit', 'Coworker wearing same shirt.', 'neutral', 0, 0, 0, -2, 'Shirt', true) RETURNING id
+    SELECT gen_random_uuid(), 'Same Outfit', 'Coworker wearing same shirt.', 'neutral', 0, 0, 0, -2, 'Shirt', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Same Outfit')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Photo Op', 'Laugh it off.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Go home', 'Change.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Photo Op', 'Laugh it off.', 0, 5, 1),
+    ('Go home', 'Change.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 51. WebMD Doom (Health)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'WebMD Doom', 'Headache? Internet says "rare disease".', 'neutral', 0, 0, 0, -15, 'Activity', true) RETURNING id
+    SELECT gen_random_uuid(), 'WebMD Doom', 'Headache? Internet says "rare disease".', 'neutral', 0, 0, 0, -15, 'Activity', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'WebMD Doom')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Close Tab', 'Denial.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Spiral', 'Write will.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Close Tab', 'Denial.', 0, 5, 1),
+    ('Spiral', 'Write will.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 52. Mystery Ailment (Health)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Mystery Ailment', 'Back hurts. Why? You slept wrong.', 'challenge', 0, 0, 0, -10, 'Frown', true) RETURNING id
+    SELECT gen_random_uuid(), 'Mystery Ailment', 'Back hurts. Why? You slept wrong.', 'challenge', 0, 0, 0, -10, 'Frown', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Mystery Ailment')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Yoga', 'Effort.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Complain', 'Easy.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Yoga', 'Effort.', 0, 5, 1),
+    ('Complain', 'Easy.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 53. Dentist Shame (Health)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Dentist Shame', 'You haven''t flossed. They know.', 'neutral', 0, 0, 0, -5, 'Smile', true) RETURNING id
+    SELECT gen_random_uuid(), 'Dentist Shame', 'You haven''t flossed. They know.', 'neutral', 0, 0, 0, -5, 'Smile', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Dentist Shame')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Lie', 'I floss daily!', 0, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Accept lecture', 'I am garbage.', 0, 5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Lie', 'I floss daily!', 0, 0, 1),
+    ('Accept lecture', 'I am garbage.', 0, 5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 54. Hangover at 30 (Health)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Hangover at 30', 'Two drinks last night. Bedridden today.', 'challenge', 0, 0, 0, -20, 'Frown', true) RETURNING id
+    SELECT gen_random_uuid(), 'Hangover at 30', 'Two drinks last night. Bedridden today.', 'challenge', 0, 0, 0, -20, 'Frown', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Hangover at 30')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Greasy food', 'Cure.', -20, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Vow sobriety', 'Lie to self.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Greasy food', 'Cure.', -20, 5, 1),
+    ('Vow sobriety', 'Lie to self.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 55. Dehydration (Health)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Dehydration', 'You drank only coffee today.', 'neutral', 0, 0, 0, -5, 'Coffee', true) RETURNING id
+    SELECT gen_random_uuid(), 'Dehydration', 'You drank only coffee today.', 'neutral', 0, 0, 0, -5, 'Coffee', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Dehydration')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Drink water', 'Self care.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'More coffee', 'Jitters.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Drink water', 'Self care.', 0, 5, 1),
+    ('More coffee', 'Jitters.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 56. Package Stolen (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Package Stolen', 'Your porch pirate struck again.', 'emergency', -50.00, 0, 0, -15, 'Box', true) RETURNING id
+    SELECT gen_random_uuid(), 'Package Stolen', 'Your porch pirate struck again.', 'emergency', -50.00, 0, 0, -15, 'Box', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Package Stolen')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Report it', 'Paperwork.', 50, 0, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Seethe', 'Rage.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Report it', 'Paperwork.', 50, 0, 1),
+    ('Seethe', 'Rage.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 57. Burnt Dinner (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Burnt Dinner', 'Smoke alarm counts as a timer, right?', 'neutral', -10.00, 0, 0, -5, 'Flame', true) RETURNING id
+    SELECT gen_random_uuid(), 'Burnt Dinner', 'Smoke alarm counts as a timer, right?', 'neutral', -10.00, 0, 0, -5, 'Flame', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Burnt Dinner')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Order Pizza', 'Backup plan.', -30, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Eat charcoal', 'Sadness.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Order Pizza', 'Backup plan.', -30, 5, 1),
+    ('Eat charcoal', 'Sadness.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 58. Noisy Neighbors (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Noisy Neighbors', 'Clogs. Why are they wearing clogs?', 'neutral', 0, 0, 0, -10, 'Speaker', true) RETURNING id
+    SELECT gen_random_uuid(), 'Noisy Neighbors', 'Clogs. Why are they wearing clogs?', 'neutral', 0, 0, 0, -10, 'Speaker', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Noisy Neighbors')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Bang on ceiling', 'War.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Earplugs', 'Peace.', 0, 0, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Bang on ceiling', 'War.', 0, 5, 1),
+    ('Earplugs', 'Peace.', 0, 0, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 59. Spider Disappearance (Domestic)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Spider Disappearance', 'It was on the wall. Now it is gone.', 'emergency', 0, 0, 0, -15, 'Bug', true) RETURNING id
+    SELECT gen_random_uuid(), 'Spider Disappearance', 'It was on the wall. Now it is gone.', 'emergency', 0, 0, 0, -15, 'Bug', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Spider Disappearance')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Burn house', 'Logical.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Sleep with one eye open', 'Fear.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Burn house', 'Logical.', 0, 5, 1),
+    ('Sleep with one eye open', 'Fear.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- 60. Sunday Scaries (Existential)
 WITH event_insert AS (
     INSERT INTO life_events (id, title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    VALUES (gen_random_uuid(), 'Sunday Scaries', 'The weekend is over. Work looms.', 'neutral', 0, 0, 0, -10, 'Calendar', true) RETURNING id
+    SELECT gen_random_uuid(), 'Sunday Scaries', 'The weekend is over. Work looms.', 'neutral', 0, 0, 0, -10, 'Calendar', true
+    WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Sunday Scaries')
+    RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order)
-SELECT gen_random_uuid(), id, 'Prepare', 'Productive panic.', 0, 5, 1 FROM event_insert
-UNION ALL
-SELECT gen_random_uuid(), id, 'Denial', 'Stay up late.', 0, -5, 2 FROM event_insert;
+SELECT gen_random_uuid(), event_insert.id, v.* FROM event_insert CROSS JOIN (VALUES
+    ('Prepare', 'Productive panic.', 0, 5, 1),
+    ('Denial', 'Stay up late.', 0, -5, 2)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order);
 
 -- ---------------------------------------------------------------------------
 -- 61-120: everyday adult chaos (skipped if a title already exists)
@@ -619,9 +799,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Join right away', 'It was about the font on one slide. Your heart rate was not about the font.', 0, 0, 1, -5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, '"Sorry, driving!"', 'You were on your couch. They fixed the font themselves. You never find out what it was about.', 0, 0, 2, 3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Join right away', 'It was about the font on one slide. Your heart rate was not about the font.', 0, 0, 1, -5, 0),
+    ('"Sorry, driving!"', 'You were on your couch. They fixed the font themselves. You never find out what it was about.', 0, 0, 2, 3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 62. Reply-All Apocalypse
 WITH e AS (
@@ -631,9 +812,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Reply "please remove me"', 'You become part of the problem. IT sends a sternly worded email to everyone.', 0, 0, 1, -2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Grab popcorn', 'You watch 400 adults lose their minds in real time. Best Tuesday in months.', 0, 0, 2, 5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Reply "please remove me"', 'You become part of the problem. IT sends a sternly worded email to everyone.', 0, 0, 1, -2, 0),
+    ('Grab popcorn', 'You watch 400 adults lose their minds in real time. Best Tuesday in months.', 0, 0, 2, 5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 63. Secret Santa
 WITH e AS (
@@ -643,9 +825,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Spend the $20', 'A mug that says "World''s Okayest Boss". They laugh. Nervously. So does HR.', 20, 0, 1, -2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Regift last year''s candle', 'The CEO opens it. Your old name tag is still stuck to the bottom. Iconic.', 0, 0, 2, -4, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Spend the $20', 'A mug that says "World''s Okayest Boss". They laugh. Nervously. So does HR.', 20, 0, 1, -2, 0),
+    ('Regift last year''s candle', 'The CEO opens it. Your old name tag is still stuck to the bottom. Iconic.', 0, 0, 2, -4, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 64. The Humblebrag
 WITH e AS (
@@ -655,9 +838,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Comment "Congrats!"', 'They reply "Let''s grab coffee!" You both know it will never happen.', 0, 0, 1, 1, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Update your own profile', 'You add "Excel wizard" to your skills. A recruiter messages you. It''s a pyramid scheme.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Comment "Congrats!"', 'They reply "Let''s grab coffee!" You both know it will never happen.', 0, 0, 1, 1, 0),
+    ('Update your own profile', 'You add "Excel wizard" to your skills. A recruiter messages you. It''s a pyramid scheme.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 65. Headhunted
 WITH e AS (
@@ -667,9 +851,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Fake a dentist appointment', 'You nail it. They offer a weekend contract worth $150 a month. Your "dentist" was very generous.', 0, 0, 1, -3, 150 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Stay loyal', 'Your manager never finds out you were loyal. Loyalty is free, and also unpaid.', 0, 0, 2, 1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Fake a dentist appointment', 'You nail it. They offer a weekend contract worth $150 a month. Your "dentist" was very generous.', 0, 0, 1, -3, 150),
+    ('Stay loyal', 'Your manager never finds out you were loyal. Loyalty is free, and also unpaid.', 0, 0, 2, 1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 66. Team-Building Weekend
 WITH e AS (
@@ -679,9 +864,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Commit fully', 'You win the egg-and-spoon race. Kevin plays the same song twice. Your team trusts you now, sort of.', 0, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Develop a sudden cough', 'A peaceful weekend at home. Monday''s group photo has a suspicious gap where you should be.', 0, 0, 2, -1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Commit fully', 'You win the egg-and-spoon race. Kevin plays the same song twice. Your team trusts you now, sort of.', 0, 0, 1, 4, 0),
+    ('Develop a sudden cough', 'A peaceful weekend at home. Monday''s group photo has a suspicious gap where you should be.', 0, 0, 2, -1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 67. The Office Fridge
 WITH e AS (
@@ -691,9 +877,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Bin the container', 'Goodbye, $25 lunchbox. You couldn''t save it. Nobody could have.', 25, 0, 1, 2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Deny it''s yours', 'You watch facilities carry it out in a sealed bag. You''ll take this secret to your grave.', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Bin the container', 'Goodbye, $25 lunchbox. You couldn''t save it. Nobody could have.', 25, 0, 1, 2, 0),
+    ('Deny it''s yours', 'You watch facilities carry it out in a sealed bag. You''ll take this secret to your grave.', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 68. Paid Twice
 WITH e AS (
@@ -703,9 +890,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Report it', 'HR thanks you and takes it back the next day. Honesty: priceless. Literally, it pays nothing.', 0, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Say nothing', 'Three weeks later HR claws it back plus a $60 "processing fee", in an email cc''d to your boss.', 60, 0, 2, -8, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Report it', 'HR thanks you and takes it back the next day. Honesty: priceless. Literally, it pays nothing.', 0, 0, 1, 5, 0),
+    ('Say nothing', 'Three weeks later HR claws it back plus a $60 "processing fee", in an email cc''d to your boss.', 60, 0, 2, -8, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 69. Work Bestie Is Leaving
 WITH e AS (
@@ -715,9 +903,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Chip in and write from the heart', 'You write "Don''t forget us little people 😭". They cry at the party. So do you, in the bathroom.', 15, 0, 1, 3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Sign "Best wishes!"', 'You''re the fourth "Best wishes!" in the card. They notice. They notice everything.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Chip in and write from the heart', 'You write "Don''t forget us little people 😭". They cry at the party. So do you, in the bathroom.', 15, 0, 1, 3, 0),
+    ('Sign "Best wishes!"', 'You''re the fourth "Best wishes!" in the card. They notice. They notice everything.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 70. Promotion, No Raise
 WITH e AS (
@@ -727,9 +916,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Accept the exposure', 'You''re now "Senior Associate Lead". Your landlord does not accept exposure.', 0, 0, 1, -6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Ask for money', 'Awkward silence. Then: "+$120 a month, deal?" Turns out asking works.', 0, 0, 2, -2, 120 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Accept the exposure', 'You''re now "Senior Associate Lead". Your landlord does not accept exposure.', 0, 0, 1, -6, 0),
+    ('Ask for money', 'Awkward silence. Then: "+$120 a month, deal?" Turns out asking works.', 0, 0, 2, -2, 120)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 71. Wrong Group Chat
 WITH e AS (
@@ -739,9 +929,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Delete for everyone', '"This message was deleted." Somehow worse. Everyone saw it. Your manager sends 🙂.', 0, 0, 1, -6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, '"That one''s for you boss 😂"', 'Your manager loves it and makes it the group icon. You are untouchable.', 0, 0, 2, 6, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Delete for everyone', '"This message was deleted." Somehow worse. Everyone saw it. Your manager sends 🙂.', 0, 0, 1, -6, 0),
+    ('"That one''s for you boss 😂"', 'Your manager loves it and makes it the group icon. You are untouchable.', 0, 0, 2, 6, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 72. Free Pizza (Terms Apply)
 WITH e AS (
@@ -751,33 +942,36 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Sit through the synergy', 'Cold pizza, but you take four slices home. Dinner sorted for two days.', 0, 20, 1, -2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Skip it', 'Everyone says the pizza was actually great. The regret is warmer than the pizza.', 0, 0, 2, -1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Sit through the synergy', 'Cold pizza, but you take four slices home. Dinner sorted for two days.', 0, 20, 1, -2, 0),
+    ('Skip it', 'Everyone says the pizza was actually great. The regret is warmer than the pizza.', 0, 0, 2, -1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 73. Your Turn for the Pot
 WITH e AS (
     INSERT INTO life_events (title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    SELECT 'Your Turn for the Pot', 'It''s finally your turn to collect from the savings group you''ve paid into all year.', 'opportunity', 0, 0, 0, 0, 'PiggyBank', true
+    SELECT 'Your Turn for the Pot', 'It''s finally your turn to collect from the savings group you''ve contributed to every month this year.', 'opportunity', 0, 0, 0, 0, 'PiggyBank', true
     WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Your Turn for the Pot')
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Take the pot', 'A year of discipline pays out at once. Then the group reminds you next month''s contribution is due.', 0, 800, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Let a friend go first', 'Your friend''s rent is sorted. You''re the group''s favourite now. Your turn comes later.', 0, 0, 2, 5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Take the pot', 'A year of discipline pays out at once. Then the group reminds you next month''s contribution is due.', 0, 800, 1, 6, 0),
+    ('Let a friend go first', 'Your friend''s rent is sorted. You''re the group''s favourite now. Your turn comes later.', 0, 0, 2, 5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 74. Sent to the Wrong Number
 WITH e AS (
     INSERT INTO life_events (title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    SELECT 'Sent to the Wrong Number', 'You sent $150 by mobile money to the wrong number. One digit off. The stranger isn''t replying.', 'emergency', 0, 0, 0, 0, 'Smartphone', true
+    SELECT 'Sent to the Wrong Number', 'You sent $150 with your banking app to the wrong number. One digit off. The stranger isn''t replying.', 'emergency', 0, 0, 0, 0, 'Smartphone', true
     WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Sent to the Wrong Number')
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Call the provider', 'Three calls, two forms and one near-tears moment later, you get it back minus a $10 fee.', 10, 0, 1, -4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Text them "God sees you"', 'Plot twist: they''re honest. The money comes back with a "sorry 🙏🏾".', 0, 0, 2, 3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Call the provider', 'Three calls, two forms and one near-tears moment later, you get it back minus a $10 fee.', 10, 0, 1, -4, 0),
+    ('Text them "God sees you"', 'Plot twist: they''re honest. The money comes back with a "sorry 🙏🏾".', 0, 0, 2, 3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 75. Crypto Bro at Dinner
 WITH e AS (
@@ -787,9 +981,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Get in early', 'The coin is called $VIBES. Your stake is now worth $11. He has moved on to selling courses.', 289, 0, 1, -6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Ask what problem it solves', 'He doesn''t know. Long silence. Your friend mouths "thank you" across the table.', 0, 0, 2, 4, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Get in early', 'The coin is called $VIBES. Your stake is now worth $11. He has moved on to selling courses.', 289, 0, 1, -6, 0),
+    ('Ask what problem it solves', 'He doesn''t know. Long silence. Your friend mouths "thank you" across the table.', 0, 0, 2, 4, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 76. "You Have an iPhone, Right?"
 WITH e AS (
@@ -799,9 +994,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Take the gig', 'You take 600 photos and four are in focus. They pay $180 and call you "the photographer".', 0, 180, 1, -3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Recommend a real one', 'The cousin is less impressed, but the baby shower is spared. You keep your Saturday.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Take the gig', 'You take 600 photos and four are in focus. They pay $180 and call you "the photographer".', 0, 180, 1, -3, 0),
+    ('Recommend a real one', 'The cousin is less impressed, but the baby shower is spared. You keep your Saturday.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 77. "Hey Stranger!! 😊"
 WITH e AS (
@@ -811,9 +1007,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Hear them out', 'Supplements. You buy a $60 starter pack to be nice. It tastes like regret.', 60, 0, 1, -5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, '"Not interested in any business 🙏"', '"Wow ok I just wanted to catch up." They did not just want to catch up.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Hear them out', 'Supplements. You buy a $60 starter pack to be nice. It tastes like regret.', 60, 0, 1, -5, 0),
+    ('"Not interested in any business 🙏"', '"Wow ok I just wanted to catch up." They did not just want to catch up.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 78. Tax Refund
 WITH e AS (
@@ -823,9 +1020,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Claim it properly', 'Six weeks and an hour on hold later, $340 lands. You feel like a real adult.', 0, 340, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Ignore it, it''s a scam', 'It wasn''t a scam. You find the letter in a drawer two years later.', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Claim it properly', 'Six weeks and an hour on hold later, $340 lands. You feel like a real adult.', 0, 340, 1, 4, 0),
+    ('Ignore it, it''s a scam', 'It wasn''t a scam. You find the letter in a drawer two years later.', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 79. Black Friday
 WITH e AS (
@@ -835,9 +1033,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Checkout', '$240 later you own three things you''ll use twice. The air fryer is genuinely life-changing though.', 240, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Close the app', 'You save $240. You also refresh the sale page eleven more times out of spite.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Checkout', '$240 later you own three things you''ll use twice. The air fryer is genuinely life-changing though.', 240, 0, 1, 5, 0),
+    ('Close the app', 'You save $240. You also refresh the sale page eleven more times out of spite.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 80. The Cousin Who Owes You
 WITH e AS (
@@ -847,9 +1046,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Comment "nice! 🙂 btw..."', 'They pay back $120 and blame "the economy" for the rest. Progress.', 0, 120, 1, 2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Let it go', 'You let it go. At the next family lunch, your aunt says he "struggles". Okay.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Comment "nice! 🙂 btw..."', 'They pay back $120 and blame "the economy" for the rest. Progress.', 0, 120, 1, 2, 0),
+    ('Let it go', 'You let it go. At the next family lunch, your aunt says he "struggles". Okay.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 81. Old Jacket Money
 WITH e AS (
@@ -859,9 +1059,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Brunch on past you', 'Half goes on brunch. Smugness lasts all week.', 0, 35, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Straight to savings', 'Sensible. Somewhere in the future, an older you nods approvingly.', 0, 75, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Brunch on past you', 'Half goes on brunch. Smugness lasts all week.', 0, 35, 1, 6, 0),
+    ('Straight to savings', 'Sensible. Somewhere in the future, an older you nods approvingly.', 0, 75, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 82. A "Loyalty Reward"
 WITH e AS (
@@ -871,9 +1072,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Upgrade', 'New phone, same scrolling. Your bill is permanently heavier.', 0, 0, 1, 4, -35 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Ask about cheaper plans', 'There''s a plan $15 a month cheaper that they "forgot" to mention.', 0, 0, 2, 3, 15 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Upgrade', 'New phone, same scrolling. Your bill is permanently heavier.', 0, 0, 1, 4, -35),
+    ('Ask about cheaper plans', 'There''s a plan $15 a month cheaper that they "forgot" to mention.', 0, 0, 2, 3, 15)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 83. Made in Itlay
 WITH e AS (
@@ -883,9 +1085,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Buy it for the plot', 'Your friends call it "the Itlay" with love. Best $50 you ever wasted.', 50, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Walk away', 'He drops it to $15 as you leave. You keep walking. Discipline.', 0, 0, 2, 1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Buy it for the plot', 'Your friends call it "the Itlay" with love. Best $50 you ever wasted.', 50, 0, 1, 4, 0),
+    ('Walk away', 'He drops it to $15 as you leave. You keep walking. Discipline.', 0, 0, 2, 1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 84. Lights Out Mid-Dinner
 WITH e AS (
@@ -895,9 +1098,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Buy tokens now', 'Lights back on, rice saved. You vow to top up before it runs out next time. You won''t.', 20, 0, 1, 2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Candlelit dinner', 'Crunchy rice by candlelight. You tell everyone it was "aesthetic".', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Buy tokens now', 'Lights back on, rice saved. You vow to top up before it runs out next time. You won''t.', 20, 0, 1, 2, 0),
+    ('Candlelit dinner', 'Crunchy rice by candlelight. You tell everyone it was "aesthetic".', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 85. Wedding Season
 WITH e AS (
@@ -907,9 +1111,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Go to all three', 'You dance at all three and eat at all three. Your wallet attends a funeral: its own.', 280, 0, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Send voice-note blessings', 'Heartfelt, free and a little awkward when you see them at Christmas.', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Go to all three', 'You dance at all three and eat at all three. Your wallet attends a funeral: its own.', 280, 0, 1, 6, 0),
+    ('Send voice-note blessings', 'Heartfelt, free and a little awkward when you see them at Christmas.', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 86. "Somewhere Chill"
 WITH e AS (
@@ -919,9 +1124,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Offer to split', 'They let you. Of course they let you. The conversation was great though.', 60, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Suggest a walk instead', 'They love it. Two hours of talking about everything. Cost: zero. Feet: destroyed.', 0, 0, 2, 3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Offer to split', 'They let you. Of course they let you. The conversation was great though.', 60, 0, 1, 5, 0),
+    ('Suggest a walk instead', 'They love it. Two hours of talking about everything. Cost: zero. Feet: destroyed.', 0, 0, 2, 3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 87. Left on Read
 WITH e AS (
@@ -931,9 +1137,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Send "hey stranger 👀"', 'Seen 9:42pm. No reply. You have closure now, the hard way.', 0, 0, 1, -5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Delete the chat, hit the gym', 'You lift something heavy and feel something. Growth.', 0, 0, 2, 4, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Send "hey stranger 👀"', 'Seen 9:42pm. No reply. You have closure now, the hard way.', 0, 0, 1, -5, 0),
+    ('Delete the chat, hit the gym', 'You lift something heavy and feel something. Growth.', 0, 0, 2, 4, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 88. "Let's Just Split It"
 WITH e AS (
@@ -943,9 +1150,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Split evenly', '$95 for soup. It was very good soup. It was not $95 soup.', 95, 0, 1, -3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Pay for what you had', '$18. One friend calls you "a calculator". You''re a calculator with $77.', 18, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Split evenly', '$95 for soup. It was very good soup. It was not $95 soup.', 95, 0, 1, -3, 0),
+    ('Pay for what you had', '$18. One friend calls you "a calculator". You''re a calculator with $77.', 18, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 89. Baby Shower Registry
 WITH e AS (
@@ -955,9 +1163,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Buy the bib', 'With a heartfelt card. The bib says "Mum''s little tax deduction". Massive hit.', 9, 0, 1, 3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Go in on the stroller', '$60 each with five friends. You are now collectively Godparents of Transportation.', 60, 0, 2, 5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Buy the bib', 'With a heartfelt card. The bib says "Mum''s little tax deduction". Massive hit.', 9, 0, 1, 3, 0),
+    ('Go in on the stroller', '$60 each with five friends. You are now collectively Godparents of Transportation.', 60, 0, 2, 5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 90. Your Ex's Wedding
 WITH e AS (
@@ -967,9 +1176,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Go, in the outfit', 'You look incredible. You dance. The best man asks for your number. Healing.', 120, 0, 1, 8, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Decline gracefully', 'A nice card, a couch, a tub of ice cream. Also healing.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Go, in the outfit', 'You look incredible. You dance. The best man asks for your number. Healing.', 120, 0, 1, 8, 0),
+    ('Decline gracefully', 'A nice card, a couch, a tub of ice cream. Also healing.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 91. Friend's Startup Launch
 WITH e AS (
@@ -979,9 +1189,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Hype it hard', 'You post it everywhere. It''s an app for rating other apps. You still believe in them.', 0, 0, 1, 3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Download, rate, delete', 'Five stars, then gone. Supportive, technically.', 0, 0, 2, 1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Hype it hard', 'You post it everywhere. It''s an app for rating other apps. You still believe in them.', 0, 0, 1, 3, 0),
+    ('Download, rate, delete', 'Five stars, then gone. Supportive, technically.', 0, 0, 2, 1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 92. Forgot the Birthday
 WITH e AS (
@@ -991,9 +1202,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Surprise dinner tonight', '$70 and a lot of grovelling at their favourite place. You''re forgiven.', 70, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Belated meme', 'They reply "lol". A lowercase lol. You are not forgiven.', 0, 0, 2, -6, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Surprise dinner tonight', '$70 and a lot of grovelling at their favourite place. You''re forgiven.', 70, 0, 1, 5, 0),
+    ('Belated meme', 'They reply "lol". A lowercase lol. You are not forgiven.', 0, 0, 2, -6, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 93. The Plus-One Problem
 WITH e AS (
@@ -1003,9 +1215,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Bring a friend as your "date"', 'You buy them a $40 outfit. They charm the aunties so well they''re now invited to Christmas.', 40, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Go solo', 'Seven aunties ask when you''re getting married. You develop a new smile just for this.', 0, 0, 2, -5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Bring a friend as your "date"', 'You buy them a $40 outfit. They charm the aunties so well they''re now invited to Christmas.', 40, 0, 1, 5, 0),
+    ('Go solo', 'Seven aunties ask when you''re getting married. You develop a new smile just for this.', 0, 0, 2, -5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 94. 3am Party Next Door
 WITH e AS (
@@ -1015,9 +1228,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Join them', 'You''re best friends with the neighbour now. You know all their business. Sleep is for the weak.', 0, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Call the caretaker', 'No answer. Fifth time. You know every word now.', 0, 0, 2, -5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Join them', 'You''re best friends with the neighbour now. You know all their business. Sleep is for the weak.', 0, 0, 1, 4, 0),
+    ('Call the caretaker', 'No answer. Fifth time. You know every word now.', 0, 0, 2, -5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 95. Group Trip Treasurer
 WITH e AS (
@@ -1027,9 +1241,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Front the deposit', 'Six people pay you back. Two send "will sort you out bro". You''re out $100.', 100, 0, 1, -5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Everyone pays first', 'Nobody pays. The trip becomes a group call. The group call becomes "next year".', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Front the deposit', 'Six people pay you back. Two send "will sort you out bro". You''re out $100.', 100, 0, 1, -5, 0),
+    ('Everyone pays first', 'Nobody pays. The trip becomes a group call. The group call becomes "next year".', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 96. Content Day
 WITH e AS (
@@ -1039,9 +1254,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Do it for love', 'You take 300 photos. They post the blurry one. 12k likes.', 0, 0, 1, 2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Charge them', '$40. They pay and start calling you "my content team". You''re a business now.', 0, 40, 2, 1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Do it for love', 'You take 300 photos. They post the blurry one. 12k likes.', 0, 0, 1, 2, 0),
+    ('Charge them', '$40. They pay and start calling you "my content team". You''re a business now.', 0, 40, 2, 1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 97. Family Group Chat
 WITH e AS (
@@ -1051,9 +1267,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Correct him with facts', 'You send three links. He replies with a six-minute voice note ending in "you young people".', 0, 0, 1, -4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'React 🙏 too', 'Peace in the family. A small piece of your soul leaves your body.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Correct him with facts', 'You send three links. He replies with a six-minute voice note ending in "you young people".', 0, 0, 1, -4, 0),
+    ('React 🙏 too', 'Peace in the family. A small piece of your soul leaves your body.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 98. "You're the One With a Job"
 WITH e AS (
@@ -1063,9 +1280,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Pay it', 'Your sibling sends a crying voice note: "thank you". Your bank account sends one too.', 250, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Send job links instead', 'You send three weekend job ads and your old CV template. They reply "ok". Just "ok".', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Pay it', 'Your sibling sends a crying voice note: "thank you". Your bank account sends one too.', 250, 0, 1, 5, 0),
+    ('Send job links instead', 'You send three weekend job ads and your old CV template. They reply "ok". Just "ok".', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 99. Mum Found Instagram
 WITH e AS (
@@ -1075,21 +1293,23 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Archive the evidence', 'Two hours curating a wholesome feed. Your friends think you''ve been hacked.', 0, 0, 1, -2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Embrace it', 'She comments on everything. Your followers adore her. She gets more likes than you now.', 0, 0, 2, 5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Archive the evidence', 'Two hours curating a wholesome feed. Your friends think you''ve been hacked.', 0, 0, 1, -2, 0),
+    ('Embrace it', 'She comments on everything. Your followers adore her. She gets more likes than you now.', 0, 0, 2, 5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 100. Relatives Are Coming
 WITH e AS (
     INSERT INTO life_events (title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    SELECT 'Relatives Are Coming', 'Relatives from upcountry arrive tomorrow for an "indefinite" stay. Your fridge contains ketchup.', 'emergency', 0, 0, 0, 0, 'Home', true
+    SELECT 'Relatives Are Coming', 'Relatives from out of town arrive tomorrow for an "indefinite" stay. Your fridge contains ketchup.', 'emergency', 0, 0, 0, 0, 'Home', true
     WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Relatives Are Coming')
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Stock up and host', '$150 of groceries. They love you. They also love your Wi-Fi. They''re still here.', 150, 0, 1, 3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Sudden "work trip"', 'You "travel" to a friend''s couch for four days. Your relatives rearrange your living room.', 0, 0, 2, -4, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Stock up and host', '$150 of groceries. They love you. They also love your Wi-Fi. They''re still here.', 150, 0, 1, 3, 0),
+    ('Sudden "work trip"', 'You "travel" to a friend''s couch for four days. Your relatives rearrange your living room.', 0, 0, 2, -4, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 101. The Ceiling Stain
 WITH e AS (
@@ -1099,9 +1319,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Fix it yourself', '$60 of supplies and a video tutorial later, it''s worse, but now it''s shaped like a duck.', 60, 0, 1, -2, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Call the landlord again', 'A plumber turns up three weeks later and fixes it for free. It only cost your patience.', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Fix it yourself', '$60 of supplies and a video tutorial later, it''s worse, but now it''s shaped like a duck.', 60, 0, 1, -2, 0),
+    ('Call the landlord again', 'A plumber turns up three weeks later and fixes it for free. It only cost your patience.', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 102. "Impossible to Kill"
 WITH e AS (
@@ -1111,9 +1332,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Buy a $30 grow lamp', 'It thrives. You talk to it now. It''s the best listener you know.', 30, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Let nature decide', 'It dies. You keep the pot as a memorial and a warning.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Buy a $30 grow lamp', 'It thrives. You talk to it now. It''s the best listener you know.', 30, 0, 1, 4, 0),
+    ('Let nature decide', 'It dies. You keep the pot as a memorial and a warning.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 103. Wi-Fi Hostage
 WITH e AS (
@@ -1123,9 +1345,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Reset the router yourself', 'Two hours on hold with your provider. It''s now called "Mine. Not Yours."', 0, 0, 1, -3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Bribe him with $10 airtime', 'He hands over the password. It was "password". You''re furious.', 10, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Reset the router yourself', 'Two hours on hold with your provider. It''s now called "Mine. Not Yours."', 0, 0, 1, -3, 0),
+    ('Bribe him with $10 airtime', 'He hands over the password. It was "password". You''re furious.', 10, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 104. Moving-Out Sale
 WITH e AS (
@@ -1135,9 +1358,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Take the $100', 'Easy money. Two days later you realise your favourite hoodie was in there.', 0, 100, 1, 1, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Sell it piece by piece', '$260 over three weeks, and 94 messages asking "is this still available?"', 0, 260, 2, -5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Take the $100', 'Easy money. Two days later you realise your favourite hoodie was in there.', 0, 100, 1, 1, 0),
+    ('Sell it piece by piece', '$260 over three weeks, and 94 messages asking "is this still available?"', 0, 260, 2, -5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 105. Moving Day
 WITH e AS (
@@ -1147,9 +1371,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Hire movers', '$180 and done in two hours. They dropped one box. It was the plates.', 180, 0, 1, 3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Make it work', 'Eight hours and a sofa stuck in the stairwell. The dog had a great time.', 0, 0, 2, -6, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Hire movers', '$180 and done in two hours. They dropped one box. It was the plates.', 180, 0, 1, 3, 0),
+    ('Make it work', 'Eight hours and a sofa stuck in the stairwell. The dog had a great time.', 0, 0, 2, -6, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 106. Mum's Birthday
 WITH e AS (
@@ -1159,9 +1384,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Pay your share', 'She cries, hugs everyone and says you''re her favourite. She says it to all of you.', 60, 0, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Make her a card', 'She frames it. You are an adult. She frames it.', 0, 0, 2, 3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Pay your share', 'She cries, hugs everyone and says you''re her favourite. She says it to all of you.', 60, 0, 1, 6, 0),
+    ('Make her a card', 'She frames it. You are an adult. She frames it.', 0, 0, 2, 3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 107. New Year, New Gym
 WITH e AS (
@@ -1171,9 +1397,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Sign up', 'You go nine times in January. You are now the gym''s most generous donor.', 240, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Run in the park for free', 'You run twice. The third time you sit on a bench and eat crisps. Progress is progress.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Sign up', 'You go nine times in January. You are now the gym''s most generous donor.', 240, 0, 1, 5, 0),
+    ('Run in the park for free', 'You run twice. The third time you sit on a bench and eat crisps. Progress is progress.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 108. 3am Symptom Search
 WITH e AS (
@@ -1183,9 +1410,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'See a doctor', '"Drink water and stop googling." Best $45 you ever spent.', 45, 0, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Keep searching', 'Now you also have a rare tropical disease. You fall asleep at 5am, alive and anxious.', 0, 0, 2, -7, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('See a doctor', '"Drink water and stop googling." Best $45 you ever spent.', 45, 0, 1, 6, 0),
+    ('Keep searching', 'Now you also have a rare tropical disease. You fall asleep at 5am, alive and anxious.', 0, 0, 2, -7, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 109. 25 Going on 75
 WITH e AS (
@@ -1195,9 +1423,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'See a physio', '$90 and a stern warning about your posture. You sit up straight for nearly a whole day.', 90, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Lie on the floor', 'Three hours on the floor. It helps, and you reconsider most of your choices.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('See a physio', '$90 and a stern warning about your posture. You sit up straight for nearly a whole day.', 90, 0, 1, 5, 0),
+    ('Lie on the floor', 'Three hours on the floor. It helps, and you reconsider most of your choices.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 110. Phone-Free Weekend
 WITH e AS (
@@ -1207,9 +1436,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Try again properly', '48 hours. You read a book, notice birds and miss three memes. Surprisingly lovely.', 0, 0, 1, 8, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Doomscroll instead', 'You watch 500 videos and remember none. Your thumb is in excellent shape.', 0, 0, 2, -4, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Try again properly', '48 hours. You read a book, notice birds and miss three memes. Surprisingly lovely.', 0, 0, 1, 8, 0),
+    ('Doomscroll instead', 'You watch 500 videos and remember none. Your thumb is in excellent shape.', 0, 0, 2, -4, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 111. The Spoon Documentary
 WITH e AS (
@@ -1219,9 +1449,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Go to bed', 'You wake up rested and only slightly curious about spoons.', 0, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'One more episode', 'You now know everything about spoons and nothing about the 9am meeting.', 0, 0, 2, -5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Go to bed', 'You wake up rested and only slightly curious about spoons.', 0, 0, 1, 4, 0),
+    ('One more episode', 'You now know everything about spoons and nothing about the 9am meeting.', 0, 0, 2, -5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 112. "Just a Trim"
 WITH e AS (
@@ -1231,9 +1462,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Fix it at a fancy salon', '$55 later you look good. Different. But good.', 55, 0, 1, 3, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Hats for a month', 'You become "the hat person". Some people think it''s a style. You let them.', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Fix it at a fancy salon', '$55 later you look good. Different. But good.', 55, 0, 1, 3, 0),
+    ('Hats for a month', 'You become "the hat person". Some people think it''s a style. You let them.', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 113. Free Sample Festival
 WITH e AS (
@@ -1243,9 +1475,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Speedrun the samples', 'Fourteen samples in 28 minutes. Free lunch, and a legend is born.', 0, 15, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Stay at your desk', 'Sad desk salad. Four different people tell you about the samples.', 0, 0, 2, -2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Speedrun the samples', 'Fourteen samples in 28 minutes. Free lunch, and a legend is born.', 0, 15, 1, 5, 0),
+    ('Stay at your desk', 'Sad desk salad. Four different people tell you about the samples.', 0, 0, 2, -2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 114. The 12-Step Skincare
 WITH e AS (
@@ -1255,21 +1488,23 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Buy it all', 'Your bathroom looks like a lab. Your skin looks the same. You feel incredibly fancy.', 180, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Water and sleep', 'Cheap, effective, boring. Your skin says thanks.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Buy it all', 'Your bathroom looks like a lab. Your skin looks the same. You feel incredibly fancy.', 180, 0, 1, 4, 0),
+    ('Water and sleep', 'Cheap, effective, boring. Your skin says thanks.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 115. Wrong Ride
 WITH e AS (
     INSERT INTO life_events (title, description, event_type, impact_cash, impact_income, impact_expenses, impact_sanity, icon_name, is_active)
-    SELECT 'Wrong Ride', 'You got into a car you thought was your ride-hail. It''s a stranger who just let you in. You''ve been chatting for five minutes.', 'emergency', 0, 0, 0, 0, 'Car', true
+    SELECT 'Wrong Ride', 'You jumped in a car you thought was your ride-hail. It''s a stranger who just let you in. You''ve been chatting for five minutes.', 'emergency', 0, 0, 0, 0, 'Car', true
     WHERE NOT EXISTS (SELECT 1 FROM life_events WHERE title = 'Wrong Ride')
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Ask him to drop you anyway', 'He''s going your way and refuses money. You''re invited to his kid''s birthday now.', 0, 0, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Jump out at the lights', 'You run. Your real ride cancelled and charged you a $5 fee.', 5, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Ask him to drop you anyway', 'He''s going your way and refuses money. You''re invited to his kid''s birthday now.', 0, 0, 1, 6, 0),
+    ('Jump out at the lights', 'You run. Your real ride cancelled and charged you a $5 fee.', 5, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 116. A Bird's Blessing
 WITH e AS (
@@ -1279,9 +1514,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Walk in confidently', 'They notice. You make a joke. They laugh. It goes better than any meeting you''ve had.', 0, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Buy a new shirt nearby', '$30 shirt, two minutes late, meeting fine. The bird got away with it.', 30, 0, 2, 1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Walk in confidently', 'They notice. You make a joke. They laugh. It goes better than any meeting you''ve had.', 0, 0, 1, 5, 0),
+    ('Buy a new shirt nearby', '$30 shirt, two minutes late, meeting fine. The bird got away with it.', 30, 0, 2, 1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 117. The Office Jackpot Pool
 WITH e AS (
@@ -1291,9 +1527,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Put in $10', 'You win! $46 each. Not life-changing, but lunch is on you and everyone remembers it.', 0, 36, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Skip it', 'They don''t win. You feel smug for exactly one afternoon.', 0, 0, 2, 2, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Put in $10', 'You win! $46 each. Not life-changing, but lunch is on you and everyone remembers it.', 0, 36, 1, 5, 0),
+    ('Skip it', 'They don''t win. You feel smug for exactly one afternoon.', 0, 0, 2, 2, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 118. Gridlock
 WITH e AS (
@@ -1303,9 +1540,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Buy the peanuts', 'Best $2 of your week. The chicken guy makes his sale to the car behind you.', 2, 0, 1, 4, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Scream into your sleeve', 'You arrive 90 minutes late and slightly hoarse.', 0, 0, 2, -3, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Buy the peanuts', 'Best $2 of your week. The chicken guy makes his sale to the car behind you.', 2, 0, 1, 4, 0),
+    ('Scream in your sleeve', 'You arrive 90 minutes late and slightly hoarse.', 0, 0, 2, -3, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 119. Lost Wallet
 WITH e AS (
@@ -1315,9 +1553,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Retrace your steps', 'A kind lady at the bus stop had it. All there except the coffee card. She needed that coffee.', 0, 0, 1, 5, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Replace everything', '$35 in fees and three queues. Then the wallet turns up in your other jacket.', 35, 0, 2, -5, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Retrace your steps', 'A kind lady at the bus stop had it. All there except the coffee card. She needed that coffee.', 0, 0, 1, 5, 0),
+    ('Replace everything', '$35 in fees and three queues. Then the wallet turns up in your other jacket.', 35, 0, 2, -5, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 -- 120. Accidentally Viral
 WITH e AS (
@@ -1327,9 +1566,10 @@ WITH e AS (
     RETURNING id
 )
 INSERT INTO life_event_choices (id, life_event_id, choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income)
-SELECT gen_random_uuid(), id, 'Do a sponsored post', 'A pet food brand pays $250. Your cat demands a cut, in treats.', 0, 250, 1, 6, 0 FROM e
-UNION ALL
-SELECT gen_random_uuid(), id, 'Stay humble', 'You do nothing and the video fades. Your cat looks disappointed in you.', 0, 0, 2, 1, 0 FROM e;
+SELECT gen_random_uuid(), e.id, v.* FROM e CROSS JOIN (VALUES
+    ('Do a sponsored post', 'A pet food brand pays $250. Your cat demands a cut, in treats.', 0, 250, 1, 6, 0),
+    ('Stay humble', 'You do nothing and the video fades. Your cat looks disappointed in you.', 0, 0, 2, 1, 0)
+) AS v(choice_label, outcome_description, cost, benefit, choice_order, impact_sanity, impact_income);
 
 
 -- ---------------------------------------------------------------------------
@@ -1515,9 +1755,9 @@ update life_event_choices set outcome_description = '"Heyyy you!" They know. The
 update life_event_choices set outcome_description = 'You admit it. They forgot yours too. Instant friends.', cost = 0, benefit = 0, impact_sanity = 3, impact_income = 0
   where choice_order = 2 and life_event_id in (select id from life_events where title = 'Forgot Name');
 update life_event_choices set outcome_description = 'You hide behind the cereal for nine minutes. Dignity: lost.', cost = 0, benefit = 0, impact_sanity = -3, impact_income = 0
-  where choice_order = 1 and life_event_id in (select id from life_events where title = 'Ran into Ex');
+  where choice_order = 1 and life_event_id in (select id from life_events where title = 'The Ex Sighting');
 update life_event_choices set outcome_description = 'Painful, polite and over in a minute. Growth.', cost = 0, benefit = 0, impact_sanity = 2, impact_income = 0
-  where choice_order = 2 and life_event_id in (select id from life_events where title = 'Ran into Ex');
+  where choice_order = 2 and life_event_id in (select id from life_events where title = 'The Ex Sighting');
 update life_event_choices set outcome_description = 'You delete the app for a week. The world keeps spinning.', cost = 0, benefit = 0, impact_sanity = 5, impact_income = 0
   where choice_order = 1 and life_event_id in (select id from life_events where title = 'Everyone is Engaged');
 update life_event_choices set outcome_description = 'You compare your life to strangers'' best days until 2am.', cost = 0, benefit = 0, impact_sanity = -8, impact_income = 0
@@ -1624,7 +1864,7 @@ update life_events set impact_sanity = 0 where title in (
   'Awkward Date',
   'Social Battery Dead',
   'Forgot Name',
-  'Ran into Ex',
+  'The Ex Sighting',
   'Everyone is Engaged',
   'Cancelled Plans',
   'Accidental Like',

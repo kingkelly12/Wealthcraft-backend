@@ -200,6 +200,14 @@ def _pay_salaries(scope, profiles_map, get_summary):
         if pay > 0:
             BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
             get_summary(uid).credit(pay, 'Salary')
+        # A month of experience on your main job (careers.py: it unlocks the next rung).
+        mains = [j['id'] for j in jobs if j.get('kind', 'job') != 'gig']
+        if mains:
+            try:
+                from app.game import careers
+                careers.add_month(mains)
+            except Exception as e:
+                logger.error(f"Experience update failed for {uid}: {e}")
         if scope.only_user:
             continue
         for gig in (j for j in jobs if j.get('kind') == 'gig'):

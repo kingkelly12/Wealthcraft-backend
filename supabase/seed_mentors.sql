@@ -38,7 +38,7 @@ INSERT INTO mentor_messages (mentor_id, trigger_type, message_template, cta_text
 
 Inflation is eating ${inflation_loss:,} yearly. That''s money losing value while you sleep.
 
-Action: Move at least 60% into dividend stocks or REITs. Keep 3-6 months expenses as emergency fund.
+Action: Move at least 60% to dividend stocks or REITs. Keep 3-6 months expenses as emergency fund.
 
 Remember: Cash is for safety, assets are for wealth. Let''s build both.',
   'View Investment Options',

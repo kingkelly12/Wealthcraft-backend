@@ -77,7 +77,9 @@ def purchase_asset(current_user_id: str):
             }), 404
 
         asset = asset_response.data[0]
-        unit_price = Decimal(str(asset['price']))
+        # Your market's price (it moves with your game weeks: app/game/market.py).
+        from app.game import market as game_market
+        unit_price = game_market.price_of(current_user_id, asset)
         total_price = (unit_price * quantity).quantize(Decimal('0.01'))
         if total_price <= 0:
             return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'Quantity too small'}), 400
@@ -245,14 +247,32 @@ def get_assets_overview(current_user_id: str):
             .limit(5)\
             .execute()
         
+        # Traded assets show your market's price and this week's move.
+        from app.game import market as game_market
+        mine = game_market.view(current_user_id, market_res.data or [])
+        listings = []
+        for a in market_res.data or []:
+            p = mine.get(str(a['id']))
+            if p:
+                a = {**a, 'price': float(p['price']), 'price_change': p['change'], 'price_change_percent': p['change_pct']}
+            if (a.get('category') or '').lower() in game_market.TRADED:
+                drift, vol = game_market.params(a)
+                a['expected_growth_pct'] = round(drift * 100, 1)
+                a['volatility_pct'] = round(vol * 100)
+            listings.append({**a, 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'), a.get('risk_level'))})
+        events = [{'headline': f"{e['emoji']} {e['title']}", 'body': e['body'],
+                   'analyst_tip': 'Big swings are normal. Selling in a panic is how most people lose money.',
+                   'market_mood': 'Crash' if (e.get('shock_pct') or 0) < 0 else 'Boom',
+                   'market_mood_emoji': e['emoji'], 'created_at': e.get('created_at')}
+                  for e in game_market.recent_events(current_user_id, 3)]
+
         return jsonify({
             'success': True,
             'data': {
-                'market': [{**a, 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'), a.get('risk_level'))}
-                           for a in (market_res.data or [])],
+                'market': listings,
                 'portfolio': portfolio or [],
                 'profile': profile,
-                'news': news_res.data or []
+                'news': events + (news_res.data or [])
             }
         }), 200
     except Exception as e:
@@ -367,8 +387,9 @@ def sell_asset(current_user_id: str, asset_id: str = None):
 
         # Unit sale price: live market price for volatile assets, appreciated value otherwise.
         if asset.get('asset_type') in VOLATILE_TYPES:
-            market = supabase.table('assets').select('price').eq('name', asset.get('name')).limit(1).execute()
-            unit_price = Decimal(str(market.data[0]['price'])) if market.data else cost_basis_unit
+            from app.game import market as game_market
+            listing = supabase.table('assets').select('*').eq('name', asset.get('name')).limit(1).execute()
+            unit_price = game_market.price_of(current_user_id, listing.data[0]) if listing.data else cost_basis_unit
         else:
             unit_price = Decimal(str(asset.get('value') or 0)) / held_qty
 

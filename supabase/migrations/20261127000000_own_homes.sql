@@ -66,7 +66,7 @@ insert into public.home_listings (name, home_type, bills_type, price, market_ren
      '[{"label":"Insurance","monthly":120},{"label":"Property rates","monthly":190},{"label":"Dock & maintenance","monthly":350}]'),
   ('Beach Villa',            'villa',     null,         850000,  6200,  4, 'The Coast',      'Pool, ocean view, sand in absolutely everything. Holiday lets pay very well.',
      '[{"label":"Insurance","monthly":160},{"label":"Property rates","monthly":250},{"label":"Pool & garden","monthly":400},{"label":"Caretaker","monthly":300}]'),
-  ('Penthouse',              'penthouse', 'penthouse',  1100000, 6500,  3, 'Skyline District','The whole top floor, a rooftop terrace and a lift that opens into your living room.',
+  ('Penthouse',              'penthouse', 'penthouse',  1100000, 6500,  3, 'Skyline District','The whole top floor, a rooftop terrace and a lift that opens right in your living room.',
      '[{"label":"Service charge","monthly":900},{"label":"Insurance","monthly":200},{"label":"Property rates","monthly":320}]'),
   ('Mansion',                'mansion',   null,         2200000, 14000, 7, 'The Hills',      'Gates, a fountain and more bathrooms than you will ever use. Staff included in the bills, not the price.',
      '[{"label":"Insurance","monthly":400},{"label":"Property rates","monthly":650},{"label":"Staff","monthly":2500},{"label":"Maintenance","monthly":1200}]'),

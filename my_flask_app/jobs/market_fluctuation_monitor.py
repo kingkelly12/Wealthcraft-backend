@@ -124,9 +124,15 @@ def simulate_market_fluctuation():
         )
 
         user_updates = {}
-        
+        # Players on game time have their own market that moves with their weeks
+        # (app/game/market.py): this calendar job leaves their holdings alone.
+        from jobs.monthly_loan_deductions import _clocked_user_ids
+        clocked = _clocked_user_ids()
+
         if user_assets_result.data:
             for ua in user_assets_result.data:
+                if str(ua.get('user_id')) in clocked:
+                    continue
                 asset_name = ua.get('name')
                 if asset_name in global_changes:
                     change_data = global_changes[asset_name]

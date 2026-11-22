@@ -1,23 +1,21 @@
 # Developer scripts
 
-Diagnostics and manual checks. None of these are part of the deployed app
-(they're excluded from Docker, gcloud and SAM uploads).
+Manual tools for working against a real Supabase project. None of these are
+part of the deployed app (they're excluded from Docker and gcloud uploads).
 
 Run them from `my_flask_app/` as modules, so `from app import ...` and `.env`
 loading work:
 
 ```sh
 cd my_flask_app
-python -m scripts.inspect_schema          # a diagnostic
-python -m pytest scripts/test_missions_api.py   # a manual check
+../.venv/bin/python -m scripts.diagnose_push_notification <username>
+../.venv/bin/python -m scripts.trigger_life_event_test --username <username>
 ```
 
-| Kind | Files |
+| File | What it's for |
 |---|---|
-| Database / Supabase diagnostics | `analyze_supabase_connection`, `check_password_encoding`, `connection_guide`, `diagnose_db_url`, `inspect_schema`, `inspect_loans_schema`, `verify_supabase_project` |
-| Push notifications | `diagnose_push_notification`, `test_push_notification` |
-| Gameplay triggers | `trigger_life_event_test`, `verify_sanity` |
-| Manual API checks (several need a running server or real credentials) | `test_*.py`, `regression_test`, `test_regression_direct` |
-| Local networking | `setup_wsl_port_forward.ps1` (WSL → Windows port forwarding for Flask) |
+| `diagnose_push_notification.py` | Checks a player's Expo push token, sends a test push and explains why delivery failed |
+| `trigger_life_event_test.py` | Assigns a random life event to a player right now (instead of waiting for the cron job) |
+| `setup_wsl_port_forward.ps1` | Windows/WSL port forwarding so a phone on your Wi-Fi can reach Flask (pairs with `../run_local.sh`) |
 
-The automated test suite lives in `my_flask_app/tests/`.
+The automated test suite lives in `my_flask_app/tests/` (`pytest` from `my_flask_app/`).

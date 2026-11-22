@@ -1,6 +1,5 @@
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, constr
 from typing import Optional
-from datetime import datetime
 
 class ProfileCreate(BaseModel):
     user_id: str

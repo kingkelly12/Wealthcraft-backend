@@ -547,6 +547,17 @@ def complete_week(user_id: str) -> dict:
         except Exception as e:  # the week still ends; the player sees a partial receipt
             logger.error(f"Month processing failed for {uid} at week {week}: {e}")
 
+    # The market moves one game week (app/game/market.py).
+    market_week = None
+    try:
+        from app.game import market
+        market_week = market.advance(uid, week)
+        import uuid as _uuid
+        from app.services.profile_service import ProfileService
+        ProfileService.recalculate_net_worth(_uuid.UUID(uid))
+    except Exception as e:  # the market never blocks a week
+        logger.error(f"Market step failed for {uid} at week {week}: {e}")
+
     lines = []
     for c in cards:
         r = c.get('result') or {}
@@ -571,6 +582,8 @@ def complete_week(user_id: str) -> dict:
         'birthday': life_mod.birthday_between(week, week + 1, start_age),
         'cards': lines,
         'gigs': gigs,
+        # Your investments this week, and any crash or boom.
+        'market': market_week,
         'month_summary': month,
         'totals': {
             'cash': float(card_cash + gig_cash + month_net),
