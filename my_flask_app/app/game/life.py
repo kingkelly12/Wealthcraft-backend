@@ -344,6 +344,11 @@ def end_life(user_id):
     }).eq('id', life['id']).eq('is_current', True).execute()
     if not closed.data:
         raise LifeError('CONFLICT', 'This life already ended.', 409)
+    try:
+        from app.game import squads
+        squads.on_life_ended(uid, summary)
+    except Exception as e:
+        logger.warning(f'Squad post for ended life failed for {uid}: {e}')
     return summary
 
 
@@ -445,6 +450,12 @@ def begin_life(user_id, background, avatar):
         if '23505' in str(e) or 'duplicate' in str(e).lower():
             raise LifeError('LIFE_IN_PROGRESS', 'A life was just started in another session.', 409)
         raise
+    try:
+        from app.game import squads
+        info = background_info(background) or ORIGINAL
+        squads.on_life_started(uid, life_number, info['name'], info['emoji'], reset=background != 'original')
+    except Exception as e:
+        logger.warning(f'Squad post for new life failed for {uid}: {e}')
     return public_life(current_life(uid))
 
 

@@ -392,6 +392,11 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
     deck = get_week(uid, int(clock['week']))
     if deck['status'] != 'open':
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
+    try:  # the squad race measures growth from before your first card this week
+        from app.game import squads
+        squads.ensure_baseline(uid)
+    except Exception as e:
+        logger.warning(f'Squad baseline failed for {uid}: {e}')
 
     cards = copy.deepcopy(deck.get('cards') or [])
     card = next((c for c in cards if c['id'] == card_id), None)
@@ -547,6 +552,12 @@ def complete_week(user_id: str) -> dict:
     }
     from app.game import cast
     receipt['texts'] = cast.react_to_week(uid, receipt)
+    try:
+        from app.game import squads
+        receipt['squad'] = squads.record_week(uid, receipt)
+    except Exception as e:  # the squad never blocks a week
+        logger.warning(f'Squad update failed for {uid} at week {week}: {e}')
+        receipt['squad'] = None
 
     supabase.table('player_weeks').update({
         'status': 'completed', 'receipt': receipt, 'completed_at': receipt['completed_at'],
