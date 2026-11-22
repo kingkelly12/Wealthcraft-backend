@@ -63,6 +63,7 @@ def create_app(config_name='default'):
     from app.routes.life_routes import life_bp
     from app.routes.cast_routes import texts_bp, roommates_bp
     from app.routes.squad_routes import squads_bp
+    from app.routes.home_routes import homes_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(profile_bp, url_prefix='/api/profile')
@@ -90,6 +91,7 @@ def create_app(config_name='default'):
     app.register_blueprint(texts_bp, url_prefix='/api/texts')
     app.register_blueprint(roommates_bp, url_prefix='/api/roommates')
     app.register_blueprint(squads_bp, url_prefix='/api/squads')
+    app.register_blueprint(homes_bp, url_prefix='/api/homes')
 
     
     # Health check endpoint

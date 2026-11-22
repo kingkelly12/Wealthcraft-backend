@@ -136,8 +136,11 @@ def _player_context(uid: str) -> dict:
     jobs = supabase.table('jobs').select('id').eq('user_id', uid).eq('is_current', True).limit(1).execute()
     rentals = supabase.table('player_rentals').select('id').eq('player_id', uid).eq('is_active', True).limit(1).execute()
     roommate = roommates.roommate_name(uid)
+    owns = supabase.table('player_homes').select('id').eq('player_id', uid).eq('is_active', True).eq('lives_in', True).limit(1).execute()
     return {
         'job': bool(jobs.data),
+        # Living in a home you own: no landlord cards, no "move back home" cards.
+        'owner': bool(owns.data),
         # Living in a friend's place counts as renting, for the cards.
         'rental': bool(rentals.data) or bool(roommate),
         'balance': BalanceService.get_current_balance(uid),
@@ -153,7 +156,7 @@ def _eligible(card, ctx) -> bool:
         'job': ctx['job'],
         'no_job': not ctx['job'],
         'rental': ctx['rental'],
-        'no_rental': not ctx['rental'],
+        'no_rental': not ctx['rental'] and not ctx.get('owner'),
     }.get(req, True)
     if card.get('character') == 'roommate' and not ctx['rental']:
         ok = False

@@ -238,6 +238,39 @@ create table public.player_rentals (
 );
 create unique index player_rentals_one_active on public.player_rentals (player_id) where is_active;
 
+-- Homes for sale, and homes players own (app/game/homes.py). Living in one you
+-- own ends your lease: no rent, just upkeep and bills.
+create table public.home_listings (
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null unique,
+  home_type    text not null,              -- studio | apartment | townhouse | bungalow | lakehouse | villa | penthouse | mansion | manor
+  bills_type   text,                       -- a key of economy.HOME_BILLS; null = bills scale with market_rent
+  price        numeric(14,2) not null check (price > 0),
+  market_rent  numeric(12,2) not null default 0 check (market_rent >= 0),
+  bedrooms     integer not null default 1,
+  location     text not null,
+  description  text,
+  upkeep       jsonb not null default '[]', -- [{"label": "Insurance", "monthly": 40}, ...]
+  image_url    text,
+  created_at   timestamptz not null default now()
+);
+
+create table public.player_homes (
+  id             uuid primary key default gen_random_uuid(),
+  player_id      uuid not null references public.profiles(user_id) on delete cascade,
+  home_id        uuid not null references public.home_listings(id) on delete restrict,
+  purchase_price numeric(15,2) not null,
+  current_value  numeric(15,2) not null,
+  lives_in       boolean not null default false,
+  months_held    integer not null default 0,
+  is_active      boolean not null default true,
+  purchased_at   timestamptz not null default now(),
+  sold_at        timestamptz
+);
+create index player_homes_player_idx on public.player_homes (player_id) where is_active;
+-- You live in at most one home you own.
+create unique index player_homes_one_lived_in on public.player_homes (player_id) where is_active and lives_in;
+
 create table public.liability_items (
   id           uuid primary key default gen_random_uuid(),
   name         text not null unique,
@@ -1132,6 +1165,7 @@ create policy "catalogue read" on public.assets                   for select to 
 create policy "catalogue read" on public.job_market               for select to authenticated using (true);
 create policy "catalogue read" on public.courses                  for select to authenticated using (true);
 create policy "catalogue read" on public.rental_properties        for select to authenticated using (true);
+create policy "catalogue read" on public.home_listings            for select to authenticated using (true);
 create policy "catalogue read" on public.liability_items          for select to authenticated using (true);
 create policy "catalogue read" on public.life_events              for select to authenticated using (true);
 create policy "catalogue read" on public.life_event_choices       for select to authenticated using (true);

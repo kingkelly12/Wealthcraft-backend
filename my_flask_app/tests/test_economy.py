@@ -190,6 +190,45 @@ def test_income_figures_per_week_month_year():
     assert economy.income_figures(0, 3, 60000, 'crypto')['growth_pct'] is None
 
 
+
+def test_business_profit_swings_with_risk(fake_supabase, wallets, monkeypatch):
+    uid, _ = _player(fake_supabase, income=0)
+    fake_supabase.rows('assets').append({'name': 'Car Wash', 'monthly_income': 230, 'category': 'business', 'risk_level': 'medium'})
+    fake_supabase.rows('user_assets').append({'id': 'b1', 'user_id': uid, 'name': 'Car Wash', 'asset_type': 'business',
+                                             'value': 7500, 'purchase_price': 7500, 'quantity': 2})
+    monkeypatch.setattr(economy, 'profit_swing', lambda risk, rng=None: Decimal('1.25'))
+    line = _lines(process_month_for_user(uid))['Car Wash profit']
+    assert line['amount'] == 575.0 and line['note'] == 'great month · 125% of usual'
+    assert wallets[uid] >= Decimal('575')
+
+
+def test_short_on_cash_for_a_business_says_by_how_much(client, fake_supabase, wallets, monkeypatch):
+    uid, h = _player(fake_supabase, income=3000)
+    wallets[uid] = Decimal('5000')
+    fake_supabase.rows('assets').append({'id': 'biz-1', 'name': 'Car Wash', 'category': 'business', 'price': 7500,
+                                         'monthly_income': 230, 'risk_level': 'medium'})
+    monkeypatch.setattr('app.routes.asset_routes.enforce_mission_constraints', lambda *a, **k: None)
+    res = client.post('/api/assets/purchase/', json={'asset_id': 'biz-1', 'quantity': 1}, headers=h)
+    body = res.get_json()
+    assert res.status_code == 400 and body['error'] == 'INSUFFICIENT_FUNDS'
+    assert body['data'] == {'needed': 7500.0, 'balance': 5000.0, 'short': 2500.0}
+    assert "$2,500 short" in body['message']
+
+def test_profit_swing_stays_in_its_band_and_averages_out():
+    import random
+    rng = random.Random(7)
+    for risk, (lo, hi) in economy.PROFIT_SWING.items():
+        draws = [economy.profit_swing(risk, rng) for _ in range(2000)]
+        assert min(draws) >= Decimal(str(lo)) and max(draws) <= Decimal(str(hi))
+        assert abs(sum(draws) / len(draws) - 1) < Decimal('0.05')
+
+
+def test_business_figures_show_the_range_and_payback():
+    f = economy.income_figures(230, 1, 7500, 'business', 'medium')
+    assert f['profit_range'] == {'low': 161.0, 'high': 299.0}
+    assert f['payback_months'] == 33 and f['income_weekly'] == 53.08
+    assert economy.income_figures(1900, 1, 240000, 'real_estate')['profit_range'] is None
+
 # --- household bills ------------------------------------------------------------------------
 
 def _rent(fake, uid, rent=950, ptype='studio'):
@@ -303,3 +342,28 @@ def test_banks_check_you_can_afford_it(client, fake_supabase, wallets):
                                             'term': 180, 'monthly_payment': 3163.11, 'total_interest': 319358.98, 'credit_required': 720, 'collateral': 'property'})
     res = client.post('/api/loans/apply/', json={'loan_id': IDS['mortgage']}, headers=h).get_json()
     assert res['error'] == 'CANT_AFFORD' and '43%' in res['message']
+
+
+# --- showcase -------------------------------------------------------------------------------
+
+def test_showcase_lists_flex_items_most_valuable_first():
+    def owned(name, category, price, value=None, **kw):
+        return {'id': name, 'purchase_price': price, 'current_value': value, 'is_active': True,
+                'liability_items': {'name': name, 'category': category, 'lease_label': 'Charter it out'}, **kw}
+    s = economy.showcase([
+        owned('Latest Smartphone', 'tech', 1200),
+        owned('Used Sedan', 'vehicle', 9000, 7650),
+        owned('Private Jet', 'aircraft', 4500000, 4200000, is_leased=True),
+        owned('Jet Ski', 'boat', 16000),
+        owned('Superbike', 'vehicle', 22000, 18000),
+        owned('Rolex Submariner', 'fashion', 14000),
+        owned('Gym Membership+', 'wellness', 300),
+    ])
+    # Cars, motorbikes, boats and aircraft only: no watches, bags, phones or gyms.
+    assert [i['name'] for i in s['items']] == ['Private Jet', 'Superbike', 'Jet Ski', 'Used Sedan']
+    assert [i['emoji'] for i in s['items']] == ['🛩️', '🏍️', '🌊', '🚗']
+    assert s['items'][1]['kind'] == 'motorbikes'
+    assert s['items'][0]['is_leased'] and s['items'][0]['lease_label'] == 'Charter it out'
+    assert s['items'][3]['lease_label'] is None and s['items'][3]['value'] == 7650.0
+    assert s['counts'] == {'cars': 1, 'motorbikes': 1, 'boats': 1, 'aircraft': 1}
+    assert s['total_value'] == 4200000 + 18000 + 16000 + 7650

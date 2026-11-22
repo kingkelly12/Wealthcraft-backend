@@ -5,10 +5,12 @@ Money rules shared by the game week, the game month and the API.
 * Lifestyle items: an annual depreciation rate, monthly running costs (fuel,
   insurance, crew...), a periodic service bill, and leasing for income.
 * Assets: income per week / month / year, and appreciation on game months.
+  Businesses' profit swings month to month by risk level.
 * Household bills: groceries plus electricity, water and Wi-Fi for the home
   you rent. Roommates split the home bills and save on groceries.
 * Loans: friend (P2P) loan maths, limits, and who counts as a friend.
 """
+import math
 import random
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -133,6 +135,52 @@ def item_economics(item, owned=None):
     return out
 
 
+# --- Showcase -------------------------------------------------------------------------
+# The things players buy to show off, shown on their profile: cars, motorbikes,
+# boats, helicopters and private jets (and other aircraft). Watches, bags, phones
+# and gym passes aren't part of it.
+SHOWCASE_KINDS = {'vehicle': 'cars', 'boat': 'boats', 'aircraft': 'aircraft'}
+_MOTORBIKE_WORDS = ('bike', 'motorcycle', 'scooter')
+_EMOJI_BY_NAME = [
+    ('jet ski', '🌊'), ('superyacht', '🛥️'), ('catamaran', '⛵'), ('boat', '🚤'),
+    ('helicopter', '🚁'), ('jet', '🛩️'), ('aircraft', '🛩️'),
+    ('supercar', '🏎️'), ('sports', '🏎️'), ('bike', '🏍️'), ('suv', '🚙'), ('convertible', '🚘'),
+    ('electric', '🚘'),
+]
+_EMOJI_BY_KIND = {'cars': '🚗', 'motorbikes': '🏍️', 'boats': '🚤', 'aircraft': '✈️'}
+
+
+def showcase(owned):
+    """A player's flex items, most valuable first, with totals by kind."""
+    items = []
+    for pl in owned or []:
+        item = item_of(pl)
+        kind = SHOWCASE_KINDS.get((item.get('category') or '').lower())
+        if not kind or pl.get('is_active') is False:
+            continue
+        name = item.get('name') or pl.get('name') or 'Item'
+        low = name.lower()
+        if kind == 'cars' and any(w in low for w in _MOTORBIKE_WORDS):
+            kind = 'motorbikes'
+        price = money(pl.get('purchase_price') or item.get('base_price'))
+        value = money(pl.get('current_value') if pl.get('current_value') is not None else price)
+        items.append({
+            'id': pl.get('id'),
+            'name': name,
+            'kind': kind,
+            'emoji': next((e for key, e in _EMOJI_BY_NAME if key in low), _EMOJI_BY_KIND[kind]),
+            'image_url': item.get('image_url'),
+            'value': float(value),
+            'purchase_price': float(price),
+            'is_leased': bool(pl.get('is_leased')),
+            'lease_label': item.get('lease_label') if pl.get('is_leased') else None,
+            'since': pl.get('purchase_date'),
+        })
+    items.sort(key=lambda i: i['value'], reverse=True)
+    counts = {k: sum(1 for i in items if i['kind'] == k) for k in ('cars', 'motorbikes', 'boats', 'aircraft')}
+    return {'items': items, 'total_value': float(sum(Decimal(str(i['value'])) for i in items)), 'counts': counts}
+
+
 # --- Assets ---------------------------------------------------------------------------
 APPRECIATING = ('real_estate', 'business', 'property')
 APPRECIATION_YEAR_1 = Decimal('0.005')     # a month (~6% a year)
@@ -155,7 +203,44 @@ def appreciate(ua):
     return min(money(value * (1 + rate)), money(basis * APPRECIATION_CEILING)), held
 
 
-def income_figures(monthly_per_unit, quantity=1, cost_basis_per_unit=None, category=None):
+# --- Business profit ------------------------------------------------------------------
+# A business doesn't pay the same every month: some months are great, some are
+# dead. Profit is the listed monthly income times a swing drawn from this band
+# (by risk level). Each band averages about 1.0, so the listed figure is the
+# expected month.
+PROFIT_SWING = {
+    'low':       (0.85, 1.15),
+    'medium':    (0.70, 1.30),
+    'high':      (0.50, 1.50),
+    'very_high': (0.20, 1.80),
+}
+
+
+def is_business(category) -> bool:
+    return (category or '').lower() == 'business'
+
+
+def swing_band(risk_level):
+    return PROFIT_SWING.get((risk_level or 'medium').lower(), PROFIT_SWING['medium'])
+
+
+def profit_swing(risk_level, rng=None) -> Decimal:
+    """This month's multiplier on a business's listed profit."""
+    lo, hi = swing_band(risk_level)
+    return Decimal(str(round((rng or random).uniform(lo, hi), 2)))
+
+
+def month_mood(swing: Decimal) -> str:
+    if swing >= Decimal('1.2'):
+        return 'great month'
+    if swing >= Decimal('0.95'):
+        return 'good month'
+    if swing >= Decimal('0.7'):
+        return 'slow month'
+    return 'rough month'
+
+
+def income_figures(monthly_per_unit, quantity=1, cost_basis_per_unit=None, category=None, risk_level=None):
     """Income per week / month / year, the yield on what you paid, and expected growth."""
     monthly = money(Decimal(str(monthly_per_unit or 0)) * Decimal(str(quantity or 1)))
     annual = monthly * 12
@@ -169,6 +254,12 @@ def income_figures(monthly_per_unit, quantity=1, cost_basis_per_unit=None, categ
         'yield_pct': yield_pct,
         'growth_pct': growth,              # property & businesses; markets move on their own
         'total_return_pct': (yield_pct or 0) + growth if growth is not None and yield_pct is not None else yield_pct,
+        # Businesses: what a bad and a great month pay (the figures above are the average).
+        'profit_range': ({'low': float(money(monthly * Decimal(str(swing_band(risk_level)[0])))),
+                          'high': float(money(monthly * Decimal(str(swing_band(risk_level)[1]))))}
+                         if is_business(category) and monthly > 0 else None),
+        # Months of income to earn back what you paid (ignoring growth).
+        'payback_months': math.ceil(basis / monthly) if monthly > 0 and basis > 0 else None,
     }
 
 

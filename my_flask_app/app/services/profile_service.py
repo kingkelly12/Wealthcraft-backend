@@ -84,7 +84,11 @@ class ProfileService:
                 .eq('user_id', str(user_id)).gt('remaining_balance', 0).execute()
             debt_total = sum(float(d.get('remaining_balance') or 0) for d in (debt_res.data or []))
 
-            net_worth = balance + assets_total + items_total - debt_total
+            # 5. Homes you own, at their current value.
+            from app.game import homes
+            homes_total = float(homes.total_value(user_id))
+
+            net_worth = balance + assets_total + items_total + homes_total - debt_total
 
             # 5. Update Profile
             ProfileService.update_net_worth(user_id, net_worth)

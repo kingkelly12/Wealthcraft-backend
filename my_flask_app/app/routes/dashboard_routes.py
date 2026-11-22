@@ -56,6 +56,15 @@ def resolve_user_ids(user_id: str) -> list:
     return [user_id]
 
 
+def _homes_value(uid):
+    from app.game import homes
+    try:
+        return float(homes.total_value(uid))
+    except Exception as e:
+        logger.warning(f"Homes value failed for {uid}: {e}")
+        return 0.0
+
+
 @dashboard_bp.route('/consolidated/', methods=['GET'])
 @require_auth
 def get_consolidated_dashboard(current_user_id: str):
@@ -175,6 +184,8 @@ def get_consolidated_dashboard(current_user_id: str):
                 },
                 'account_balance': account_balance,
                 'portfolio': assets,
+                # Homes you own, at today's value (they count towards net worth).
+                'homes_value': _homes_value(current_user_id),
                 'liabilities': all_liabilities,
                 'jobs': jobs,
                 'rental': rental,

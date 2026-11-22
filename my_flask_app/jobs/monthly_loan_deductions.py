@@ -167,6 +167,7 @@ def _run_month(scope, profiles_map, game_years):
         ('loans', lambda: _charge_loans(scope, profiles_map, get_summary)),
         ('lifestyle running costs', lambda: _charge_maintenance(scope, get_summary)),
         ('rent', lambda: _charge_rent(scope, get_summary)),
+        ('homes you own', lambda: _run_homes(scope, get_summary)),
         ('roommate rent and bills', lambda: _roommate_rent(scope, get_summary, game_years)),
         ('household bills', lambda: _charge_living_costs(scope, profiles_map, get_summary, game_years)),
         ('asset income', lambda: _pay_asset_income(scope, get_summary)),
@@ -369,6 +370,19 @@ def _charge_rent(scope, get_summary):
             summ.missed(rent, f"Missed rent: {name}", f"⚠️ Missed {name} (${rent:,.2f})")
 
 
+def _run_homes(scope, get_summary):
+    """Upkeep on homes players own, rent from homes they let out, and value growth."""
+    from app.game import homes
+    rows = scope.filter(supabase.table('player_homes').select('player_id').eq('is_active', True), 'player_id').execute().data or []
+    for uid in sorted({str(r['player_id']) for r in rows}):
+        if not scope.includes(uid):
+            continue
+        try:
+            homes.run_month(uid, get_summary(uid))
+        except Exception as e:
+            logger.error(f"Homes month failed for {uid}: {e}")
+
+
 def _roommate_rent(scope, get_summary, game_years=0.0):
     """
     On the roommate's month they pay the leaseholder their share of the rent
@@ -425,6 +439,7 @@ def _charge_living_costs(scope, profiles_map, get_summary, game_years):
     Groceries, plus the bills for where you live:
     * renting: electricity, water and Wi-Fi for your home (a roommate pays you
       their share on their own month);
+    * living in a home you own: that home's electricity, water and Wi-Fi;
     * a roommate: groceries only (bills go to the leaseholder);
     * living with your parents: groceries and a contribution at home.
     Roommates save 20% on groceries by cooking together. Prices rise 5% a game
@@ -437,6 +452,10 @@ def _charge_living_costs(scope, profiles_map, get_summary, game_years):
     arrangements = supabase.table('roommates').select('leaseholder_id, roommate_id').eq('status', 'active').execute().data or []
     holders = {str(a['leaseholder_id']) for a in arrangements}
     mates = {str(a['roommate_id']) for a in arrangements}
+    from app.game import homes
+    owned_rows = scope.filter(supabase.table('player_homes').select('player_id, home_id').eq('is_active', True).eq('lives_in', True), 'player_id').execute().data or []
+    own_listing = homes._listings({str(r['home_id']) for r in owned_rows})
+    owner_home = {str(r['player_id']): own_listing.get(str(r['home_id'])) for r in owned_rows if own_listing.get(str(r['home_id']))}
 
     for user_id in uids:
         profile = profiles_map[user_id]
@@ -454,6 +473,11 @@ def _charge_living_costs(scope, profiles_map, get_summary, game_years):
             if uid in holders:
                 note += ' (your roommate pays you half)'
             lines.append(('Electricity, water & Wi-Fi', sum(bills.values(), Decimal('0')), note))
+        elif uid in owner_home:
+            listing = owner_home[uid]
+            bills = homes.bills(listing, years)
+            note = ' · '.join(f"{k} ${v:,.0f}" for k, v in bills.items())
+            lines.append(('Electricity, water & Wi-Fi', sum(bills.values(), Decimal('0')), f"{note} ({listing.get('name')}, your own place)"))
         elif uid not in mates:
             home = economy.parents_contribution(income, years)
             if home > 0:
@@ -472,8 +496,9 @@ def _charge_living_costs(scope, profiles_map, get_summary, game_years):
 
 def _pay_asset_income(scope, get_summary):
     """Rent, dividends and profit share from owned assets; on game time, property and businesses grow."""
-    assets_res = supabase.table('assets').select('name, monthly_income').execute()
-    income_map = {a['name']: Decimal(str(a.get('monthly_income') or 0)) for a in assets_res.data or []}
+    assets_res = supabase.table('assets').select('name, monthly_income, category, risk_level').execute()
+    catalog = {a['name']: a for a in assets_res.data or []}
+    income_map = {n: Decimal(str(a.get('monthly_income') or 0)) for n, a in catalog.items()}
 
     user_assets = scope.filter(supabase.table('user_assets').select('*'), 'user_id').execute()
     for ua in user_assets.data or []:
@@ -482,9 +507,17 @@ def _pay_asset_income(scope, get_summary):
             continue
         name = ua['name']
         total_income = income_map.get(name, Decimal('0')) * Decimal(str(ua.get('quantity', 1)))
+        listing = catalog.get(name) or {}
+        note = None
+        if total_income > 0 and economy.is_business(listing.get('category') or ua.get('asset_type')):
+            # Businesses have good and bad months.
+            swing = economy.profit_swing(listing.get('risk_level'))
+            total_income = economy.money(total_income * swing)
+            note = f"{economy.month_mood(swing)} · {int(swing * 100)}% of usual"
         if total_income > 0:
             BalanceService.add_balance(user_id=user_id, amount=total_income, reason=f"Monthly Asset Income: {name}", category='asset_income')
-            get_summary(user_id).credit(total_income, f"{name} yield")
+            label = f"{name} profit" if note else f"{name} yield"
+            get_summary(user_id).credit(total_income, label, note=note)
         if scope.only_user and economy.appreciates(ua.get('asset_type')):
             value, held = economy.appreciate(ua)
             supabase.table('user_assets').update({'value': float(value), 'months_held': held}).eq('id', ua['id']).execute()

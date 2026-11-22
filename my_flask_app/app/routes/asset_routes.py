@@ -176,10 +176,16 @@ def purchase_asset(current_user_id: str):
     except Exception as e:
         error_message = str(e)
         if 'Insufficient funds' in error_message:
+            # Say how far short the player is, so the app can offer a loan for the gap.
+            needed = locals().get('total_price')
+            have = BalanceService.get_current_balance(current_user_id) if needed is not None else None
+            short = max(Decimal('0'), needed - have) if needed is not None else None
             return jsonify({
                 'success': False,
                 'error': 'INSUFFICIENT_FUNDS',
-                'message': f'Insufficient funds for this purchase'
+                'message': (f"You're ${short:,.0f} short. Borrow from the bank or a friend and let it pay you back."
+                            if short else 'Insufficient funds for this purchase'),
+                'data': {'needed': float(needed), 'balance': float(have), 'short': float(short)} if short is not None else None,
             }), 400
         logger.exception('purchase_asset failed')
         return jsonify({
@@ -242,7 +248,7 @@ def get_assets_overview(current_user_id: str):
         return jsonify({
             'success': True,
             'data': {
-                'market': [{**a, 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'))}
+                'market': [{**a, 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'), a.get('risk_level'))}
                            for a in (market_res.data or [])],
                 'portfolio': portfolio or [],
                 'profile': profile,
@@ -260,12 +266,12 @@ def with_income_figures(holdings):
     names = list({h.get('name') for h in holdings if h.get('name')})
     if not names:
         return holdings
-    catalog = supabase.table('assets').select('name, monthly_income, category').in_('name', names).execute().data or []
+    catalog = supabase.table('assets').select('name, monthly_income, category, risk_level').in_('name', names).execute().data or []
     by_name = {a['name']: a for a in catalog}
     for h in holdings:
         a = by_name.get(h.get('name'), {})
         h['income'] = economy.income_figures(a.get('monthly_income'), h.get('quantity') or 1,
-                                             h.get('purchase_price'), a.get('category') or h.get('asset_type'))
+                                             h.get('purchase_price'), a.get('category') or h.get('asset_type'), a.get('risk_level'))
     return holdings
 
 

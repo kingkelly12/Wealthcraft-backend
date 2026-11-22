@@ -66,6 +66,15 @@ def get_dashboard_data(current_user_id: str):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def _homes_for(uid):
+    from app.game import homes
+    try:
+        return [homes._view(h) for h in homes.owned(uid)]
+    except Exception as e:
+        logger.warning(f"Homes for {uid} failed: {e}")
+        return []
+
+
 @profile_bp.route('/overview/', methods=['GET'])
 @require_auth
 def get_comprehensive_dashboard(current_user_id: str):
@@ -74,6 +83,7 @@ def get_comprehensive_dashboard(current_user_id: str):
     Reduces up to 8 separate calls to 1.
     Optimized to avoid redundant resolve_user_ids calls.
     """
+    from app.game import economy
     try:
         # Check if we're looking at another user's profile
         target_user_id = request.args.get('user_id', current_user_id)
@@ -161,6 +171,10 @@ def get_comprehensive_dashboard(current_user_id: str):
                 'balance': float(balance),
                 'assets': assets,
                 'liabilities': liabilities,
+                # Cars, boats, aircraft and luxury pieces to show off.
+                'showcase': economy.showcase(liabilities),
+                # Homes they own (and whether they live in one).
+                'homes': _homes_for(target_user_id),
                 'jobs': jobs,
                 'rental': rental,
                 'education': education,

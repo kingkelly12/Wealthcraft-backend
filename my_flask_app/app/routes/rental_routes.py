@@ -217,6 +217,11 @@ def rent_property(current_user_id: str):
             supabase.table('player_rentals').delete().eq('id', rental_id).execute()
             raise
 
+        # Renting somewhere new means you've moved out of any home you own:
+        # it gets let out instead.
+        from app.game import homes
+        homes.stop_living_in_owned(current_user_id)
+
         # 6. Notify followers of rental in background
         # (User gets immediate toast feedback from API response)
         try:
