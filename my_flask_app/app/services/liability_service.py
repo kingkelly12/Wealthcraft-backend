@@ -78,6 +78,14 @@ class LiabilityService:
             query = query.filter_by(player_id=player_id)
         
         liabilities = query.all()
+        # Players on game time age their items on game months instead.
+        try:
+            from jobs.monthly_loan_deductions import _clocked_user_ids
+            clocked = set(_clocked_user_ids())
+        except Exception:
+            clocked = set()
+        if not player_id:
+            liabilities = [l for l in liabilities if str(l.player_id) not in clocked]
         updated_count = 0
         total_depreciation = Decimal('0')
         

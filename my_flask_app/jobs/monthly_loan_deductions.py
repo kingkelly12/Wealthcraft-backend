@@ -6,6 +6,7 @@ from app.services.push_notification_service import ExpoPushService
 from decimal import Decimal
 import logging
 from app.utils.db import fetch_one
+from app.game import economy
 
 # Setup logging
 logging.basicConfig(
@@ -23,19 +24,19 @@ class _MonthSummary:
         self.details = []   # human strings, for the push notification
         self.lines = []     # structured, for the in-game receipt
 
-    def credit(self, amount, label, detail=None):
+    def credit(self, amount, label, detail=None, note=None):
         self.income += amount
         self.details.append(detail or f"+${amount:,.2f} {label}")
-        self.lines.append({'label': label, 'amount': float(amount), 'missed': False})
+        self.lines.append({'label': label, 'amount': float(amount), 'missed': False, **({'note': note} if note else {})})
 
-    def debit(self, amount, label, detail=None):
+    def debit(self, amount, label, detail=None, note=None):
         self.expenses += amount
         self.details.append(detail or f"-${amount:,.2f} {label}")
-        self.lines.append({'label': label, 'amount': float(-amount), 'missed': False})
+        self.lines.append({'label': label, 'amount': float(-amount), 'missed': False, **({'note': note} if note else {})})
 
-    def missed(self, amount, label, detail):
+    def missed(self, amount, label, detail, note=None):
         self.details.append(detail)
-        self.lines.append({'label': label, 'amount': float(-amount), 'missed': True})
+        self.lines.append({'label': label, 'amount': float(-amount), 'missed': True, **({'note': note} if note else {})})
 
     @property
     def empty(self):
@@ -164,10 +165,10 @@ def _run_month(scope, profiles_map, game_years):
     steps = (
         ('salaries', lambda: _pay_salaries(scope, profiles_map, get_summary)),
         ('loans', lambda: _charge_loans(scope, profiles_map, get_summary)),
-        ('luxury maintenance', lambda: _charge_maintenance(scope, get_summary)),
+        ('lifestyle running costs', lambda: _charge_maintenance(scope, get_summary)),
         ('rent', lambda: _charge_rent(scope, get_summary)),
-        ('roommate rent', lambda: _roommate_rent(scope, get_summary)),
-        ('living costs', lambda: _charge_living_costs(profiles_map, get_summary, game_years)),
+        ('roommate rent and bills', lambda: _roommate_rent(scope, get_summary, game_years)),
+        ('household bills', lambda: _charge_living_costs(scope, profiles_map, get_summary, game_years)),
         ('asset income', lambda: _pay_asset_income(scope, get_summary)),
     )
     for name, step in steps:
@@ -180,25 +181,44 @@ def _run_month(scope, profiles_map, game_years):
 
 
 def _pay_salaries(scope, profiles_map, get_summary):
-    """Payday: job salaries (annual / 12) + permanent income boosts."""
-    jobs_res = scope.filter(supabase.table('jobs').select('user_id, title, salary').eq('is_current', True), 'user_id').execute()
+    """
+    Payday: main job salaries (annual / 12) + permanent income boosts.
+
+    Gigs pay every game week (week_service.complete_week) for players on game
+    time; players still on calendar time get their gigs' month here.
+    """
+    jobs_res = scope.filter(supabase.table('jobs').select('*').eq('is_current', True), 'user_id').execute()
     pay_by_user = {}
     for job in jobs_res.data or []:
         pay_by_user.setdefault(job['user_id'], []).append(job)
     for uid, profile in profiles_map.items():
-        salary = sum((Decimal(str(j.get('salary') or 0)) for j in pay_by_user.get(uid, [])), Decimal('0')) / 12
+        jobs = pay_by_user.get(uid, [])
+        salary = sum((Decimal(str(j.get('salary') or 0)) for j in jobs if j.get('kind', 'job') != 'gig'), Decimal('0')) / 12
         boosts = Decimal(str(profile.get('base_monthly_income') or 0))
         pay = (salary + boosts).quantize(Decimal('0.01'))
-        if pay <= 0:
+        if pay > 0:
+            BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
+            get_summary(uid).credit(pay, 'Salary')
+        if scope.only_user:
             continue
-        BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
-        get_summary(uid).credit(pay, 'Salary')
+        for gig in (j for j in jobs if j.get('kind') == 'gig'):
+            gig_pay = economy.weekly_to_monthly(gig.get('weekly_pay'))
+            if gig_pay > 0:
+                BalanceService.add_balance(user_id=uid, amount=gig_pay, reason=f"Gig: {gig.get('title')}", category='gig')
+                get_summary(uid).credit(gig_pay, f"Gig: {gig.get('title')}")
 
 
 def _charge_loans(scope, profiles_map, get_summary):
-    """Bank and P2P loan instalments (P2P lenders are credited)."""
+    """
+    Loan instalments, taken straight from the borrower's account.
+
+    Friend (P2P) loans are collected first, so a friend who lends you money is
+    paid before the bank. If you're short, whatever you have goes towards the
+    instalment; the rest is missed with a 5% late fee on the shortfall.
+    """
     liabilities_data = scope.filter(supabase.table('liabilities').select('*').gt('remaining_balance', 0), 'user_id').execute()
-    for liability in liabilities_data.data or []:
+    rows = sorted(liabilities_data.data or [], key=lambda l: 0 if l.get('liability_type') == 'p2p_loan' else 1)
+    for liability in rows:
         user_id = liability['user_id']
         if not scope.includes(user_id):
             continue
@@ -207,31 +227,35 @@ def _charge_loans(scope, profiles_map, get_summary):
         if monthly_payment <= 0:
             continue
 
-        current_balance = BalanceService.get_current_balance(user_id)
         summ = get_summary(user_id)
         remaining = Decimal(str(liability['remaining_balance']))
         monthly_payment = min(monthly_payment, remaining)  # never overcharge the final instalment
         name = liability.get('name') or 'Loan'
+        is_p2p = liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id')
 
-        if current_balance < monthly_payment:
-            # Missed payment: 5% late fee added to the debt and a credit hit.
-            penalty = (monthly_payment * Decimal('0.05')).quantize(Decimal('0.01'))
-            supabase.table('liabilities').update({
-                'remaining_balance': float(remaining + penalty),
-            }).eq('id', liability_id).execute()
-            _adjust_credit_score(profiles_map, user_id, CREDIT_MISSED_PAYMENT)
-            logger.warning(f"User {user_id} missed loan payment for {liability_id}. Late fee ${penalty}.")
-            summ.missed(
-                monthly_payment, f"Missed: {name} (+${penalty:,.2f} late fee)",
-                f"⚠️ Missed {name} (${monthly_payment:,.2f}) +${penalty:,.2f} late fee, credit score {CREDIT_MISSED_PAYMENT}",
+        available = max(Decimal('0'), BalanceService.get_current_balance(user_id))
+        paid = min(available, monthly_payment).quantize(Decimal('0.01'))
+        short = (monthly_payment - paid).quantize(Decimal('0.01'))
+
+        if paid > 0:
+            BalanceService.subtract_balance(
+                user_id=user_id, amount=paid,
+                reason=f"Monthly Loan Payment: {name}", category='loan_payment',
             )
-            continue
+            summ.debit(paid, name if short <= 0 else f"{name} (part)")
+        penalty = Decimal('0')
+        if short > 0:
+            penalty = (short * Decimal('0.05')).quantize(Decimal('0.01'))
+            _adjust_credit_score(profiles_map, user_id, CREDIT_MISSED_PAYMENT)
+            logger.warning(f"User {user_id} was ${short} short on loan {liability_id}. Late fee ${penalty}.")
+            summ.missed(
+                short, f"Missed: {name} (+${penalty:,.2f} late fee)",
+                f"⚠️ Missed ${short:,.2f} of {name} +${penalty:,.2f} late fee, credit score {CREDIT_MISSED_PAYMENT}",
+            )
+        else:
+            _adjust_credit_score(profiles_map, user_id, CREDIT_ON_TIME_PAYMENT)
 
-        BalanceService.subtract_balance(
-            user_id=user_id, amount=monthly_payment,
-            reason=f"Monthly Loan Payment: {name}", category='loan_payment',
-        )
-        new_bal = remaining - monthly_payment
+        new_bal = remaining - paid + penalty
         if new_bal <= 0:
             supabase.table('liabilities').delete().eq('id', liability_id).execute()
             if liability.get('bank_loan_id'):
@@ -239,34 +263,52 @@ def _charge_loans(scope, profiles_map, get_summary):
         else:
             supabase.table('liabilities').update({
                 'remaining_balance': float(new_bal),
-                'remaining_term': max(0, (liability.get('remaining_term') or 1) - 1),
+                'remaining_term': max(0, (liability.get('remaining_term') or 1) - (1 if short <= 0 else 0)),
             }).eq('id', liability_id).execute()
-        _adjust_credit_score(profiles_map, user_id, CREDIT_ON_TIME_PAYMENT)
 
-        # P2P: credit the lender and keep the p2p_loans row in sync.
-        if liability.get('liability_type') == 'p2p_loan' and liability.get('p2p_loan_id'):
+        # P2P: the lender gets whatever was collected; keep the record in sync.
+        if is_p2p:
             try:
-                p2p_loan_id = liability['p2p_loan_id']
-                p2p_res = fetch_one(supabase.table('p2p_loans').select('*').eq('id', p2p_loan_id))
+                p2p_res = fetch_one(supabase.table('p2p_loans').select('*').eq('id', liability['p2p_loan_id']))
                 if p2p_res.data:
-                    lender_id = p2p_res.data['lender_id']
-                    BalanceService.add_balance(
-                        user_id=lender_id, amount=monthly_payment,
-                        reason="P2P Loan payment received", category='p2p_repayment',
-                    )
-                    get_summary(lender_id).credit(monthly_payment, 'P2P repayment received')
+                    loan = p2p_res.data
+                    if paid > 0:
+                        BalanceService.add_balance(
+                            user_id=loan['lender_id'], amount=paid,
+                            reason="Friend loan repayment received", category='p2p_repayment',
+                        )
+                        get_summary(loan['lender_id']).credit(paid, 'Friend loan repayment' if short <= 0 else 'Friend loan repayment (part)')
                     supabase.table('p2p_loans').update({
                         'remaining_balance': float(max(0, new_bal)),
                         'status': 'completed' if new_bal <= 0 else 'active',
-                    }).eq('id', p2p_loan_id).execute()
+                        'payments_made': int(loan.get('payments_made') or 0) + (1 if short <= 0 else 0),
+                        'payments_missed': int(loan.get('payments_missed') or 0) + (1 if short > 0 else 0),
+                    }).eq('id', loan['id']).execute()
+                    if short > 0:
+                        _tell_lender_short(loan, user_id, paid, short)
             except Exception as e:
                 logger.error(f"Error handling P2P lender credit for loan {liability_id}: {e}")
 
-        summ.debit(monthly_payment, name)
+
+def _tell_lender_short(loan, borrower_id, paid, short):
+    try:
+        who = supabase.table('profiles').select('username').eq('user_id', str(borrower_id)).limit(1).execute().data
+        name = (who[0] if who else {}).get('username', 'Your borrower')
+        ExpoPushService.send_notification_to_user(
+            supabase_client=supabase, user_id=loan['lender_id'],
+            title='💸 A friend loan came up short',
+            body=f"{name} paid ${paid:,.2f} and missed ${short:,.2f}. A 5% late fee was added to what they owe you.",
+            notification_type='social', data={'screen': '/banking'},
+        )
+    except Exception as e:
+        logger.warning(f"Lender short-payment push failed: {e}")
 
 
 def _charge_maintenance(scope, get_summary):
-    """Upkeep on lifestyle (luxury) items."""
+    """
+    Lifestyle items: running costs (fuel, insurance, crew...), service bills,
+    lease income for items rented out, and, on game time, a month of wear.
+    """
     player_liabs = scope.filter(
         supabase.table('player_liabilities').select('*, liability_items(*)').eq('is_active', True), 'player_id'
     ).execute()
@@ -274,21 +316,34 @@ def _charge_maintenance(scope, get_summary):
         user_id = pliab['player_id']
         if not scope.includes(user_id):
             continue
-        cost = Decimal(str(pliab.get('monthly_cost', 0)))
-        if cost <= 0:
-            continue
-        item_data = pliab.get('liability_items')
-        if isinstance(item_data, list) and len(item_data) > 0:
-            item_data = item_data[0]
-        name = item_data.get('name', 'Luxury Item') if item_data else 'Luxury Item'
-
+        item = economy.item_of(pliab)
+        name = item.get('name') or 'Luxury Item'
         summ = get_summary(user_id)
-        if BalanceService.get_current_balance(user_id) >= cost:
-            BalanceService.subtract_balance(user_id=user_id, amount=cost, reason=f"Maintenance Cost: {name}", category='lifestyle')
-            summ.debit(cost, f"{name} upkeep")
-        else:
-            logger.warning(f"User {user_id} missed maintenance for {pliab['id']}.")
-            summ.missed(cost, f"Missed: {name} upkeep", f"⚠️ Missed {name} maintenance (${cost:,.2f})")
+        months = int(pliab.get('months_owned') or 0) + (1 if scope.only_user else 0)
+
+        # Lease income first: it helps pay this month's bills.
+        income, booked = economy.lease_income(pliab)
+        if income > 0:
+            BalanceService.add_balance(user_id=user_id, amount=income, reason=f"Lease income: {name}", category='lease_income')
+            summ.credit(income, f"{name} leased out", note=f"{int(booked * 100)}% booked")
+
+        costs = economy.running_costs(pliab)
+        service = economy.service_due(pliab, months)
+        bills = costs + ([('Service', service)] if service > 0 else [])
+        total = sum((c for _, c in bills), Decimal('0'))
+        note = ' · '.join(f"{label} ${amt:,.0f}" for label, amt in bills)
+        if total > 0:
+            if BalanceService.get_current_balance(user_id) >= total:
+                BalanceService.subtract_balance(user_id=user_id, amount=total, reason=f"Running costs: {name}", category='lifestyle')
+                summ.debit(total, f"{name} running costs", note=note)
+            else:
+                logger.warning(f"User {user_id} missed running costs for {pliab['id']}.")
+                summ.missed(total, f"Missed: {name} running costs", f"⚠️ Missed {name} running costs (${total:,.2f})", note=note)
+
+        if scope.only_user:  # game time: a month of wear (calendar players get the monthly cron)
+            supabase.table('player_liabilities').update({
+                'current_value': float(economy.depreciate(pliab)), 'months_owned': months,
+            }).eq('id', pliab['id']).execute()
 
 
 def _charge_rent(scope, get_summary):
@@ -314,8 +369,11 @@ def _charge_rent(scope, get_summary):
             summ.missed(rent, f"Missed rent: {name}", f"⚠️ Missed {name} (${rent:,.2f})")
 
 
-def _roommate_rent(scope, get_summary):
-    """A roommate pays their share of the rent to the leaseholder, on the roommate's month."""
+def _roommate_rent(scope, get_summary, game_years=0.0):
+    """
+    On the roommate's month they pay the leaseholder their share of the rent
+    and of the home bills (electricity, water, Wi-Fi).
+    """
     arrangements = scope.filter(supabase.table('roommates').select('*').eq('status', 'active'), 'roommate_id').execute()
     for arr in arrangements.data or []:
         mate, holder = str(arr['roommate_id']), str(arr['leaseholder_id'])
@@ -330,17 +388,25 @@ def _roommate_rent(scope, get_summary):
             continue
         rental = rental[0]
         place = (rental.get('rental_properties') or {}).get('name') or 'the flat'
-        share = (Decimal(str(rental.get('monthly_rent') or 0)) * Decimal(str(arr.get('rent_share') or 0.5))).quantize(Decimal('0.01'))
-        if share <= 0:
-            continue
+        part = Decimal(str(arr.get('rent_share') or 0.5))
+        share = (Decimal(str(rental.get('monthly_rent') or 0)) * part).quantize(Decimal('0.01'))
+        bills = economy.home_bills(rental, game_years)
+        bill_share = (sum(bills.values(), Decimal('0')) * part).quantize(Decimal('0.01'))
         summ = get_summary(mate)
-        if BalanceService.get_current_balance(mate) < share:
-            summ.missed(share, f"Missed rent share: {place}", f"⚠️ Missed rent share for {place} (${share:,.2f})")
-            continue
-        BalanceService.subtract_balance(mate, share, f"Rent share: {place}", category='rent')
-        BalanceService.add_balance(holder, share, "Roommate's rent share", category='rent')
-        summ.debit(share, f"Rent share: {place}")
-        get_summary(holder).credit(share, "Roommate's rent share")
+        for amount, label, holder_label, note in (
+            (share, f"Rent share: {place}", "Roommate's rent share", None),
+            (bill_share, f"Bills share: {place}", "Roommate's share of bills",
+             ' · '.join(f"{k} ${(v * part):,.0f}" for k, v in bills.items())),
+        ):
+            if amount <= 0:
+                continue
+            if BalanceService.get_current_balance(mate) < amount:
+                summ.missed(amount, f"Missed {label[0].lower()}{label[1:]}", f"⚠️ Missed {label} (${amount:,.2f})", note=note)
+                continue
+            BalanceService.subtract_balance(mate, amount, label, category='rent' if 'Rent' in label else 'bills')
+            BalanceService.add_balance(holder, amount, holder_label, category='rent' if 'Rent' in label else 'bills')
+            summ.debit(amount, label, note=note)
+            get_summary(holder).credit(amount, holder_label)
 
 
 def _years_since(created_at_str, now):
@@ -354,31 +420,58 @@ def _years_since(created_at_str, now):
         return 0.0
 
 
-def _charge_living_costs(profiles_map, get_summary, game_years):
+def _charge_living_costs(scope, profiles_map, get_summary, game_years):
     """
-    Food, utilities, WiFi: 20% of income, inflated 5% a year. On game time the
-    years are game years (weeks lived / 52), not calendar years.
+    Groceries, plus the bills for where you live:
+    * renting: electricity, water and Wi-Fi for your home (a roommate pays you
+      their share on their own month);
+    * a roommate: groceries only (bills go to the leaseholder);
+    * living with your parents: groceries and a contribution at home.
+    Roommates save 20% on groceries by cooking together. Prices rise 5% a game
+    year (calendar years for players not on game time).
     """
     now = datetime.utcnow()
-    for user_id, profile in profiles_map.items():
-        monthly_income = Decimal(str(profile.get('monthly_income') or 0))
-        if monthly_income <= 0:
-            continue
-        years = game_years if game_years is not None else _years_since(profile.get('created_at'), now)
-        years = min(float(years), 20.0)
-        cost = (monthly_income * Decimal('0.20') * Decimal(str(1.05 ** years))).quantize(Decimal('0.01'))
+    uids = list(profiles_map)
+    rentals = scope.filter(supabase.table('player_rentals').select('*, rental_properties(*)').eq('is_active', True), 'player_id').execute().data or []
+    rental_of = {str(r['player_id']): r for r in rentals}
+    arrangements = supabase.table('roommates').select('leaseholder_id, roommate_id').eq('status', 'active').execute().data or []
+    holders = {str(a['leaseholder_id']) for a in arrangements}
+    mates = {str(a['roommate_id']) for a in arrangements}
 
+    for user_id in uids:
+        profile = profiles_map[user_id]
+        uid = str(user_id)
+        years = game_years if scope.only_user else _years_since(profile.get('created_at'), now)
+        income = profile.get('monthly_income') or 0
         summ = get_summary(user_id)
-        if BalanceService.get_current_balance(user_id) >= cost:
-            BalanceService.subtract_balance(user_id=user_id, amount=cost, reason="Living Costs (Food & WiFi)", category='living_costs')
-            summ.debit(cost, 'Food, bills & WiFi', f"-${cost:,.2f} Living Costs")
-        else:
-            logger.warning(f"User {user_id} missed living costs.")
-            summ.missed(cost, 'Missed: food & bills', f"⚠️ Missed Living Costs (${cost:,.2f})")
+        lines = []
+        food = economy.groceries(income, years, shared=uid in holders or uid in mates)
+        if food > 0:
+            lines.append(('Groceries', food, 'Cooking with your roommate: 20% cheaper' if uid in holders or uid in mates else None))
+        if uid in rental_of:
+            bills = economy.home_bills(rental_of[uid], years)
+            note = ' · '.join(f"{k} ${v:,.0f}" for k, v in bills.items())
+            if uid in holders:
+                note += ' (your roommate pays you half)'
+            lines.append(('Electricity, water & Wi-Fi', sum(bills.values(), Decimal('0')), note))
+        elif uid not in mates:
+            home = economy.parents_contribution(income, years)
+            if home > 0:
+                lines.append(('Chipping in at home', home, 'Living with your parents'))
+
+        for label, cost, note in lines:
+            if cost <= 0:
+                continue
+            if BalanceService.get_current_balance(user_id) >= cost:
+                BalanceService.subtract_balance(user_id=user_id, amount=cost, reason=label, category='living_costs')
+                summ.debit(cost, label, note=note)
+            else:
+                logger.warning(f"User {user_id} missed {label}.")
+                summ.missed(cost, f"Missed: {label.lower()}", f"⚠️ Missed {label} (${cost:,.2f})", note=note)
 
 
 def _pay_asset_income(scope, get_summary):
-    """Rental / dividend income from owned assets."""
+    """Rent, dividends and profit share from owned assets; on game time, property and businesses grow."""
     assets_res = supabase.table('assets').select('name, monthly_income').execute()
     income_map = {a['name']: Decimal(str(a.get('monthly_income') or 0)) for a in assets_res.data or []}
 
@@ -392,6 +485,9 @@ def _pay_asset_income(scope, get_summary):
         if total_income > 0:
             BalanceService.add_balance(user_id=user_id, amount=total_income, reason=f"Monthly Asset Income: {name}", category='asset_income')
             get_summary(user_id).credit(total_income, f"{name} yield")
+        if scope.only_user and economy.appreciates(ua.get('asset_type')):
+            value, held = economy.appreciate(ua)
+            supabase.table('user_assets').update({'value': float(value), 'months_held': held}).eq('id', ua['id']).execute()
 
 
 STRESS_EXPENSE_RATIO = Decimal('0.60')

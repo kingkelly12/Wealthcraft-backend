@@ -140,15 +140,24 @@ def apply_for_job(current_user_id: str):
             return blocked
 
         
-        # 2. Check current job count (Max 2) - use resolve to handle Auth UID vs Profile ID
+        # 2. One main job and up to two gigs on the side.
+        from app.game import economy
+        is_gig = job.get('kind') == 'gig'
         user_ids = resolve_user_ids(current_user_id)
-        current_jobs = supabase.table('jobs').select('id', count='exact').in_('user_id', user_ids).eq('is_current', True).execute()
-        
-        if (current_jobs.count or 0) >= 2:
+        current = supabase.table('jobs').select('id, kind').in_('user_id', user_ids).eq('is_current', True).execute().data or []
+        mains = [j for j in current if j.get('kind', 'job') != 'gig']
+        gigs = [j for j in current if j.get('kind') == 'gig']
+        if is_gig and len(gigs) >= economy.MAX_GIGS:
+            return jsonify({
+                'success': False,
+                'error': 'GIG_LIMIT_REACHED',
+                'message': f'You can juggle {economy.MAX_GIGS} gigs at most. Drop one to take this.'
+            }), 400
+        if not is_gig and len(mains) >= economy.MAX_MAIN_JOBS:
             return jsonify({
                 'success': False,
                 'error': 'JOB_LIMIT_REACHED',
-                'message': 'You can have a maximum of 2 jobs. Quit one to apply for this position.'
+                'message': 'You already have a main job. Quit it to take this one, or pick up a gig on the side.'
             }), 400
         
         # 3. Check for duplicate job
@@ -176,16 +185,20 @@ def apply_for_job(current_user_id: str):
             'job_market_id': job['id'],
             'title': job['title'],
             'company': job['company'],
-            'salary': job['salary'],
+            'salary': 0 if is_gig else job['salary'],
             'level': job.get('level', 'entry'),
             'experience_months': job.get('experience_months', 0),
-            'is_current': True
+            'is_current': True,
+            'kind': 'gig' if is_gig else 'job',
+            'weekly_pay': float(job.get('weekly_pay') or 0) if is_gig else 0,
+            'sanity_per_week': int(job.get('sanity_per_week') or 0) if is_gig else 0,
         }).execute()
 
         # 6. One-time signing bonus = one month's pay. Recurring salary is paid
-        #    by the monthly payday job (jobs/monthly_loan_deductions.py).
-        monthly_salary = (Decimal(str(job['salary'])) / 12).quantize(Decimal('0.01'))
-        if first_time:
+        #    by the monthly payday job (jobs/monthly_loan_deductions.py). Gigs
+        #    have no signing bonus: they pay every week.
+        monthly_salary = (Decimal(str(job['salary'] or 0)) / 12).quantize(Decimal('0.01'))
+        if first_time and not is_gig:
             balance_result = BalanceService.add_balance(
                 user_id=current_user_id,
                 amount=monthly_salary,
@@ -214,11 +227,13 @@ def apply_for_job(current_user_id: str):
         
         return jsonify({
             'success': True,
-            'message': f'You have been hired as a {job["title"]}!',
+            'message': f'Gig started: {job["title"]}. It pays every week.' if is_gig else f'You have been hired as a {job["title"]}!',
             'user_job_id': job_id,
             'new_balance': float(balance_result['new_balance']),
             'salary': float(job['salary']),
-            'signing_bonus': float(monthly_salary) if first_time else 0
+            'signing_bonus': float(monthly_salary) if first_time and not is_gig else 0,
+            'kind': 'gig' if is_gig else 'job',
+            'weekly_pay': float(job.get('weekly_pay') or 0) if is_gig else 0
         }), 200
         
     except ValidationError as e:

@@ -213,7 +213,8 @@ def test_fourth_week_runs_the_players_month(client, auth_headers, player, fake_s
     labels = {l['label']: l['amount'] for l in month['lines']}
     assert labels['Salary'] == 3000.0
     assert labels['Rent: Studio'] == -900.0
-    assert any(l.startswith('Food') for l in labels)
+    assert labels['Groceries'] == pytest.approx(-360.0, abs=2)                  # 12% of income (+ a month of inflation)
+    assert labels['Electricity, water & Wi-Fi'] == pytest.approx(-81.0, abs=1)  # unknown home: scaled from the $900 rent
     assert body['next']['month'] == 2
     assert ('add', Decimal('3000.00'), 'Monthly salary') in balance['log']
 

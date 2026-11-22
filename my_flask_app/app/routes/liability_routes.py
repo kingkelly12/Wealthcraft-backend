@@ -39,6 +39,8 @@ def resolve_user_ids(user_id):
         return [user_id]
 
 
+from app.game import economy
+
 liability_bp = Blueprint('liability', __name__)
 
 def get_active_liabilities_internal(user_id):
@@ -62,6 +64,7 @@ def get_active_liabilities_internal(user_id):
                 item = item[0]
             
             if item:
+                econ = economy.item_economics(item, li)
                 normalized_luxury.append({
                     'id': li['id'],
                     'liability_id': li['liability_id'],
@@ -69,10 +72,14 @@ def get_active_liabilities_internal(user_id):
                     'amount': li['current_value'] or li['purchase_price'],
                     'purchase_price': li['purchase_price'],
                     'current_value': li['current_value'],
-                    'monthly_payment': li['monthly_cost'],
+                    'monthly_payment': econ['monthly_running'] or li['monthly_cost'],
                     'image_url': item.get('image_url'),
                     'category': 'luxury',
-                    'type': 'lifestyle'
+                    'type': 'lifestyle',
+                    'item_category': item.get('category'),
+                    'is_leased': bool(li.get('is_leased')),
+                    'months_owned': li.get('months_owned') or 0,
+                    'economics': econ,
                 })
         
         # 4. Normalize liabilities from 'liabilities' table (Legacy Luxury + Loans)
@@ -281,7 +288,7 @@ def get_luxury_overview(current_user_id: str):
         
         # 1. Fetch available items
         available_res = supabase.table('liability_items').select('*').execute()
-        available_items = available_res.data or []
+        available_items = [{**i, 'economics': economy.item_economics(i)} for i in (available_res.data or [])]
         
         # 2. Fetch active items (using internal helper)
         all_active = get_active_liabilities_internal(current_user_id)
@@ -411,3 +418,31 @@ def get_depreciation_preview(current_user_id: str, liability_id: str):
         return jsonify({'error': str(e)}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@liability_bp.route('/luxury/<item_id>/lease/', methods=['POST'])
+@require_auth
+def lease_item(current_user_id: str, item_id: str):
+    """
+    Lease an item out for income, or take it back: {"leased": true|false}.
+    While leased it earns its lease income (55-100% booked each month) but
+    wears faster.
+    """
+    try:
+        leased = bool((request.get_json(silent=True) or {}).get('leased'))
+        user_ids = resolve_user_ids(current_user_id)
+        row = supabase.table('player_liabilities').select('*, liability_items(*)').eq('id', item_id) \
+            .in_('player_id', user_ids).eq('is_active', True).limit(1).execute().data
+        if not row:
+            return jsonify({'success': False, 'error': 'NOT_FOUND', 'message': "You don't own that."}), 404
+        item = economy.item_of(row[0])
+        if leased and float(item.get('lease_income') or 0) <= 0:
+            return jsonify({'success': False, 'error': 'NOT_LEASABLE', 'message': f"Nobody leases a {item.get('name', 'that')}."}), 400
+        supabase.table('player_liabilities').update({
+            'is_leased': leased,
+            'leased_since': datetime.now(timezone.utc).isoformat() if leased else None,
+        }).eq('id', item_id).execute()
+        econ = economy.item_economics(item, row[0])
+        return jsonify({'success': True, 'data': {'id': item_id, 'is_leased': leased, 'economics': econ}}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': 'OPERATION_FAILED', 'message': str(e)}), 500

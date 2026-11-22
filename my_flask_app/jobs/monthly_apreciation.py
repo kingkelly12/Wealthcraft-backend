@@ -89,8 +89,12 @@ def run_monthly_appreciation():
         
         excluded_types = ['stocks', 'crypto', 'forex']  # priced by the market monitor
 
+        # Players on game time grow their property on game months instead.
+        from jobs.monthly_loan_deductions import _clocked_user_ids
+        clocked = set(_clocked_user_ids())
+
         for asset in assets:
-            if asset.asset_type in excluded_types:
+            if asset.asset_type in excluded_types or str(asset.user_id) in clocked:
                 continue
 
             result = _calculate_appreciation(asset, today)

@@ -209,6 +209,7 @@ def get_marketplace_assets():
 @require_auth
 def get_assets_overview(current_user_id: str):
     """Consolidated marketplace and user portfolio status"""
+    from app.game import economy
     try:
         user_ids = resolve_user_ids(current_user_id)
         logger.info(f"Assets Overview: fetching data for user_ids {user_ids}")
@@ -241,7 +242,8 @@ def get_assets_overview(current_user_id: str):
         return jsonify({
             'success': True,
             'data': {
-                'market': market_res.data or [],
+                'market': [{**a, 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'))}
+                           for a in (market_res.data or [])],
                 'portfolio': portfolio or [],
                 'profile': profile,
                 'news': news_res.data or []
@@ -252,12 +254,27 @@ def get_assets_overview(current_user_id: str):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+def with_income_figures(holdings):
+    """Add income per week / month / year, yield and expected growth to each holding."""
+    from app.game import economy
+    names = list({h.get('name') for h in holdings if h.get('name')})
+    if not names:
+        return holdings
+    catalog = supabase.table('assets').select('name, monthly_income, category').in_('name', names).execute().data or []
+    by_name = {a['name']: a for a in catalog}
+    for h in holdings:
+        a = by_name.get(h.get('name'), {})
+        h['income'] = economy.income_figures(a.get('monthly_income'), h.get('quantity') or 1,
+                                             h.get('purchase_price'), a.get('category') or h.get('asset_type'))
+    return holdings
+
+
 def get_user_assets_internal(user_id):
     """Internal function to fetch user assets without require_auth injection"""
     try:
         user_ids = resolve_user_ids(user_id)
         response = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
-        return response.data
+        return with_income_figures(response.data or [])
     except Exception as e:
         logger.error(f"Error fetching assets for user {user_id}: {str(e)}")
         raise e

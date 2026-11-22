@@ -799,6 +799,48 @@ create unique index roommates_active_leaseholder on public.roommates (leaseholde
 create unique index roommates_active_roommate on public.roommates (roommate_id) where status = 'active';
 create unique index roommates_one_pending_pair on public.roommates (leaseholder_id, roommate_id) where status = 'pending';
 
+-- Money realism (gigs, item running costs & leasing, friend loans). See migrations/20261125000000_money_realism.sql.
+-- --- Gigs ---------------------------------------------------------------------------
+alter table public.job_market add column if not exists kind text not null default 'job';
+alter table public.job_market add column if not exists weekly_pay numeric(12,2) not null default 0;
+alter table public.job_market add column if not exists hours_per_week integer;
+alter table public.job_market add column if not exists sanity_per_week integer not null default 0;
+alter table public.jobs add column if not exists kind text not null default 'job';
+alter table public.jobs add column if not exists weekly_pay numeric(12,2) not null default 0;
+alter table public.jobs add column if not exists sanity_per_week integer not null default 0;
+do $$ begin
+  alter table public.job_market add constraint job_market_kind_check check (kind in ('job', 'gig'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.jobs add constraint jobs_kind_check check (kind in ('job', 'gig'));
+exception when duplicate_object then null; end $$;
+-- Gigs have no annual salary (they pay weekly_pay).
+alter table public.job_market drop constraint if exists job_market_salary_check;
+alter table public.job_market add constraint job_market_salary_check check (salary > 0 or kind = 'gig');
+-- --- Lifestyle items: running costs, depreciation, leasing -------------------------
+alter table public.liability_items add column if not exists depreciation_rate numeric(5,4) not null default 0.125;  -- per year
+alter table public.liability_items add column if not exists costs jsonb not null default '[]';                       -- [{"label","monthly"}]
+alter table public.liability_items add column if not exists service_cost numeric(12,2) not null default 0;
+alter table public.liability_items add column if not exists service_every_months integer not null default 0;
+alter table public.liability_items add column if not exists lease_income numeric(12,2) not null default 0;           -- monthly, fully booked
+alter table public.liability_items add column if not exists lease_label text;
+alter table public.liability_items add column if not exists lease_wear numeric(5,4) not null default 0;              -- extra depreciation a year while leased
+alter table public.player_liabilities add column if not exists is_leased boolean not null default false;
+alter table public.player_liabilities add column if not exists leased_since timestamptz;
+-- --- Assets: game months held (property and businesses grow on game months) -------
+alter table public.user_assets add column if not exists months_held integer not null default 0;
+-- --- Friend loans (P2P) -------------------------------------------------------------
+alter table public.p2p_loans add column if not exists offered_to uuid references public.profiles(user_id) on delete cascade;
+alter table public.p2p_loans add column if not exists requested boolean not null default false;
+alter table public.p2p_loans add column if not exists rate_basis text not null default 'total';   -- older loans: flat total %
+alter table public.p2p_loans add column if not exists payments_made integer not null default 0;
+alter table public.p2p_loans add column if not exists payments_missed integer not null default 0;
+alter table public.p2p_loans alter column rate_basis set default 'annual';
+alter table public.p2p_loans drop constraint if exists p2p_loans_status_check;
+alter table public.p2p_loans add constraint p2p_loans_status_check
+  check (status in ('requested', 'pending', 'active', 'completed', 'cancelled', 'declined', 'defaulted'));
+create index if not exists p2p_loans_offered_to_idx on public.p2p_loans (offered_to) where status in ('pending', 'requested');
+
 -- Squads. See migrations/20261124000000_squads.sql.
 create table public.squads (
   id             uuid primary key default gen_random_uuid(),

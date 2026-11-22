@@ -62,7 +62,8 @@ def get_banking_overview(current_user_id: str):
 
         # 2. Portfolio Assets
         assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
-        assets = assets_res.data or []
+        from app.routes.asset_routes import with_income_figures
+        assets = with_income_figures(assets_res.data or [])
         
         # 3. Active Liabilities
         liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
@@ -82,7 +83,8 @@ def get_banking_overview(current_user_id: str):
         
         # 7. Available P2P Loans (with lender username)
         # Use full foreign key name to disambiguate between multiple relationships
-        p2p_loans_res = supabase.table('p2p_loans').select('*, profiles!p2p_loans_lender_id_fkey(username)').eq('status', 'pending').neq('lender_id', current_user_id).execute()
+        p2p_loans_res = supabase.table('p2p_loans').select('*, profiles!p2p_loans_lender_id_fkey(username)').eq('status', 'pending') \
+            .neq('lender_id', current_user_id).or_(f'offered_to.is.null,offered_to.eq.{current_user_id}').execute()
         p2p_loans = p2p_loans_res.data or []
         
         # Account balance - use BalanceService for reliability

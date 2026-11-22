@@ -134,8 +134,10 @@ class ProfileService:
             base_income = float(profile.base_monthly_income or 0)
             
             # 2. Get Job Salaries (annual / 12)
-            jobs_res = supabase.table('jobs').select('salary').eq('user_id', str(user_id)).eq('is_current', True).execute()
-            job_income = sum((float(j.get('salary') or 0) / 12.0) for j in (jobs_res.data or []))
+            jobs_res = supabase.table('jobs').select('*').eq('user_id', str(user_id)).eq('is_current', True).execute()
+            job_income = sum((float(j.get('salary') or 0) / 12.0) for j in (jobs_res.data or []) if j.get('kind', 'job') != 'gig')
+            # Gigs pay weekly: count them as their monthly equivalent.
+            job_income += sum(float(j.get('weekly_pay') or 0) * 52 / 12 for j in (jobs_res.data or []) if j.get('kind') == 'gig')
             
             # 3. Get Passive Income from Assets
             assets_res = supabase.table('user_assets').select('quantity, asset_type, name').eq('user_id', str(user_id)).execute()

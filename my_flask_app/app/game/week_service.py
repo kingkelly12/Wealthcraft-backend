@@ -486,6 +486,29 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
     return {'card': public_card(card), 'result': result, 'remaining': sum(1 for c in cards if not c.get('chosen'))}
 
 
+def _pay_gigs(uid):
+    """Gigs pay every week (and the hours cost a little sanity). Returns receipt lines."""
+    from app.game import economy
+    out = []
+    try:
+        gigs = economy.current_gigs(uid)
+    except Exception as e:
+        logger.warning(f"Could not load gigs for {uid}: {e}")
+        return out
+    for g in gigs:
+        pay = economy.money(g.get('weekly_pay'))
+        if pay > 0:
+            BalanceService.add_balance(uid, pay, f"Gig: {g['title']}", category='gig')
+        sanity = int(g.get('sanity_per_week') or 0)
+        if sanity:
+            try:
+                supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': sanity}).execute()
+            except Exception as e:
+                logger.warning(f"Gig sanity for {uid} failed: {e}")
+        out.append({'title': g['title'], 'pay': float(pay), 'sanity': sanity})
+    return out
+
+
 def complete_week(user_id: str) -> dict:
     """End the week: advance the clock, run the month on payday weeks, deal next week."""
     uid = str(user_id)
@@ -512,6 +535,7 @@ def complete_week(user_id: str) -> dict:
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
 
     meta = week_meta(week)
+    gigs = _pay_gigs(uid)
     month = None
     if meta['is_payday_week']:
         from jobs.monthly_loan_deductions import process_month_for_user
@@ -531,6 +555,8 @@ def complete_week(user_id: str) -> dict:
         })
     card_cash = sum(Decimal(str(l['cash'])) for l in lines)
     card_sanity = sum(int(l['sanity']) for l in lines)
+    gig_cash = sum((Decimal(str(g['pay'])) for g in gigs), Decimal('0'))
+    gig_sanity = sum(int(g['sanity']) for g in gigs)
     month_net = Decimal(str(month['net'])) if month else Decimal('0')
     month_sanity = int(month['sanity_change']) if month else 0
 
@@ -541,10 +567,11 @@ def complete_week(user_id: str) -> dict:
         'age': life_mod.age_at(week, start_age),
         'birthday': life_mod.birthday_between(week, week + 1, start_age),
         'cards': lines,
+        'gigs': gigs,
         'month_summary': month,
         'totals': {
-            'cash': float(card_cash + month_net),
-            'sanity': card_sanity + month_sanity,
+            'cash': float(card_cash + gig_cash + month_net),
+            'sanity': card_sanity + gig_sanity + month_sanity,
         },
         'balance_after': float(BalanceService.get_current_balance(uid)),
         'sanity_after': _sanity_of(uid),
