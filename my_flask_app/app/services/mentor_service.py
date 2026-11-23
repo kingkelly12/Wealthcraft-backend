@@ -36,9 +36,11 @@ logger = logging.getLogger(__name__)
 # (cash <-> assets, escrow, loan principal). They are not income or spending,
 # so they must not count toward cash flow / expense ratio. Without this, buying
 # an index fund looked like "overspending" and triggered negative-cash-flow nags.
-NON_OPERATING_EXPENSE = {'asset_purchase', 'p2p_escrow'}
+# 'new_life' is the reset to a background's starting cash (a +$15,000 "income" for Rich Parents made
+# high_savings_rate fire at 3,750%; a reset from more cash looked like a huge expense).
+NON_OPERATING_EXPENSE = {'asset_purchase', 'p2p_escrow', 'new_life'}
 NON_OPERATING_INCOME = {'asset_sale', 'loan_disbursement', 'starting_balance',
-                        'refund', 'p2p_escrow', 'liability_sale'}
+                        'refund', 'p2p_escrow', 'liability_sale', 'new_life'}
 
 # How long before the same trigger can fire again for the same player.
 DEFAULT_COOLDOWN_DAYS = 7

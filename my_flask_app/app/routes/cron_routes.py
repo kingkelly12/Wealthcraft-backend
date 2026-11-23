@@ -11,11 +11,7 @@ import hmac
 from functools import wraps
 
 from jobs.daily_mentor_analysis import run_daily_mentor_analysis
-from jobs.market_fluctuation_monitor import simulate_market_fluctuation
-from jobs.monthly_depreciation import run_monthly_depreciation
-from jobs.monthly_apreciation import run_monthly_appreciation
-from jobs.monthly_loan_deductions import process_monthly_deductions
-from jobs.trigger_random_events import trigger_random_events
+from jobs.event_deadlines import run_event_deadlines
 from jobs.inactive_users_monitor import run_inactive_users_monitor
 from jobs.week_ready_nudge import run_week_ready_nudge
 
@@ -65,18 +61,18 @@ def cron_mentor_analysis():
         }), 500
 
 
-@cron_bp.route('/random-events/', methods=['POST'], strict_slashes=False)
+@cron_bp.route('/event-deadlines/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
-def cron_random_events():
-    """Trigger random life events — Schedule: 0 9 * * * (9 AM daily)"""
+def cron_event_deadlines():
+    """Answer life events left unanswered past their time limit — Schedule: 0 9 * * * (9 AM daily)"""
     try:
-        result = trigger_random_events()
+        result = run_event_deadlines()
         return jsonify({'success': True, 'data': result}), 200
     except Exception as e:
         import traceback
         import logging
         error_logger = logging.getLogger(__name__)
-        error_logger.error(f"Random events failed: {str(e)}\n{traceback.format_exc()}")
+        error_logger.error(f"Event deadlines failed: {str(e)}\n{traceback.format_exc()}")
         return jsonify({
             'success': False, 
             'error': str(e),
@@ -102,87 +98,7 @@ def cron_inactive_users_monitor():
         }), 500
 
 
-# ── Hourly Jobs ─────────────────────────────────────────────────
-
-@cron_bp.route('/market-monitor/', methods=['POST'], strict_slashes=False)
-@require_cron_secret
-def cron_market_monitor():
-    """Market fluctuation simulation — Schedule: 0 */4 * * * (every 4 hours)"""
-    try:
-        # Synchronous on purpose: on Cloud Run a thread started after the
-        # response is CPU-throttled and may never finish. pg_net waits up to 5 min.
-        simulate_market_fluctuation()
-        return jsonify({'success': True, 'message': 'Market monitor completed'}), 200
-    except Exception as e:
-        import traceback
-        import logging
-        error_logger = logging.getLogger(__name__)
-        error_logger.error(f"Market monitor failed: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({
-            'success': False, 
-            'error': str(e),
-            'type': type(e).__name__
-        }), 500
-
-
 # ── Monthly Jobs ────────────────────────────────────────────────
-
-@cron_bp.route('/depreciation/', methods=['POST'], strict_slashes=False)
-@require_cron_secret
-def cron_depreciation():
-    """Monthly liability depreciation — Schedule: 0 2 1 * * (1st, 2 AM)"""
-    try:
-        result = run_monthly_depreciation()
-        return jsonify({'success': True, 'data': result}), 200
-    except Exception as e:
-        import traceback
-        import logging
-        error_logger = logging.getLogger(__name__)
-        error_logger.error(f"Depreciation job failed: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({
-            'success': False, 
-            'error': str(e),
-            'type': type(e).__name__
-        }), 500
-
-
-@cron_bp.route('/appreciation/', methods=['POST'], strict_slashes=False)
-@require_cron_secret
-def cron_appreciation():
-    """Monthly asset appreciation — Schedule: 0 3 1 * * (1st, 3 AM)"""
-    try:
-        result = run_monthly_appreciation()
-        return jsonify({'success': True, 'data': result}), 200
-    except Exception as e:
-        import traceback
-        import logging
-        error_logger = logging.getLogger(__name__)
-        error_logger.error(f"Appreciation job failed: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({
-            'success': False, 
-            'error': str(e),
-            'type': type(e).__name__
-        }), 500
-
-
-@cron_bp.route('/loan-deductions/', methods=['POST'], strict_slashes=False)
-@require_cron_secret
-def cron_loan_deductions():
-    """Monthly loan deductions — Schedule: 0 4 15 * * (15th, 4 AM)"""
-    try:
-        result = process_monthly_deductions()
-        return jsonify({'success': True, 'data': result}), 200
-    except Exception as e:
-        import traceback
-        import logging
-        error_logger = logging.getLogger(__name__)
-        error_logger.error(f"Loan deductions failed: {str(e)}\n{traceback.format_exc()}")
-        return jsonify({
-            'success': False, 
-            'error': str(e),
-            'type': type(e).__name__
-        }), 500
-
 
 @cron_bp.route('/week-ready/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
@@ -231,7 +147,6 @@ def cron_push_receipts():
 def cron_health():
     """Diagnostic endpoint to verify cron job infrastructure is operational"""
     from app import supabase
-    import logging
     
     diagnostics = {
         'supabase_client_initialized': supabase is not None,
@@ -244,7 +159,7 @@ def cron_health():
     # Test database connection
     try:
         if supabase:
-            test_result = supabase.table('assets').select('id').limit(1).execute()
+            supabase.table('assets').select('id').limit(1).execute()
             diagnostics['database_accessible'] = True
         else:
             diagnostics['database_accessible'] = False

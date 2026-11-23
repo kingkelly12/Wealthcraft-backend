@@ -21,6 +21,9 @@ character's relationship).
 `character`: optional cast key (cast.py) the card is about.
 `min_rel` / `max_rel`: only deal the card when that relationship is at least /
 at most this value. `{roommate}` in text becomes your roommate's name.
+`cooldown_weeks`: deal the card at most once in this many weeks (default:
+RECENT_DECKS_NO_REPEAT). `income_to`: 'job' puts the income change on the
+current main job's salary instead of permanent base income.
 """
 
 CARDS = [
@@ -181,6 +184,10 @@ CARDS = [
         'body': "You've been killing it at work. You could ask for a raise. Your palms are already sweating.",
         'teaser': 'Something brave is on your calendar 😬',
         'requires': 'job',
+        # A raise is on your current job (lost if you quit) and at most once a
+        # game year. As permanent base income that repeated every few weeks,
+        # it compounded to thousands a month over a life.
+        'cooldown_weeks': 52, 'income_to': 'job',
         'left': {'label': 'Maybe next year', 'outcome': 'Nothing changes. Comfortable, safe, slightly underpaid.', 'cash': 0, 'sanity': 0},
         'right': {'label': 'Ask for it', 'outcome': 'Your voice cracked twice but you got it. +$100 a month.', 'cash': 0, 'sanity': -3, 'income': 100},
     },

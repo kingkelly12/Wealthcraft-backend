@@ -115,18 +115,6 @@ def test_event_answered_on_screen_is_not_paid_again_in_the_deck(client, auth_hea
     assert balance['amount'] == Decimal('800')                              # not charged/paid twice
 
 
-def test_cron_does_not_stack_events(app, setup, user_id, monkeypatch):
-    from jobs import trigger_random_events as job
-    monkeypatch.setattr(job.ExpoPushService, 'send_notifications_to_users', staticmethod(lambda **kw: {'success': 0, 'failed': 0, 'skipped': 0}))
-    next(p for p in setup.rows('profiles') if p['user_id'] == user_id)['last_active_at'] = '2099-01-01T00:00:00+00:00'
-    two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-    _assign(setup, user_id, created=two_days_ago)   # unanswered, still within its 7 days
-    with app.app_context():
-        result = job.trigger_random_events()
-    assert result['events_triggered'] == 0 and result['auto_resolved'] == 0
-    assert len(setup.rows('user_life_events')) == 1
-
-
 # --- auto-resolve after the time limit -----------------------------------------------------
 
 
@@ -137,7 +125,7 @@ def _ago(days):
 
 @pytest.fixture
 def pushes(monkeypatch):
-    from jobs import trigger_random_events as job
+    from jobs import event_deadlines as job
     sent = []
     monkeypatch.setattr(job.ExpoPushService, 'send_notifications_to_users',
                         staticmethod(lambda **kw: sent.extend(kw['user_notifications']) or {'success': len(kw['user_notifications']), 'failed': 0, 'skipped': 0}))
@@ -164,7 +152,7 @@ def test_default_choice_is_free_and_carries_the_cost_of_ignoring():
 
 
 def test_expired_event_is_answered_for_the_player(app, setup, user_id, balance, pushes):
-    from jobs.trigger_random_events import auto_resolve_expired_events
+    from jobs.event_deadlines import auto_resolve_expired_events
     setup.rows('life_event_choices')[0]['impact_sanity'] = -8      # "ignore it" hurts
     _assign(setup, user_id, created=_ago(8))
     with app.app_context():
@@ -179,7 +167,7 @@ def test_expired_event_is_answered_for_the_player(app, setup, user_id, balance, 
 
 
 def test_events_within_their_time_limit_are_left_alone(app, setup, user_id, pushes):
-    from jobs.trigger_random_events import auto_resolve_expired_events
+    from jobs.event_deadlines import auto_resolve_expired_events
     _assign(setup, user_id, created=_ago(2))
     with app.app_context():
         assert auto_resolve_expired_events(setup)['auto_resolved'] == 0
@@ -187,7 +175,7 @@ def test_events_within_their_time_limit_are_left_alone(app, setup, user_id, push
 
 
 def test_each_events_own_time_limit_is_used(app, setup, user_id, pushes):
-    from jobs.trigger_random_events import auto_resolve_expired_events
+    from jobs.event_deadlines import auto_resolve_expired_events
     setup.rows('life_events')[0]['time_limit_seconds'] = 24 * 3600   # a 1-day event
     _assign(setup, user_id, created=_ago(2))
     with app.app_context():
@@ -195,7 +183,7 @@ def test_each_events_own_time_limit_is_used(app, setup, user_id, pushes):
 
 
 def test_broke_player_with_no_free_option_pays_what_they_have(app, setup, user_id, balance, pushes):
-    from jobs.trigger_random_events import auto_resolve_expired_events
+    from jobs.event_deadlines import auto_resolve_expired_events
     setup.rows('life_event_choices')[0]['cost'] = 100
     balance['amount'] = Decimal('30')
     _assign(setup, user_id, created=_ago(8))
@@ -206,7 +194,7 @@ def test_broke_player_with_no_free_option_pays_what_they_have(app, setup, user_i
 
 
 def test_auto_resolved_event_in_a_deck_is_not_paid_again(client, auth_headers, app, setup, user_id, balance, pushes, monkeypatch):
-    from jobs.trigger_random_events import auto_resolve_expired_events
+    from jobs.event_deadlines import auto_resolve_expired_events
     monkeypatch.setenv('GAME_CLOCK_UNLIMITED', '1')
     _assign(setup, user_id, created=_ago(8))
     cards = client.get('/api/week/', headers=auth_headers).get_json()['data']['deck']['cards']
@@ -217,19 +205,8 @@ def test_auto_resolved_event_in_a_deck_is_not_paid_again(client, auth_headers, a
     assert r.get_json()['data']['result']['cash'] == 0 and balance['amount'] == Decimal('1000')
 
 
-def test_ignored_event_unblocks_the_next_one_in_the_same_run(app, setup, user_id, pushes):
-    from jobs import trigger_random_events as job
-    next(p for p in setup.rows('profiles') if p['user_id'] == user_id)['last_active_at'] = '2099-01-01T00:00:00+00:00'
-    _assign(setup, user_id, created=_ago(8))
-    with app.app_context():
-        result = job.trigger_random_events()
-    assert result['auto_resolved'] == 1 and result['events_triggered'] == 1
-    rows = setup.rows('user_life_events')
-    assert len(rows) == 2 and sum(r['choice_id'] is None for r in rows) == 1
-
-
 def test_event_screen_reports_an_auto_resolved_event(client, auth_headers, app, setup, user_id, pushes):
-    from jobs.trigger_random_events import auto_resolve_expired_events
+    from jobs.event_deadlines import auto_resolve_expired_events
     _assign(setup, user_id, created=_ago(8))
     with app.app_context():
         auto_resolve_expired_events(setup)

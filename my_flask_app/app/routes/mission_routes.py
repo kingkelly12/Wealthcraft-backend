@@ -4,7 +4,7 @@ from app import supabase
 from decimal import Decimal
 from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
-from app.utils.mission_constraints import earlier_runs, emotion_sanity_delta, story_event_due
+from app.utils.mission_constraints import earlier_runs, emotion_sanity_delta, life_started_at, story_event_due
 from app.game.mission_decisions import DecisionError, apply_decision, deadline
 from app.utils.db import fetch_one
 
@@ -37,7 +37,9 @@ def get_mission_status(current_user_id: str):
         # 2. Get counts for available and history
         # (Available missions count - we need to know how many missions exist vs completed)
         all_missions_count = supabase.table('integrated_missions').select('id', count='exact').execute().count or 0
-        completed_count = supabase.table('mission_completion_results').select('id', count='exact').eq('player_id', current_user_id).eq('completed', True).execute().count or 0
+        life_start = life_started_at(current_user_id)   # missions done in a past life can be played again
+        done = supabase.table('mission_completion_results').select('id', count='exact').eq('player_id', current_user_id).eq('completed', True)
+        completed_count = (done.gte('completed_at', life_start) if life_start else done).execute().count or 0
         
         # 3. Get recent history summary (minimal)
         recent_history = supabase.table('mission_completion_results').select(
@@ -93,9 +95,11 @@ def get_available_missions(current_user_id: str):
             }), 200
         
         # Get completed missions for this user
-        completed_response = supabase.table('mission_completion_results').select(
+        life_start = life_started_at(current_user_id)
+        completed_query = supabase.table('mission_completion_results').select(
             'mission_id'
-        ).eq('player_id', current_user_id).eq('completed', True).execute()
+        ).eq('player_id', current_user_id).eq('completed', True)
+        completed_response = (completed_query.gte('completed_at', life_start) if life_start else completed_query).execute()
         
         completed_mission_ids = [m['mission_id'] for m in (completed_response.data or [])]
         

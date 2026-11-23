@@ -196,3 +196,38 @@ def test_a_missed_decision_is_still_offered(client, auth_headers, fake_supabase,
 def test_future_decision_is_not_due(client, auth_headers, fake_supabase, decision, profile, balance):
     fake_supabase.rows('mission_decision_points')[0]['month'] = 3
     assert _decide(client, auth_headers, 'save').get_json()['error'] == 'DECISION_NOT_DUE'
+
+
+# ---- missions and lives --------------------------------------------------------------------
+
+def _current_life(fake, user_id, started='2026-11-20T00:00:00+00:00', background='scholarship'):
+    fake.rows('player_lives').append({'id': 'life2', 'user_id': user_id, 'life_number': 2, 'background': background,
+                                      'is_current': True, 'started_at': started})
+
+
+def test_missions_completed_in_a_past_life_can_be_played_again(client, auth_headers, fake_supabase, user_id):
+    fake_supabase.rows('profiles').append({'user_id': user_id, 'net_worth': 0})
+    fake_supabase.rows('integrated_missions').extend([
+        {'id': 'm-old', 'name': 'Done Last Life', 'description': '', 'category': 'x', 'difficulty': 'beginner', 'duration_months': 3},
+        {'id': 'm-new', 'name': 'Done This Life', 'description': '', 'category': 'x', 'difficulty': 'beginner', 'duration_months': 3},
+    ])
+    _current_life(fake_supabase, user_id)
+    fake_supabase.rows('mission_completion_results').extend([
+        {'id': 'r1', 'player_id': user_id, 'mission_id': 'm-old', 'completed': True, 'completed_at': '2026-11-10T00:00:00+00:00'},
+        {'id': 'r2', 'player_id': user_id, 'mission_id': 'm-new', 'completed': True, 'completed_at': '2026-11-25T00:00:00+00:00'},
+    ])
+    data = client.get('/api/missions/available/?compact=true', headers=auth_headers).get_json()['data']
+    assert [m['id'] for m in data['missions']] == ['m-old']             # was: both hidden forever
+    status = client.get('/api/missions/status/', headers=auth_headers).get_json()['data']
+    assert status['history_summary']['total_completed'] == 1
+
+
+def test_a_new_life_pays_decision_rewards_again(client, auth_headers, fake_supabase, decision, profile, balance, user_id):
+    _current_life(fake_supabase, user_id)
+    fake_supabase.rows('player_mission_progress').append({'id': 'pm-0', 'player_id': user_id, 'mission_id': 'm-1', 'is_active': False,
+                                                          'started_at': '2026-11-01T00:00:00+00:00'})   # played in the PREVIOUS life
+    fake_supabase.rows('player_mission_decisions').append(
+        {'id': 'old', 'player_mission_id': 'pm-0', 'decision_point_id': 'dp1', 'chosen_option_id': 'gig'})
+    r = _decide(client, auth_headers, 'gig')
+    assert r.status_code == 200 and r.get_json()['data']['repeat_run'] is False
+    assert balance['amount'] == Decimal('250')

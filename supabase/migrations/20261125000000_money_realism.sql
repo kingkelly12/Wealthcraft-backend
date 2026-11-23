@@ -8,7 +8,7 @@
 --   boats and aircraft, income from leasing them out.
 -- * Friend loans (P2P): the rate is now per YEAR (like a bank), offers can go
 --   to one friend, friends can ask each other for a loan, and each loan keeps a
---   repayment record. Banks are repriced to Kenyan-style rates (13-24% a year)
+--   repayment record. Banks are repriced to high rates (13-24% a year)
 --   but lend far more.
 -- Household bills (groceries, electricity, water, Wi-Fi) are computed by the
 -- backend from the home you rent; roommates split them. No schema needed.
@@ -99,7 +99,7 @@ alter table public.p2p_loans add constraint p2p_loans_status_check
   check (status in ('requested', 'pending', 'active', 'completed', 'cancelled', 'declined', 'defaulted'));
 create index if not exists p2p_loans_offered_to_idx on public.p2p_loans (offered_to) where status in ('pending', 'requested');
 
--- --- Bank loans: Kenyan-style rates, much bigger amounts ------------------------------
+-- --- Bank loans: high rates (13-24% a year), much bigger amounts ------------------------------
 -- interest_rate is a FRACTION per year; payments are amortised.
 insert into public.bank_loans (borrower_id, type, amount, interest_rate, term, monthly_payment, total_interest, credit_required, status, collateral) values
   (null, 'Quick Cash',         1000.00,   0.2400, 3,   346.75,  40.26,     550, 'available', 'none'),

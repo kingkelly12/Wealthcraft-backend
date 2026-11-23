@@ -219,8 +219,10 @@ def rent_property(current_user_id: str):
 
         # Renting somewhere new means you've moved out of any home you own:
         # it gets let out instead.
-        from app.game import homes
+        from app.game import homes, roommates
         homes.stop_living_in_owned(current_user_id)
+        # Your own place means you no longer share someone else's.
+        roommates.end_all_for(current_user_id)
 
         # 6. Notify followers of rental in background
         # (User gets immediate toast feedback from API response)
@@ -301,14 +303,18 @@ def move_out(current_user_id: str, rental_id: str = None):
             }), 404
         
         rental = rental_response.data
-        property_name = rental.get('rental_properties', {}).get('name', 'property')
+        property_name = (rental.get('rental_properties') or {}).get('name', 'property')
         
         # Update rental to inactive
         supabase.table('player_rentals').update({
             'is_active': False,
             'ended_at': datetime.now(timezone.utc).isoformat()
         }).eq('id', rental_id).eq('player_id', current_user_id).execute()
-        
+
+        # Nobody is left to share the place: any roommate arrangement (and invite) ends with the lease.
+        from app.game import roommates
+        roommates.end_all_for(current_user_id)
+
         # Notify followers of move-out in background
         # (User gets immediate toast feedback from API response)
         try:

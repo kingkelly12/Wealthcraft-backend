@@ -20,12 +20,15 @@ Property and businesses don't trade on this market: they grow on game months
 (economy.appreciate). Prices live in player_market_prices; the big moments go
 to player_market_events and show up in the receipt and the Stock Exchange news.
 """
+import logging
 import math
 import random
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from app import supabase
+
+logger = logging.getLogger(__name__)
 
 TRADED = ('stocks', 'crypto', 'forex', 'investments')
 WEEKS = 52
@@ -232,8 +235,8 @@ def advance(uid, week) -> dict:
                'body': e['body'], 'shock_pct': e['shock_pct'], 'assets': names}
         try:
             supabase.table('player_market_events').insert(row).execute()
-        except Exception:
-            pass
+        except Exception as err:
+            logger.warning(f"Could not record market event {e['key']} for {uid} week {week}: {err}")
         hit.append({k: row[k] for k in ('kind', 'emoji', 'title', 'body', 'shock_pct', 'assets')})
 
     moves.sort(key=lambda m: abs(m['value_change']), reverse=True)

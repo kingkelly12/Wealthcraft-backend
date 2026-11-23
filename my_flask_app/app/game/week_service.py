@@ -194,6 +194,7 @@ def _everyday_card(card, ctx=None) -> dict:
         person = {'key': who, 'name': name if who == 'roommate' else CAST[who]['name'], 'emoji': CAST[who]['emoji']}
     return {
         'kind': 'everyday', 'key': card['key'], 'category': card['category'], 'icon': card['icon'],
+        'income_to': card.get('income_to'),
         'character': person,
         'title': fill(card['title']), 'body': fill(card['body']), 'teaser': fill(card['teaser']),
         'choices': [side('left', card['left']), side('right', card['right'])],
@@ -316,9 +317,13 @@ def _life_event_cards(uid, rng, ctx, want):
 
 
 def _recent_everyday_keys(uid, week):
+    """Everyday cards on cooldown: dealt within RECENT_DECKS_NO_REPEAT weeks, or their own cooldown_weeks."""
+    longest = max([RECENT_DECKS_NO_REPEAT] + [int(c.get('cooldown_weeks') or 0) for c in CARDS])
     rows = supabase.table('player_weeks').select('week, cards').eq('user_id', uid) \
-        .gte('week', week - RECENT_DECKS_NO_REPEAT).lt('week', week).execute().data or []
-    return {c.get('key') for r in rows for c in (r.get('cards') or []) if c.get('kind') == 'everyday'}
+        .gte('week', week - longest).lt('week', week).execute().data or []
+    cooldown = {c['key']: int(c.get('cooldown_weeks') or RECENT_DECKS_NO_REPEAT) for c in CARDS}
+    return {c.get('key') for r in rows for c in (r.get('cards') or [])
+            if c.get('kind') == 'everyday' and week - int(r['week']) <= cooldown.get(c.get('key'), RECENT_DECKS_NO_REPEAT)}
 
 
 def build_deck(user_id: str, week: int) -> list:
@@ -333,7 +338,9 @@ def build_deck(user_id: str, week: int) -> list:
     recent = _recent_everyday_keys(uid, week)
     pool = [c for c in CARDS if _eligible(c, ctx) and c['key'] not in recent]
     if len(pool) < CARDS_PER_WEEK:
-        pool = [c for c in CARDS if _eligible(c, ctx)]
+        # Short of cards: relax the 4-week no-repeat, but never a card's own longer cooldown
+        pool = [c for c in CARDS if _eligible(c, ctx)
+                and not (c.get('cooldown_weeks') and c['key'] in recent)]
     slots = CARDS_PER_WEEK - len(cards)
     gated = [c for c in pool if 'min_rel' in c or 'max_rel' in c]
     picks = rng.sample(gated, k=min(1, len(gated), slots))
@@ -435,6 +442,28 @@ def _save_cards(deck, cards):
     return res.data[0]
 
 
+def _update_card(uid, week, card_id, mutate, attempts=6):
+    """
+    Re-read this week's deck, apply `mutate(card)` (return False to skip) and
+    save, retrying on version conflicts. A second card played at the same time
+    bumps the deck version; a single optimistic write would then silently drop
+    this card's result (or fail to release its claim).
+    """
+    for _ in range(attempts):
+        deck = supabase.table('player_weeks').select('*').eq('user_id', uid).eq('week', week).limit(1).execute().data
+        if not deck:
+            return False
+        deck = deck[0]
+        cards = copy.deepcopy(deck.get('cards') or [])
+        card = next((c for c in cards if c['id'] == card_id), None)
+        if card is None or mutate(card) is False:
+            return False
+        if _save_cards(deck, cards) is not None:
+            return True
+    logger.error(f"Could not update card {card_id} for {uid} week {week} after {attempts} attempts")
+    return False
+
+
 def _is_insufficient(e):
     return 'Insufficient funds' in str(e)
 
@@ -445,8 +474,9 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
     clock = get_clock(uid)
     if not _can_play(clock):
         raise WeekError('WEEK_LOCKED', 'Next week unlocks tomorrow.', 403)
-    _check_life(uid, int(clock['week']))
-    deck = get_week(uid, int(clock['week']))
+    week = int(clock['week'])
+    _check_life(uid, week)
+    deck = get_week(uid, week)
     if deck['status'] != 'open':
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
     try:  # the squad race measures growth from before your first card this week
@@ -495,7 +525,7 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
                 'game_over': False,
             }
             card['result'] = result
-            _save_cards(claimed, cards)
+            _update_card(uid, week, card_id, lambda c: c.update(result=result))
             return {'card': public_card(card), 'result': result,
                     'remaining': sum(1 for c in cards if not c.get('chosen'))}
 
@@ -507,8 +537,11 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
         elif cash < 0:
             BalanceService.subtract_balance(uid, -cash, reason, category='weekly_card')
     except Exception as e:
-        card['chosen'] = None
-        _save_cards(claimed, cards)
+        def release(c):
+            if c.get('chosen') != choice_id or c.get('result'):
+                return False
+            c['chosen'] = None
+        _update_card(uid, week, card_id, release)
         if card['kind'] == 'life_event' and card.get('user_life_event_id'):
             supabase.table('user_life_events').update({'choice_id': None}) \
                 .eq('id', card['user_life_event_id']).eq('choice_id', choice['choice_id']).execute()
@@ -516,34 +549,44 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
             raise WeekError('INSUFFICIENT_FUNDS', f"You can't afford that (${-cash:,.0f}).", 400)
         raise
 
-    # 3. Income and sanity.
-    income = Decimal(str(choice.get('income') or 0))
-    if income:
-        from app.services.profile_service import ProfileService
-        ProfileService.update_monthly_income(uuid.UUID(uid), float(income))
-
-    before = _sanity_of(uid)
-    new_sanity = before
-    if choice.get('sanity'):
-        res = supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': int(choice['sanity'])}).execute()
-        new_sanity = int(res.data) if res.data is not None else before
-
+    # 3-4. Income, sanity, relationship, history. The money has moved, so a
+    #      failure here must not lose the card's result (the receipt reads it).
+    income = Decimal('0')
+    before = new_sanity = _sanity_of(uid)
     rel_delta = 0
-    who = (card.get('character') or {}).get('key') if isinstance(card.get('character'), dict) else None
-    if who and choice.get('rel'):
-        from app.game import cast
-        before_rel = cast.relationships(uid)[who]
-        rel_delta = cast.adjust(uid, who, choice['rel']) - before_rel
+    try:
+        income = Decimal(str(choice.get('income') or 0))
+        if income and card.get('income_to') == 'job':
+            income = _raise_main_job(uid, income)
+        elif income:
+            from app.services.profile_service import ProfileService
+            ProfileService.update_monthly_income(uuid.UUID(uid), float(income))
 
-    # 4. Life events keep their history (mentors and analytics read it).
-    #    Pending ones were already claimed in step 1b.
-    if card['kind'] == 'life_event' and not card.get('user_life_event_id'):
-        try:
-            supabase.table('user_life_events').insert({
-                'user_id': uid, 'life_event_id': card['life_event_id'], 'choice_id': choice['choice_id'],
-            }).execute()
-        except Exception as e:
-            logger.error(f"Failed to record life event history for {uid}: {e}")
+        before = _sanity_of(uid)
+        new_sanity = before
+        if choice.get('sanity'):
+            res = supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': int(choice['sanity'])}).execute()
+            new_sanity = int(res.data) if res.data is not None else before
+
+        rel_delta = 0
+        who = (card.get('character') or {}).get('key') if isinstance(card.get('character'), dict) else None
+        if who and choice.get('rel'):
+            from app.game import cast
+            before_rel = cast.relationships(uid)[who]
+            rel_delta = cast.adjust(uid, who, choice['rel']) - before_rel
+
+        # 4. Life events keep their history (mentors and analytics read it).
+        #    Pending ones were already claimed in step 1b.
+        if card['kind'] == 'life_event' and not card.get('user_life_event_id'):
+            try:
+                supabase.table('user_life_events').insert({
+                    'user_id': uid, 'life_event_id': card['life_event_id'], 'choice_id': choice['choice_id'],
+                }).execute()
+            except Exception as e:
+                logger.error(f"Failed to record life event history for {uid}: {e}")
+
+    except Exception as e:
+        logger.error(f"Card effects after payment failed for {uid} card {card_id}: {e}")
 
     result = {
         'outcome': choice['outcome'],
@@ -556,9 +599,21 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
         'game_over': new_sanity <= 0 < before,
     }
     card['result'] = result
-    if _save_cards(claimed, cards) is None:
-        logger.warning(f"Could not store result for {uid} card {card_id} (deck changed)")
+    _update_card(uid, week, card_id, lambda c: c.update(result=result) if c.get('chosen') == choice_id else False)
     return {'card': public_card(card), 'result': result, 'remaining': sum(1 for c in cards if not c.get('chosen'))}
+
+
+def _raise_main_job(uid, monthly):
+    """Raise the current main job's (annual) salary. Returns the monthly raise applied (0 if no job now)."""
+    jobs = supabase.table('jobs').select('id, salary, kind').eq('user_id', uid).eq('is_current', True).execute().data or []
+    main = next((j for j in jobs if (j.get('kind') or 'job') != 'gig'), None)
+    if not main:
+        return Decimal('0')  # quit between the deal and the swipe: nothing to raise
+    new_salary = Decimal(str(main.get('salary') or 0)) + monthly * 12
+    supabase.table('jobs').update({'salary': float(new_salary)}).eq('id', main['id']).execute()
+    from app.services.profile_service import ProfileService
+    ProfileService.recalculate_monthly_income(uuid.UUID(uid))
+    return monthly
 
 
 def _pay_gigs(uid):
@@ -612,12 +667,14 @@ def complete_week(user_id: str) -> dict:
     meta = week_meta(week)
     gigs = _pay_gigs(uid)
     month = None
+    month_failed = False
     if meta['is_payday_week']:
         from jobs.monthly_loan_deductions import process_month_for_user
         try:
             month = process_month_for_user(uid, game_years=week / 52)
-        except Exception as e:  # the week still ends; the player sees a partial receipt
-            logger.error(f"Month processing failed for {uid} at week {week}: {e}")
+        except Exception as e:  # the week still ends; the receipt says the month didn't run
+            month_failed = True
+            logger.error(f"Month processing failed for {uid} at week {week}: {e}", exc_info=True)
 
     # The market moves one game week (app/game/market.py).
     market_week = None
@@ -632,8 +689,10 @@ def complete_week(user_id: str) -> dict:
 
     lines = []
     for c in cards:
-        r = c.get('result') or {}
         choice = next((ch for ch in c['choices'] if ch['id'] == c.get('chosen')), {})
+        # A result that never got stored (see _update_card) falls back to the
+        # card's listed effects rather than showing $0 for money that moved.
+        r = c.get('result') or {k: choice.get(k, 0) for k in ('cash', 'sanity', 'income')}
         lines.append({
             'title': c['title'], 'icon': c.get('icon'), 'event_type': c.get('event_type'),
             'category': c.get('category'), 'character': c.get('character'),
@@ -647,7 +706,11 @@ def complete_week(user_id: str) -> dict:
     month_sanity = int(month['sanity_change']) if month else 0
 
     from app.game import life as life_mod
-    start_age, _, _, _ = _life_info(uid, week)
+    try:
+        start_age, _, _, _ = _life_info(uid, week)
+    except Exception as e:  # never strand a week whose clock already moved
+        logger.warning(f'Life info failed for {uid} at week {week}: {e}')
+        start_age = life_mod.DEFAULT_START_AGE
     receipt = {
         **meta,
         'age': life_mod.age_at(week, start_age),
@@ -657,6 +720,7 @@ def complete_week(user_id: str) -> dict:
         # Your investments this week, and any crash or boom.
         'market': market_week,
         'month_summary': month,
+        'month_failed': month_failed,
         'totals': {
             'cash': float(card_cash + gig_cash + month_net),
             'sanity': card_sanity + gig_sanity + month_sanity,
@@ -665,8 +729,12 @@ def complete_week(user_id: str) -> dict:
         'sanity_after': _sanity_of(uid),
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
-    from app.game import cast
-    receipt['texts'] = cast.react_to_week(uid, receipt)
+    try:  # the cast never blocks a week (the clock has already moved on)
+        from app.game import cast
+        receipt['texts'] = cast.react_to_week(uid, receipt)
+    except Exception as e:
+        logger.warning(f'Cast reactions failed for {uid} at week {week}: {e}')
+        receipt['texts'] = []
     try:
         from app.game import squads
         receipt['squad'] = squads.record_week(uid, receipt)

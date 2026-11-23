@@ -79,6 +79,3 @@ def add_month(job_ids) -> None:
         if row:
             supabase.table('jobs').update({'months_worked': int(row[0].get('months_worked') or 0) + 1}).eq('id', jid).execute()
 
-
-def reset_for_new_life(uid) -> None:
-    supabase.table('jobs').update({'months_worked': 0}).eq('user_id', str(uid)).execute()

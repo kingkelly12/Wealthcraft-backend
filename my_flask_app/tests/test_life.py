@@ -115,11 +115,14 @@ def test_a_background_resets_the_run_and_keeps_the_person(client, auth_headers, 
     assert res.status_code == 200, res.get_json()
 
     assert balance['amount'] == Decimal('3000')
-    assert fake_supabase.rows('jobs')[0]['is_current'] is False
+    assert fake_supabase.rows('jobs') == []                      # job history goes with the run
     assert fake_supabase.rows('player_rentals')[0]['is_active'] is False
     assert fake_supabase.rows('user_assets') == []
     debts = fake_supabase.rows('liabilities')
-    assert [d['name'] for d in debts] == ['Student loan'] and debts[0]['remaining_balance'] == 24000
+    assert [d['name'] for d in debts] == ['Student loan'] and debts[0]['amount'] == 24000
+    # 5% a year is baked into what's owed (like bank loans): $24,000 borrowed, more to pay back.
+    assert debts[0]['total_interest'] > 5000 and debts[0]['remaining_balance'] == 24000 + debts[0]['total_interest']
+    assert debts[0]['monthly_payment'] == 250 and debts[0]['remaining_term'] > 96
     assert fake_supabase.rows('player_mission_progress')[0]['is_active'] is False
     assert fake_supabase.rows('player_game_clock')[0]['week'] == 1
     assert fake_supabase.rows('player_weeks') == []
@@ -219,3 +222,102 @@ def test_old_run_is_frozen_between_lives(client, auth_headers, player, fake_supa
     _begin(client, auth_headers, 'scholarship')
     data = client.get('/api/week/', headers=auth_headers).get_json()['data']
     assert not data['needs_new_life'] and data['can_play'] and data['week'] == 1
+
+
+# --- debugging pass ----------------------------------------------------------------------
+
+def _clock(fake, uid, week=10):
+    for row in fake.rows('player_game_clock'):          # the reset already made one: move it on
+        if row['user_id'] == uid:
+            row['week'] = week
+            return
+    fake.rows('player_game_clock').append({'user_id': uid, 'week': week, 'banked_weeks': 1, 'bank_updated_on': '2026-11-21'})
+
+
+def _p2p_mess(fake, user_id):
+    fake.rows('p2p_loans').extend([
+        {'id': 'owed', 'lender_id': 'friend', 'borrower_id': user_id, 'status': 'active'},
+        {'id': 'lent', 'lender_id': user_id, 'borrower_id': 'pal', 'status': 'active'},
+        {'id': 'offer', 'lender_id': user_id, 'borrower_id': None, 'status': 'pending'},
+        {'id': 'ask', 'lender_id': 'friend', 'borrower_id': user_id, 'status': 'requested'},
+    ])
+    fake.rows('liabilities').append({'id': 'pal-debt', 'user_id': 'pal', 'name': 'P2P', 'p2p_loan_id': 'lent', 'remaining_balance': 900})
+
+
+def test_burnout_with_open_p2p_loans_does_not_lock_the_player_out(client, auth_headers, player, fake_supabase, user_id, balance):
+    _begin(client, auth_headers, 'scholarship')
+    _p2p_mess(fake_supabase, user_id)
+    player['sanity'] = 0
+    assert client.post('/api/life/end/', headers=auth_headers).status_code == 200
+    # Frozen between lives, the player can neither play nor earn to repay: used to be a permanent soft-lock.
+    assert _begin(client, auth_headers, 'rich_parents').status_code == 200
+    status = {l['id']: l['status'] for l in fake_supabase.rows('p2p_loans')}
+    assert status == {'owed': 'defaulted', 'lent': 'defaulted', 'offer': 'cancelled', 'ask': 'cancelled'}
+    assert not [l for l in fake_supabase.rows('liabilities') if l['user_id'] == 'pal']      # the borrower's debt dies with the lender's life
+    told = {n['user_id'] for n in fake_supabase.rows('notifications')}
+    assert {'pal', 'friend'} <= told
+
+
+def test_a_voluntary_restart_is_still_blocked_while_a_p2p_loan_is_open(client, auth_headers, player, fake_supabase, user_id):
+    _begin(client, auth_headers, 'scholarship')
+    _clock(fake_supabase, user_id)
+    fake_supabase.rows('p2p_loans').append({'id': 'p1', 'lender_id': user_id, 'borrower_id': 'pal', 'status': 'active'})
+    res = client.post('/api/life/end/', headers=auth_headers)
+    assert res.status_code == 409 and res.get_json()['error'] == 'P2P_OPEN'
+    assert _get(client, auth_headers)['current'] is not None            # still playing: nothing was closed
+
+
+def test_a_new_life_starts_clean(client, auth_headers, player, fake_supabase, user_id):
+    fake_supabase.rows('user_courses').extend([
+        {'id': 'c1', 'user_id': user_id, 'course_id': 'excel', 'completed_at': '2026-11-01T00:00:00+00:00'},
+        {'id': 'c2', 'user_id': user_id, 'course_id': 'budget', 'completed_at': None},
+    ])
+    fake_supabase.rows('jobs').extend([
+        {'id': 'old', 'user_id': user_id, 'title': 'Barista', 'job_market_id': 'm1', 'is_current': False, 'months_worked': 30},
+        {'id': 'cur', 'user_id': user_id, 'title': 'Analyst', 'job_market_id': 'm2', 'is_current': True, 'months_worked': 12},
+    ])
+    fake_supabase.rows('user_life_events').extend([
+        {'id': 'e1', 'user_id': user_id, 'life_event_id': 'ev1', 'choice_id': None},
+        {'id': 'e2', 'user_id': user_id, 'life_event_id': 'ev2', 'choice_id': 'x'},
+    ])
+    player['trading_profits'] = 500
+    assert _begin(client, auth_headers, 'rich_parents').status_code == 200
+    assert fake_supabase.rows('user_courses') == []                    # completed ones blocked re-enrolling, for no benefit
+    assert fake_supabase.rows('jobs') == []                            # old listings pay their signing bonus again
+    from app.game import careers
+    assert careers.experience(user_id) == {}                           # and the career ladder starts over
+    assert [e['id'] for e in fake_supabase.rows('user_life_events')] == ['e2']   # an unanswered event doesn't follow you
+    assert player['trading_profits'] == 0
+
+
+def test_living_with_a_roommate_counts_as_a_home_for_the_ending(player, fake_supabase, user_id):
+    from app.game import life
+    assert life._snapshot(user_id)['has_home'] is False
+    fake_supabase.rows('roommates').append({'id': 'r', 'leaseholder_id': 'pal', 'roommate_id': user_id, 'status': 'active'})
+    assert life._snapshot(user_id)['has_home'] is True                 # was "moved back home" for every roommate
+
+
+def test_legacy_in_the_life_screen_counts_every_finished_life_not_just_the_latest_20(client, auth_headers, player, fake_supabase, user_id):
+    from app.game import legacy
+    rich = {'life_number': 1, 'background': {'key': 'scholarship'}, 'reason': 'started_over', 'net_worth': 2_000_000, 'debt': 5}
+    for n in range(1, 23):
+        fake_supabase.rows('player_lives').append({
+            'id': f'l{n}', 'user_id': user_id, 'life_number': n, 'background': 'scholarship', 'is_current': False,
+            'ending': 'getting_by', 'ended_at': f'2026-10-{n:02d}T00:00:00+00:00',
+            'summary': rich if n == 1 else {'life_number': n, 'background': {'key': 'scholarship'}, 'reason': 'started_over', 'net_worth': 10, 'debt': 5},
+        })
+    everything = legacy.earned([r['summary'] for r in fake_supabase.rows('player_lives')])
+    assert 'millionaire' in everything
+    assert _get(client, auth_headers)['legacy']['level'] == len(everything)
+
+
+def test_avatar_lookup_ignores_malformed_ids(client, auth_headers, player, fake_supabase):
+    fake_supabase.calls.clear()
+    res = client.get('/api/life/avatars/?ids=not-a-uuid,,12345', headers=auth_headers)
+    assert res.status_code == 200 and res.get_json()['data'] == {}
+    assert fake_supabase.calls == []                                   # Postgres would 500 on a non-uuid
+
+
+def test_new_life_cash_is_not_income_or_spending_for_the_mentors():
+    from app.services import mentor_service
+    assert 'new_life' in mentor_service.NON_OPERATING_INCOME and 'new_life' in mentor_service.NON_OPERATING_EXPENSE

@@ -15,8 +15,8 @@ This consolidates 9+ separate API calls into 1, improving performance by 70%+
 from flask import Blueprint, jsonify
 from app.utils.jwt_helper import require_auth
 from app import supabase
-import uuid
 import logging
+from app.game import economy
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,8 @@ def get_consolidated_dashboard(current_user_id: str):
 
         # 5. Active Loans
         loans_res = supabase.table('liabilities').select('*').in_('user_id', user_ids).execute()
-        loans = loans_res.data or []
+        # What clearing each loan costs today (interest not yet earned is refunded).
+        loans = [{**l, 'payoff_amount': float(economy.payoff_amount(l))} for l in loans_res.data or []]
 
         # Combine all liabilities
         all_liabilities = luxury_liabilities + loans

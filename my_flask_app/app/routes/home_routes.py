@@ -2,7 +2,7 @@
 Owning your home (see app/game/homes.py).
 
 GET  /api/homes/                     homes for sale, homes you own, where you live
-POST /api/homes/buy/                 {"home_id", "move_in": true}
+POST /api/homes/buy/                 {"home_id", "move_in": true, "finance": false}  (finance: 20% down, mortgage for the rest)
 POST /api/homes/<id>/move-in/        live in a home you own (your lease ends: no more rent)
 POST /api/homes/<id>/move-out/       stop living there (it gets let out)
 POST /api/homes/<id>/sell/           sell it (5% fees)
@@ -45,7 +45,12 @@ def buy(current_user_id: str):
     blocked = enforce_mission_constraints(current_user_id, 'buy_asset', {'category': 'real_estate', 'asset_type': 'property'})
     if blocked:
         return blocked
-    return _run(homes.buy, current_user_id, body['home_id'], body.get('move_in', True) is not False)
+    finance = body.get('finance') is True
+    if finance:
+        blocked = enforce_mission_constraints(current_user_id, 'take_loan', {'loan_type': 'mortgage'})
+        if blocked:
+            return blocked
+    return _run(homes.buy, current_user_id, body['home_id'], body.get('move_in', True) is not False, finance)
 
 
 @homes_bp.route('/<home_id>/move-in/', methods=['POST'])
@@ -63,4 +68,7 @@ def move_out(current_user_id: str, home_id: str):
 @homes_bp.route('/<home_id>/sell/', methods=['POST'])
 @require_auth
 def sell(current_user_id: str, home_id: str):
+    blocked = enforce_mission_constraints(current_user_id, 'sell_asset')
+    if blocked:
+        return blocked
     return _run(homes.sell, current_user_id, home_id)

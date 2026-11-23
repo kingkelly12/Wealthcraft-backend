@@ -12,7 +12,7 @@ Money rules shared by the game week, the game month and the API.
 """
 import math
 import random
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_UP
 
 from app import supabase
 
@@ -193,10 +193,13 @@ def appreciates(asset_type):
 
 
 def appreciate(ua):
-    """(new unit value, months held) after one month for property and businesses."""
+    """(new holding value, months held) after one month for property and businesses.
+
+    `value` is for the whole holding and `purchase_price` per unit, so the ceiling is 2x the
+    price of every unit held."""
     held = int(ua.get('months_held') or 0) + 1
     value = money(ua.get('value'))
-    basis = money(ua.get('purchase_price'))
+    basis = money(ua.get('purchase_price')) * Decimal(str(ua.get('quantity') or 1))
     if basis <= 0 or value <= 0:
         return value, held
     rate = APPRECIATION_YEAR_1 if held <= 12 else APPRECIATION_LATER
@@ -333,6 +336,43 @@ def loan_terms(loan):
     return p2p_terms(loan['amount'], loan['interest_rate'], loan['term_months'])
 
 
+PAYDAYS_PER_YEAR = 13                      # a game year is 52 weeks, and every 4th week is payday
+
+
+def payoff_amount(loan) -> Decimal:
+    """
+    What clearing a loan costs today. Interest is added to the balance when a loan starts, so paying
+    early would still cost all of it; instead the interest not yet earned is refunded, in proportion
+    to what is left. Late fees (a balance above what was first owed) earn no refund.
+    """
+    remaining = money(loan.get('remaining_balance'))
+    interest = money(loan.get('total_interest'))
+    first_owed = money(loan.get('amount')) + interest
+    if remaining <= 0 or interest <= 0 or first_owed <= 0:
+        return remaining
+    rebate = money(interest * min(remaining, first_owed) / first_owed)
+    return max(Decimal('0'), remaining - rebate)
+
+
+def amortised_loan(principal, annual_pct, payment, payments_per_year=PAYDAYS_PER_YEAR) -> dict:
+    """
+    A loan repaid at a fixed `payment` each payday, with interest on what is still owed:
+    {'term' (payments), 'total' (all of it paid back), 'interest'}. The last payment is smaller.
+    """
+    principal, payment = money(principal), money(payment)
+    rate = Decimal(str(annual_pct)) / 100 / payments_per_year
+    balance, total, term = principal, Decimal('0'), 0
+    if payment <= principal * rate:
+        raise ValueError('The payment does not even cover the interest')
+    while balance > 0 and term < 1200:
+        balance = money(balance * (1 + rate))
+        paid = min(payment, balance)
+        balance -= paid
+        total += paid
+        term += 1
+    return {'term': term, 'total': total, 'interest': total - principal}
+
+
 def are_friends(a, b):
     """People who know each other in the game: a follow either way, same squad, or roommates."""
     a, b = str(a), str(b)
@@ -362,16 +402,37 @@ def repayment_record(uid):
     }
 
 
-def affordability(uid, extra_monthly):
-    """None if the new payment fits (debt-to-income at most MAX_DTI), else the reason."""
+def finances(uid):
+    """(monthly income, what you already pay on loans each month), for borrowing checks."""
     prof = supabase.table('profiles').select('monthly_income').eq('user_id', str(uid)).limit(1).execute().data
     income = Decimal(str((prof[0] if prof else {}).get('monthly_income') or 0))
+    debts = supabase.table('liabilities').select('monthly_payment').eq('user_id', str(uid)).gt('remaining_balance', 0).execute().data or []
+    return income, sum((Decimal(str(d.get('monthly_payment') or 0)) for d in debts), Decimal('0'))
+
+
+def dti_problem(income, current_payments, extra_monthly):
+    """None if the new payment fits (debt-to-income at most MAX_DTI), else the reason."""
+    income = Decimal(str(income or 0))
     if income <= 0:
         return "You need a monthly income to borrow."
-    debts = supabase.table('liabilities').select('monthly_payment').eq('user_id', str(uid)).gt('remaining_balance', 0).execute().data or []
-    total = sum((Decimal(str(d.get('monthly_payment') or 0)) for d in debts), Decimal('0')) + Decimal(str(extra_monthly))
-    dti = total / income
+    dti = (Decimal(str(current_payments)) + Decimal(str(extra_monthly))) / income
     if dti > MAX_DTI:
         return (f"Your loan payments would be {dti * 100:.0f}% of your income "
                 f"(lenders allow {MAX_DTI * 100:.0f}%). Borrow less or for longer.")
     return None
+
+
+def affordability(uid, extra_monthly):
+    """None if the new payment fits (debt-to-income at most MAX_DTI), else the reason."""
+    income, payments = finances(uid)
+    return dti_problem(income, payments, extra_monthly)
+
+
+def annuity_payment(principal, annual_pct, payments, payments_per_year=PAYDAYS_PER_YEAR) -> Decimal:
+    """The fixed payment that repays `principal` in `payments` paydays (rounded up to the cent)."""
+    principal = Decimal(str(principal))
+    rate = Decimal(str(annual_pct)) / 100 / payments_per_year
+    if rate <= 0:
+        return (principal / payments).quantize(CENT, rounding=ROUND_UP)
+    pay = principal * rate / (1 - (1 + rate) ** -payments)
+    return pay.quantize(CENT, rounding=ROUND_UP)

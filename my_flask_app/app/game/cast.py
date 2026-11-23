@@ -111,7 +111,7 @@ def _week_texts(receipt, rel, present, rng):
     """Candidate texts for a finished week, most relevant first: (character, body, replies)."""
     out = []
     month = receipt.get('month_summary') or {}
-    missed = [l for l in month.get('lines', []) if l.get('missed')]
+    missed = [l for l in month.get('lines', []) if l.get('missed') and not l.get('error')]
     totals = receipt.get('totals') or {}
     cards = receipt.get('cards') or []
 
@@ -228,10 +228,15 @@ def reply(uid, message_id, reply_id):
         raise CastError('ALREADY_REPLIED', 'You already replied.', 409)
 
     name = CAST.get(msg['character'], {}).get('name', 'them')
-    if cash > 0:
-        BalanceService.add_balance(uid, cash, f'From {name}', category='cast')
-    elif cash < 0:
-        BalanceService.subtract_balance(uid, -cash, f'For {name}', category='cast')
+    try:
+        if cash > 0:
+            BalanceService.add_balance(uid, cash, f'From {name}', category='cast')
+        elif cash < 0:
+            BalanceService.subtract_balance(uid, -cash, f'For {name}', category='cast')
+    except Exception:
+        # Nothing happened, so the reply stays open.
+        supabase.table('cast_messages').update({'replied_with': None}).eq('id', message_id).eq('replied_with', reply_id).execute()
+        raise
     new_sanity = None
     if option.get('sanity'):
         new_sanity = supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': int(option['sanity'])}).execute().data
@@ -291,8 +296,10 @@ def thread(uid, character):
 
 
 def unread_count(uid):
-    rows = supabase.table('cast_messages').select('id').eq('user_id', str(uid)).eq('from_player', False).is_('read_at', 'null').execute().data or []
-    return len(rows)
+    """Unread texts you can actually open: someone who left your life has no thread to clear them."""
+    rows = supabase.table('cast_messages').select('id, character').eq('user_id', str(uid)).eq('from_player', False).is_('read_at', 'null').execute().data or []
+    present = set(present_cast(uid))
+    return sum(1 for r in rows if r['character'] in present)
 
 
 def reset(uid):

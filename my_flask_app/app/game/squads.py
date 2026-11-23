@@ -8,19 +8,21 @@ Squads: a named crew of up to MAX_MEMBERS players who play together.
   - The race: members are ranked by net worth growth this week (net worth now
     minus at the start of the week), so a low earner can beat a high earner.
   - The squad goal (co-op): play GOAL_PER_MEMBER game weeks per member between
-    you. Hitting it gives every member +GOAL_SANITY sanity (once a week per
-    player, even if they hop squads) and extends the squad streak.
+    you, AND every member plays at least MIN_WEEKS_PER_MEMBER of them (one player
+    can't carry the squad). Hitting it gives every member +GOAL_SANITY sanity
+    (once a week per player, even if they hop squads) and extends the squad streak.
   - Last week's MVP: the member who played and grew the most.
 * Settlement (MVP, streak) happens lazily the first time anyone touches the
   squad in a new week, claimed with an optimistic update on settled_week.
 * The feed: paydays, birthdays, big swings, endings, joins and goals, with
   emoji reactions.
 
-Tables: squads, squad_members, squad_member_weeks, squad_feed, squad_reactions.
+Tables: squads, squad_members, squad_member_weeks, squad_feed, squad_reactions, squad_rewards.
 """
 import logging
 import random
 import re
+import uuid as _uuidlib
 from datetime import date, datetime, timedelta, timezone
 
 from app import supabase
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 MAX_MEMBERS = 8
 GOAL_PER_MEMBER = 3
+MIN_WEEKS_PER_MEMBER = 1      # nobody rides for free: every member plays at least this many weeks
 GOAL_SANITY = 5
 BIG_SWING = 500             # a card worth at least this much makes the feed
 POSTS_PER_WEEK = 2          # feed posts one finished game week can make
@@ -37,6 +40,8 @@ CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'   # no 0/O, 1/I/L
 CODE_LENGTH = 6
 EMOJIS = ['🔥', '🦁', '🐺', '🦈', '💸', '🍕', '🚀', '👑', '🌱', '🎯', '🐐', '🛋️']
 REACTIONS = ['🔥', '😂', '💀', '🫡', '❤️']
+FEED_RETENTION_DAYS = 60    # older posts are pruned when the week settles
+WEEKS_KEPT = 8              # per-member week rows older than this are pruned (only last week is ever read)
 
 
 class SquadError(Exception):
@@ -58,6 +63,18 @@ def week_start(d: date = None) -> date:
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _uuid(value, status=400, code='INVALID_ID', message='That id is not valid.'):
+    """A well-formed uuid string, else a client error (Postgres answers a malformed one with a 500)."""
+    try:
+        return str(_uuidlib.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        raise SquadError(code, message, status)
+
+
+def _is_duplicate(e) -> bool:
+    return '23505' in str(e) or 'duplicate' in str(e).lower()
 
 
 def _money(n) -> str:
@@ -108,11 +125,11 @@ def _ensure_rows(sid, uids, profiles, ws):
         try:
             row = supabase.table('squad_member_weeks').insert({
                 'squad_id': sid, 'user_id': uid, 'week_start': ws.isoformat(),
-                'start_net_worth': _nw(profiles.get(uid)), 'weeks_played': 0, 'rewarded': False,
+                'start_net_worth': _nw(profiles.get(uid)), 'weeks_played': 0,
             }).execute().data[0]
             rows[uid] = row
         except Exception as e:  # another request created it first
-            if '23505' not in str(e) and 'duplicate' not in str(e).lower():
+            if not _is_duplicate(e):
                 raise
             rows = {**rows, **_week_rows(sid, ws)}
     return rows
@@ -129,16 +146,19 @@ def _post(sid, uid, kind, emoji, body):
 
 
 def _push(uids, title, body, data=None):
+    """One batched push to several players (one Expo request, not one per member)."""
+    uids = [str(u) for u in uids if u]
+    if not uids:
+        return
     try:
         from app.services.push_notification_service import ExpoPushService
-    except Exception:
-        return
-    for uid in uids:
-        try:
-            ExpoPushService.send_notification_to_user(supabase, uid, title, body, notification_type='social',
-                                                      data=data or {'screen': '/(tabs)/squad'})
-        except Exception as e:
-            logger.warning(f'Squad push to {uid} failed: {e}')
+        ExpoPushService.send_notifications_to_users(
+            supabase_client=supabase,
+            user_notifications=[{'user_id': u, 'title': title, 'body': body,
+                                 'data': data or {'screen': '/(tabs)/squad'}} for u in uids],
+            notification_type='social')
+    except Exception as e:
+        logger.warning(f'Squad push failed: {e}')
 
 
 # --- weekly settlement ----------------------------------------------------------------
@@ -155,10 +175,15 @@ def _settle(squad):
 
     best = None
     for uid, r in rows.items():
-        if uid not in profiles:
+        if uid not in profiles or int(r.get('weeks_played') or 0) <= 0:
             continue
-        growth = _nw(profiles[uid]) - float(r.get('start_net_worth') or 0)
-        if int(r.get('weeks_played') or 0) > 0 and (best is None or growth > best[1]):
+        # Net worth when they last finished a game week IN that week (record_week).
+        # Reading it now instead would count this week's growth too: settlement is
+        # lazy, so "now" can be days into the new week.
+        end = r.get('end_net_worth')
+        end = float(end) if end is not None else _nw(profiles[uid])   # rows from before end_net_worth was recorded
+        growth = end - float(r.get('start_net_worth') or 0)
+        if growth > 0 and (best is None or growth > best[1]):   # nobody is MVP of a week they lost money in
             best = (uid, growth)
     mvp = None
     if best:
@@ -170,13 +195,23 @@ def _settle(squad):
         .eq('id', squad['id']).eq('settled_week', squad['settled_week']).execute()
     if not claimed.data:
         return _squad(squad['id']) or squad
-    for uid, r in rows.items():
-        if uid in profiles:
-            supabase.table('squad_member_weeks').update({'end_net_worth': _nw(profiles[uid])}) \
-                .eq('squad_id', squad['id']).eq('user_id', uid).eq('week_start', prev.isoformat()).execute()
+    try:  # housekeeping: the feed and old week rows only ever grow
+        supabase.table('squad_feed').delete().eq('squad_id', squad['id']) \
+            .lt('created_at', (datetime.now(timezone.utc) - timedelta(days=FEED_RETENTION_DAYS)).isoformat()).execute()
+        supabase.table('squad_member_weeks').delete().eq('squad_id', squad['id']) \
+            .lt('week_start', (ws - timedelta(weeks=WEEKS_KEPT)).isoformat()).execute()
+    except Exception as e:
+        logger.warning(f'Squad pruning failed: {e}')
     if mvp:
         _post(squad['id'], mvp['user_id'], 'mvp', '👑', f"was last week's MVP ({_money(mvp['growth'])})")
     return claimed.data[0]
+
+
+def _played(rows, member_ids):
+    """(total weeks played, ids of the members who haven't played the minimum yet)."""
+    total = sum(int((rows.get(i) or {}).get('weeks_played') or 0) for i in member_ids)
+    idle = [i for i in member_ids if int((rows.get(i) or {}).get('weeks_played') or 0) < MIN_WEEKS_PER_MEMBER]
+    return total, idle
 
 
 def _effective_streak(squad, ws):
@@ -198,7 +233,11 @@ def ensure_baseline(uid):
     if not squad:
         return
     _settle(squad)
-    _ensure_rows(squad['id'], [uid], _profiles([uid]), week_start())
+    ws = week_start()
+    have = supabase.table('squad_member_weeks').select('user_id').eq('squad_id', squad['id']) \
+        .eq('user_id', uid).eq('week_start', ws.isoformat()).limit(1).execute()
+    if not have.data:   # runs before every card; only the first of the week needs the work
+        _ensure_rows(squad['id'], [uid], _profiles([uid]), ws)
 
 
 def _receipt_posts(receipt):
@@ -235,20 +274,25 @@ def record_week(uid, receipt):
     profiles = _profiles(member_ids)
     rows = _ensure_rows(sid, member_ids, profiles, ws)
     mine = rows[uid]
-    played_mine = int(mine.get('weeks_played') or 0) + 1
-    supabase.table('squad_member_weeks').update({'weeks_played': played_mine}) \
-        .eq('squad_id', sid).eq('user_id', uid).eq('week_start', ws.isoformat()).execute()
-    rows[uid] = {**mine, 'weeks_played': played_mine}
+    # weeks_played counts this week; end_net_worth is where they stand now, so the
+    # MVP is decided on the week's own growth (see _settle).
+    supabase.table('squad_member_weeks').update({
+        'weeks_played': int(mine.get('weeks_played') or 0) + 1, 'end_net_worth': _nw(profiles.get(uid)),
+    }).eq('squad_id', sid).eq('user_id', uid).eq('week_start', ws.isoformat()).execute()
+    # Re-read AFTER our own write: two members finishing their last week at the same
+    # moment each used to add their own week to a stale copy of the other's, and
+    # neither saw the goal reached. After this read, whoever wrote last sees both.
+    rows = _week_rows(sid, ws)
 
     for kind, emoji, body in _receipt_posts(receipt):
         _post(sid, uid, kind, emoji, body)
 
-    played = sum(int(rows[i].get('weeks_played') or 0) for i in member_ids if i in rows)
+    played, idle = _played(rows, member_ids)
     target = GOAL_PER_MEMBER * len(member_ids)
     already = str(squad.get('goal_hit_week')) == ws.isoformat()
     just_hit = False
     streak = _effective_streak(squad, ws)
-    if not already and played >= target:
+    if not already and played >= target and not idle:
         streak = (int(squad.get('streak') or 0) if str(squad.get('goal_hit_week')) == prev.isoformat() else 0) + 1
         claimed = supabase.table('squads').update({'goal_hit_week': ws.isoformat(), 'streak': streak}) \
             .eq('id', sid).eq('goal_hit_week', squad['goal_hit_week']).execute()
@@ -265,21 +309,29 @@ def record_week(uid, receipt):
     return {
         'name': squad['name'], 'emoji': squad['emoji'],
         'played': played, 'target': target,
+        'waiting_on': [] if already or just_hit else [profiles.get(i, {}).get('username', 'Someone') for i in idle],
         'goal_hit': already or just_hit, 'just_hit': just_hit,
         'reward_sanity': GOAL_SANITY, 'streak': streak,
     }
 
 
 def _reward(sid, member_ids, ws):
-    """+GOAL_SANITY to each member, at most once per player per calendar week (whatever squad)."""
+    """
+    +GOAL_SANITY to each member, at most once per player per calendar week, whatever
+    squad. Tracked in squad_rewards (primary key user + week), which outlives the
+    squad: the flag used to live on squad_member_weeks, which Postgres deletes with
+    an emptied squad, so leaving, re-creating and replaying paid out again.
+    """
     for uid in member_ids:
-        got = supabase.table('squad_member_weeks').select('squad_id').eq('user_id', uid) \
-            .eq('week_start', ws.isoformat()).eq('rewarded', True).limit(1).execute()
+        got = supabase.table('squad_rewards').select('user_id').eq('user_id', uid) \
+            .eq('week_start', ws.isoformat()).limit(1).execute()
         if got.data:
             continue
-        marked = supabase.table('squad_member_weeks').update({'rewarded': True}) \
-            .eq('squad_id', sid).eq('user_id', uid).eq('week_start', ws.isoformat()).eq('rewarded', False).execute()
-        if not marked.data:
+        try:
+            supabase.table('squad_rewards').insert({'user_id': uid, 'week_start': ws.isoformat(), 'squad_id': sid}).execute()
+        except Exception as e:
+            if not _is_duplicate(e):   # the primary key makes the claim atomic
+                logger.warning(f'Squad reward claim for {uid} failed: {e}')
             continue
         try:
             supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': GOAL_SANITY}).execute()
@@ -378,6 +430,8 @@ def state(uid):
     } for f in feed_rows]
 
     played = sum(p['weeks_played'] for p in people)
+    hit = str(squad.get('goal_hit_week')) == ws.isoformat()
+    idle = [p['username'] for p in people if p['weeks_played'] < MIN_WEEKS_PER_MEMBER]
     return {
         **_empty(),
         'squad': {
@@ -388,7 +442,10 @@ def state(uid):
             'resets_at': f'{(ws + timedelta(days=7)).isoformat()}T00:00:00Z',
             'goal': {
                 'played': played, 'target': GOAL_PER_MEMBER * len(people),
-                'hit': str(squad.get('goal_hit_week')) == ws.isoformat(), 'reward_sanity': GOAL_SANITY,
+                'hit': hit, 'reward_sanity': GOAL_SANITY,
+                # Who the squad is still waiting on (every member must play a week)
+                'waiting_on': [] if hit else idle,
+                'members_played': len(people) - len(idle), 'members_total': len(people),
             },
             'members': people,
             'last_mvp': last_mvp,
@@ -406,8 +463,17 @@ def _clean_name(name):
     return name
 
 
-def _clean_emoji(emoji):
-    return emoji if emoji in EMOJIS else EMOJIS[0]
+def _clean_emoji(emoji, strict=False):
+    """
+    A new squad with no (or an unknown) badge gets the default. On rename (strict) an unknown
+    badge is an error: falling back to the default there silently reset the squad's existing
+    badge to 🔥.
+    """
+    if emoji in EMOJIS:
+        return emoji
+    if strict:   # update() only calls this when a badge was actually sent
+        raise SquadError('INVALID_EMOJI', 'Pick one of the squad badges.', 400)
+    return EMOJIS[0]
 
 
 def _new_code():
@@ -430,7 +496,7 @@ def create(uid, name, emoji):
         supabase.table('squad_members').insert({'user_id': uid, 'squad_id': squad['id'], 'role': 'owner', 'joined_at': _now()}).execute()
     except Exception as e:
         supabase.table('squads').delete().eq('id', squad['id']).execute()
-        if '23505' in str(e) or 'duplicate' in str(e).lower():
+        if _is_duplicate(e):
             raise SquadError('ALREADY_IN_SQUAD', 'Leave your squad before starting a new one.', 409)
         raise
     _post(squad['id'], uid, 'created', '🚩', 'started the squad')
@@ -465,7 +531,7 @@ def join(uid, code):
     except Exception as e:
         if 'SQUAD_FULL' in str(e):
             raise SquadError('SQUAD_FULL', f'That squad is full ({MAX_MEMBERS} max).', 409)
-        if '23505' in str(e) or 'duplicate' in str(e).lower():
+        if _is_duplicate(e):
             raise SquadError('ALREADY_IN_SQUAD', 'Leave your squad before joining another.', 409)
         raise
     _post(squad['id'], uid, 'joined', '👋', 'joined the squad')
@@ -499,7 +565,8 @@ def leave(uid):
 
 
 def remove_member(uid, target):
-    uid, target = str(uid), str(target or '')
+    uid = str(uid)
+    target = _uuid(target, 404, 'NOT_FOUND', "They're not in your squad.")
     m = membership(uid)
     if not m or m.get('role') != 'owner':
         raise SquadError('NOT_OWNER', 'Only the squad owner can do that.', 403)
@@ -526,19 +593,24 @@ def update(uid, name=None, emoji=None):
     if name is not None:
         changes['name'] = _clean_name(name)
     if emoji is not None:
-        changes['emoji'] = _clean_emoji(emoji)
+        changes['emoji'] = _clean_emoji(emoji, strict=True)
     if changes:
         supabase.table('squads').update(changes).eq('id', m['squad_id']).execute()
     return state(uid)
 
 
 def invite(uid, target):
-    uid, target = str(uid), str(target or '')
+    uid = str(uid)
+    if not target:
+        raise SquadError('INVALID_TARGET', 'Pick a friend to invite.', 400)
+    target = _uuid(target, 400, 'INVALID_TARGET', 'Pick a friend to invite.')
     m = membership(uid)
     if not m:
         raise SquadError('NOT_IN_SQUAD', 'Start or join a squad first.', 404)
-    if not target or target == uid:
+    if target == uid:
         raise SquadError('INVALID_TARGET', 'Pick a friend to invite.', 400)
+    if target not in _profiles([target]):
+        raise SquadError('NOT_FOUND', "That player doesn't exist.", 404)
     follows = supabase.table('user_follows').select('id').eq('follower_id', uid).eq('following_id', target).limit(1).execute()
     if not follows.data:
         raise SquadError('NOT_FOLLOWING', 'You can only invite people you follow.', 403)
@@ -565,6 +637,7 @@ def react(uid, feed_id, emoji):
     uid = str(uid)
     if emoji not in REACTIONS:
         raise SquadError('INVALID_REACTION', 'Pick one of the reactions.', 400)
+    feed_id = _uuid(feed_id, 404, 'NOT_FOUND', 'That post is gone.')
     m = membership(uid)
     post = supabase.table('squad_feed').select('id, squad_id').eq('id', feed_id).limit(1).execute().data
     if not m or not post or str(post[0]['squad_id']) != str(m['squad_id']):
@@ -572,6 +645,10 @@ def react(uid, feed_id, emoji):
     existing = supabase.table('squad_reactions').select('emoji').eq('feed_id', feed_id).eq('user_id', uid).limit(1).execute().data
     supabase.table('squad_reactions').delete().eq('feed_id', feed_id).eq('user_id', uid).execute()
     if not existing or existing[0]['emoji'] != emoji:
-        supabase.table('squad_reactions').insert({'feed_id': feed_id, 'user_id': uid, 'emoji': emoji, 'created_at': _now()}).execute()
+        try:
+            supabase.table('squad_reactions').insert({'feed_id': feed_id, 'user_id': uid, 'emoji': emoji, 'created_at': _now()}).execute()
+        except Exception as e:
+            if not _is_duplicate(e):   # a double tap: the other request already stored it
+                raise
     summary = _reaction_summary([str(feed_id)], uid).get(str(feed_id), {})
     return {'id': str(feed_id), 'reactions': summary.get('counts', {}), 'my_reaction': summary.get('mine')}

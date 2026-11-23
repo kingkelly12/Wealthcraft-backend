@@ -1,10 +1,8 @@
 from app import db
 from app.models.player_liability import PlayerLiability
-from typing import Optional, List, Dict
+from typing import Dict
 import uuid
-from datetime import datetime, date
 from decimal import Decimal
-from sqlalchemy import func
 
 class LiabilityService:
     # Depreciation rates
@@ -63,57 +61,6 @@ class LiabilityService:
             'current_value': float(new_value),
             'depreciation_amount': float(depreciation_amount),
             'rate_used': float(rate)
-        }
-    
-    @staticmethod
-    def apply_monthly_depreciation(player_id: Optional[uuid.UUID] = None) -> Dict:
-        """
-        Apply monthly depreciation to all active liabilities.
-        If player_id is provided, only depreciate that player's liabilities.
-        Returns count of updated liabilities and total depreciation amount.
-        """
-        query = PlayerLiability.query.filter_by(is_active=True)
-        
-        if player_id:
-            query = query.filter_by(player_id=player_id)
-        
-        liabilities = query.all()
-        # Players on game time age their items on game months instead.
-        try:
-            from jobs.monthly_loan_deductions import _clocked_user_ids
-            clocked = set(_clocked_user_ids())
-        except Exception:
-            clocked = set()
-        if not player_id:
-            liabilities = [l for l in liabilities if str(l.player_id) not in clocked]
-        updated_count = 0
-        total_depreciation = Decimal('0')
-        
-        today = date.today()
-        
-        for liability in liabilities:
-            # Initialize current_value if not set
-            if liability.current_value is None:
-                liability.current_value = liability.purchase_price
-            
-            # Calculate depreciation
-            result = LiabilityService.calculate_depreciation(liability)
-            
-            if result['depreciation_amount'] > 0:
-                # Update liability
-                liability.current_value = Decimal(str(result['current_value']))
-                liability.months_owned = (liability.months_owned or 0) + 1
-                liability.last_depreciation_date = today
-                
-                total_depreciation += Decimal(str(result['depreciation_amount']))
-                updated_count += 1
-        
-        db.session.commit()
-        
-        return {
-            'updated_count': updated_count,
-            'total_depreciation': float(total_depreciation),
-            'date': today.isoformat()
         }
     
     @staticmethod
@@ -188,39 +135,4 @@ class LiabilityService:
             'next_month_depreciation': next_month_calc['depreciation_amount'],
             'months_owned': liability.months_owned or 0,
             'is_active': liability.is_active
-        }
-    
-    @staticmethod
-    def backfill_existing_liabilities() -> Dict:
-        """
-        One-time function to backfill existing liabilities with initial values.
-        Sets current_value = purchase_price and calculates months_owned from purchase_date.
-        """
-        liabilities = PlayerLiability.query.filter(
-            PlayerLiability.current_value.is_(None)
-        ).all()
-        
-        updated_count = 0
-        today = date.today()
-        
-        for liability in liabilities:
-            # Set current_value to purchase_price
-            liability.current_value = liability.purchase_price
-            
-            # Calculate months_owned from purchase_date
-            if liability.purchase_date:
-                purchase_date = liability.purchase_date.date() if hasattr(liability.purchase_date, 'date') else liability.purchase_date
-                months_diff = (today.year - purchase_date.year) * 12 + (today.month - purchase_date.month)
-                liability.months_owned = max(0, months_diff)
-            else:
-                liability.months_owned = 0
-            
-            liability.last_depreciation_date = today
-            updated_count += 1
-        
-        db.session.commit()
-        
-        return {
-            'backfilled_count': updated_count,
-            'date': today.isoformat()
         }

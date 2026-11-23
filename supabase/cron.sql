@@ -36,18 +36,22 @@ $$;
 revoke execute on function public.call_backend_cron(text) from public, anon, authenticated;
 
 select cron.schedule('mentor-analysis',  '0 6 * * *',   $$select public.call_backend_cron('/api/cron/mentor-analysis/')$$);
-select cron.schedule('random-events',    '0 9 * * *',   $$select public.call_backend_cron('/api/cron/random-events/')$$);
+select cron.schedule('event-deadlines',   '0 9 * * *',   $$select public.call_backend_cron('/api/cron/event-deadlines/')$$);
 select cron.schedule('inactive-users',   '0 10 * * *',  $$select public.call_backend_cron('/api/cron/inactive-users-monitor/')$$);
 -- At most one "your week is ready" push per player per day, from a cast member.
 select cron.schedule('week-ready',       '0 16 * * *',  $$select public.call_backend_cron('/api/cron/week-ready/')$$);
 select cron.schedule('mission-deadlines', '30 9 * * *',  $$select public.call_backend_cron('/api/cron/mission-deadlines/')$$);
 select cron.schedule('push-receipts',    '20 * * * *',  $$select public.call_backend_cron('/api/cron/push-receipts/')$$);
-select cron.schedule('market-monitor',   '0 */4 * * *', $$select public.call_backend_cron('/api/cron/market-monitor/')$$);
-select cron.schedule('depreciation',     '0 2 1 * *',   $$select public.call_backend_cron('/api/cron/depreciation/')$$);
-select cron.schedule('appreciation',     '0 3 1 * *',   $$select public.call_backend_cron('/api/cron/appreciation/')$$);
--- monthly-payday only covers players still on calendar time. Players on game
--- time (This Week, table player_game_clock) get their month every 4th game week.
-select cron.schedule('monthly-payday',   '0 4 1 * *',   $$select public.call_backend_cron('/api/cron/loan-deductions/')$$);
+-- Everyone is on game time: markets, paydays, depreciation and growth all run on a player's
+-- game weeks (app/game), so there are no calendar jobs for them. Databases set up before
+-- this change may still have those jobs: remove them (and the old random-events job).
+do $$
+declare j text;
+begin
+  foreach j in array array['market-monitor', 'depreciation', 'appreciation', 'monthly-payday', 'random-events'] loop
+    begin perform cron.unschedule(j); exception when others then null; end;
+  end loop;
+end $$;
 
 -- Inspect:   select * from cron.job;   select * from cron.job_run_details order by start_time desc limit 20;
 -- Remove:    select cron.unschedule('monthly-payday');

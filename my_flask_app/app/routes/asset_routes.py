@@ -8,10 +8,7 @@ from app import supabase
 from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
 import uuid
-from datetime import datetime
 from app.services.push_notification_service import ExpoPushService
-from app.models.profile import Profile
-from app import db
 import logging
 from app.services.profile_service import ProfileService
 
@@ -388,7 +385,8 @@ def sell_asset(current_user_id: str, asset_id: str = None):
         # Unit sale price: live market price for volatile assets, appreciated value otherwise.
         if asset.get('asset_type') in VOLATILE_TYPES:
             from app.game import market as game_market
-            listing = supabase.table('assets').select('*').eq('name', asset.get('name')).limit(1).execute()
+            listing = supabase.table('assets').select('*').eq('id', asset['asset_id']).limit(1).execute() if asset.get('asset_id') \
+                else supabase.table('assets').select('*').eq('name', asset.get('name')).limit(1).execute()
             unit_price = game_market.price_of(current_user_id, listing.data[0]) if listing.data else cost_basis_unit
         else:
             unit_price = Decimal(str(asset.get('value') or 0)) / held_qty

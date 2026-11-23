@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 WEEKS_PER_YEAR = 52
 DEFAULT_START_AGE = 18
 MAX_AGE = 30
+STUDENT_LOAN_RATE = 5          # % a year
 MIN_WEEKS_BEFORE_RETIRING = 4   # can't reroll a life on day one
 
 # --- backgrounds -------------------------------------------------------------------
@@ -36,7 +37,7 @@ BACKGROUNDS = {
     'student_loans': {
         'name': 'Student Loan Era', 'emoji': '📚',
         'tagline': 'Degree: loading. Debt: loaded.',
-        'description': 'You start with some cash and a $24,000 student loan that wants $250 every month.',
+        'description': 'You start with some cash and a $24,000 student loan at 5%. It wants $250 every payday, and about $30,000 by the time it is gone.',
         'cash': 3000, 'debt': 24000, 'debt_payment': 250, 'allowance': 0, 'sanity': 70, 'start_age': 18,
         'difficulty': 'Hard',
     },
@@ -191,13 +192,20 @@ def _has_progress(uid):
     return False
 
 
+def _valid_uuid(value):
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
 def avatars_for(user_ids):
     """
     Public look of other players: {user_id: {'avatar', 'age', 'background_emoji'}}.
     Players without a current life are left out (the app falls back to their photo).
     """
-    ids = list({str(i) for i in user_ids if i})[:200]
-    if not ids:
+    ids = list(dict.fromkeys(i for i in (_valid_uuid(x) for x in user_ids) if i))[:200]
+    if not ids:   # nothing valid to ask for: Postgres would answer a malformed id with a 500
         return {}
     lives = supabase.table('player_lives').select('user_id, avatar, start_age, background') \
         .in_('user_id', ids).eq('is_current', True).execute().data or []
@@ -251,7 +259,9 @@ def state(user_id):
     past = supabase.table('player_lives').select('life_number, background, ending, summary, ended_at') \
         .eq('user_id', uid).eq('is_current', False).order('life_number', desc=True).limit(20).execute().data or []
     from app.game import legacy
-    got = legacy.earned([r['summary'] for r in sorted(past, key=lambda r: r['life_number']) if r.get('summary')])
+    # Every finished life counts, not just the 20 listed below: begin_life uses them all, so the
+    # level shown here used to drop once you'd played more than 20 lives.
+    got = legacy.earned([r['summary'] for r in legacy.finished_lives(uid)])
     unlocked = legacy.unlocked_backgrounds(got)
     unlockables = []
     for k, b in UNLOCKABLE_BACKGROUNDS.items():
@@ -277,27 +287,28 @@ def _snapshot(uid):
     prof = supabase.table('profiles').select('username, net_worth, monthly_income, sanity, credit_score') \
         .eq('user_id', uid).limit(1).execute().data
     profile = prof[0] if prof else {}
-    debts = supabase.table('liabilities').select('remaining_balance').eq('user_id', uid).gt('remaining_balance', 0).execute().data or []
+    debts = supabase.table('liabilities').select('*').eq('user_id', uid).gt('remaining_balance', 0).execute().data or []
     assets = supabase.table('user_assets').select('asset_type, value').eq('user_id', uid).execute().data or []
     jobs = supabase.table('jobs').select('title, level, kind').eq('user_id', uid).eq('is_current', True).execute().data or []
     job = [j for j in jobs if (j.get('kind') or 'job') != 'gig'] or jobs
     rental = supabase.table('player_rentals').select('id').eq('player_id', uid).eq('is_active', True).limit(1).execute().data
     homes = supabase.table('player_homes').select('lives_in').eq('player_id', uid).eq('is_active', True).execute().data or []
     owned = supabase.table('player_liabilities').select('*, liability_items(category)').eq('player_id', uid).eq('is_active', True).execute().data or []
-    from app.game import economy
+    from app.game import economy, roommates
     return {
         'net_worth': float(profile.get('net_worth') or 0),
         'income': float(profile.get('monthly_income') or 0),
         'sanity': int(profile.get('sanity') if profile.get('sanity') is not None else 100),
         'credit_score': int(profile.get('credit_score') or 650),
         'cash': float(BalanceService.get_current_balance(uid)),
-        'debt': float(sum(Decimal(str(d.get('remaining_balance') or 0)) for d in debts)),
+        'debt': float(sum(economy.payoff_amount(d) for d in debts)),
         'assets_value': float(sum(Decimal(str(a.get('value') or 0)) for a in assets)),
         'owns_business': any((a.get('asset_type') or '').lower() == 'business' for a in assets),
         'job': job[0]['title'] if job else None,
         'job_level': (job[0].get('level') or 'entry') if job else None,
-        # A home: renting, or living in one you own.
-        'has_home': bool(rental) or any(h.get('lives_in') for h in homes),
+        # A home: renting, living in one you own, or sharing a friend's place (a roommate has no
+        # rental of their own, so they used to end every life as "Moved back home").
+        'has_home': bool(rental) or any(h.get('lives_in') for h in homes) or bool(roommates.active_for(uid)),
         'owns_home': bool(homes),
         'owns_aircraft': any((economy.item_of(p).get('category') or '').lower() == 'aircraft' for p in owned),
     }
@@ -352,6 +363,53 @@ def _week_stats(uid):
     }
 
 
+_P2P_OPEN = ['requested', 'pending', 'active']
+
+
+def _p2p_loans(uid, statuses):
+    """The player's P2P loans (either side) in these statuses."""
+    seen, out = set(), []
+    for col in ('lender_id', 'borrower_id'):
+        for loan in supabase.table('p2p_loans').select('*').eq(col, uid).in_('status', statuses).execute().data or []:
+            if loan['id'] not in seen:
+                seen.add(loan['id'])
+                out.append(loan)
+    return out
+
+
+def _write_off_p2p(uid):
+    """
+    Close the player's P2P loans when their life is reset.
+    * open offers and requests are cancelled: their escrowed cash disappears in the reset,
+      so someone accepting one later would be handed money that doesn't exist;
+    * active loans are written off ('defaulted'). The borrower's debt on a loan whose lender's
+      life is over is forgiven, and nothing is repaid into the lender's NEW life (which would
+      carry old-life money across).
+    """
+    loans = _p2p_loans(uid, _P2P_OPEN)
+    if not loans:
+        return
+    who = (supabase.table('profiles').select('username').eq('user_id', uid).limit(1).execute().data or [{}])[0].get('username') or 'A friend'
+    for loan in loans:
+        active = loan['status'] == 'active'
+        claimed = supabase.table('p2p_loans').update({'status': 'defaulted' if active else 'cancelled'}) \
+            .eq('id', loan['id']).in_('status', _P2P_OPEN).execute()
+        if not claimed.data:
+            continue
+        i_lend = str(loan.get('lender_id')) == uid
+        if active and i_lend:
+            supabase.table('liabilities').delete().eq('p2p_loan_id', loan['id']).execute()
+        other = loan.get('borrower_id') if i_lend else loan.get('lender_id')
+        if other:
+            message = ((f"{who}'s life ended, so what you owed them is forgiven." if i_lend else
+                        f"{who}'s life ended, so the loan they owed you was written off.") if active else
+                       f"{who} started a new life, so their loan {'offer' if i_lend else 'request'} was cancelled.")
+            supabase.table('notifications').insert({
+                'user_id': str(other), 'type': 'social', 'title': '🧾 A P2P loan was closed',
+                'message': message, 'read': False,
+            }).execute()
+
+
 class LifeError(Exception):
     def __init__(self, code, message, status=400):
         super().__init__(message)
@@ -377,6 +435,11 @@ def end_life(user_id):
         reason = 'started_over'
         if weeks_lived < MIN_WEEKS_BEFORE_RETIRING:
             raise LifeError('TOO_SOON', f'Live at least {MIN_WEEKS_BEFORE_RETIRING} weeks before starting over.', 400)
+        # Burnout and age 30 are forced and write loans off (see _write_off_p2p). Choosing to start over
+        # is not: settle first, while you can still play. Ending first and failing at begin_life left the
+        # player frozen between lives, unable to earn the money to settle.
+        if _p2p_loans(uid, ['pending', 'active']):
+            raise LifeError('P2P_OPEN', 'Settle or cancel your P2P loans before starting over. An active loan has to be repaid first.', 409)
 
     ending = pick_ending(snap, age, reason)
     info = background_info(life['background']) or ORIGINAL
@@ -416,19 +479,23 @@ def end_life(user_id):
 
 # --- beginning ----------------------------------------------------------------------
 
-def _reset_run(uid, bg, legacy_bonus=0):
-    """Wipe the run (money, job, home, assets, loans, missions, clock). Keep the person."""
+def _reset_run(uid, bg, legacy_bonus=0, forced=False):
+    """
+    Wipe the run (money, job, home, assets, loans, missions, clock). Keep the person.
+    `forced`: the previous life ended by burnout or age 30, so open P2P loans are written off instead
+    of blocking (the player is frozen and can't settle them).
+    """
     now = datetime.now(timezone.utc).isoformat()
 
-    # P2P loans involve another player's money: they must be settled first.
-    for col in ('borrower_id', 'lender_id'):
-        open_loans = supabase.table('p2p_loans').select('id').eq(col, uid).in_('status', ['pending', 'active']).limit(1).execute()
-        if open_loans.data:
-            raise LifeError('P2P_OPEN', 'Settle or cancel your P2P loans before starting a new life.', 409)
+    # P2P loans involve another player's money: a voluntary restart must settle them first.
+    if not forced and _p2p_loans(uid, ['pending', 'active']):
+        raise LifeError('P2P_OPEN', 'Settle or cancel your P2P loans before starting a new life.', 409)
+    _write_off_p2p(uid)
 
-    supabase.table('jobs').update({'is_current': False}).eq('user_id', uid).eq('is_current', True).execute()
-    from app.game import careers, market
-    careers.reset_for_new_life(uid)
+    # Past jobs go too: they kept "months worked" history, and any listing you'd held before
+    # never paid its signing bonus again in the next life.
+    supabase.table('jobs').delete().eq('user_id', uid).execute()
+    from app.game import market
     market.reset_for_new_life(uid)
     supabase.table('player_rentals').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('player_liabilities').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
@@ -437,7 +504,10 @@ def _reset_run(uid, bg, legacy_bonus=0):
     homes.clear_for_new_life(uid)
     supabase.table('liabilities').delete().eq('user_id', uid).execute()
     supabase.table('bank_loans').update({'status': 'completed'}).eq('borrower_id', uid).eq('status', 'active').execute()
-    supabase.table('user_courses').delete().eq('user_id', uid).is_('completed_at', 'null').execute()
+    # All courses: a completed one blocked re-enrolling for good, yet its salary boost was already gone.
+    supabase.table('user_courses').delete().eq('user_id', uid).execute()
+    # An unanswered event from the old life would be dealt in week 1 of the new one.
+    supabase.table('user_life_events').delete().eq('user_id', uid).is_('choice_id', 'null').execute()
     supabase.table('player_mission_progress').update({'is_active': False, 'abandoned_at': now}) \
         .eq('player_id', uid).eq('is_active', True).execute()
 
@@ -463,10 +533,14 @@ def _reset_run(uid, bg, legacy_bonus=0):
         BalanceService.subtract_balance(uid, current - target, f"New life: {bg['name']}", category='new_life')
 
     if bg.get('debt'):
+        # 5% a year on what is still owed, baked into the balance like a bank loan's interest.
+        from app.game import economy
+        loan = economy.amortised_loan(bg['debt'], STUDENT_LOAN_RATE, bg.get('debt_payment', 0))
         supabase.table('liabilities').insert({
             'user_id': uid, 'name': 'Student loan', 'liability_type': 'bank_loan',
-            'amount': bg['debt'], 'interest_rate': 5, 'monthly_payment': bg.get('debt_payment', 0),
-            'remaining_balance': bg['debt'], 'remaining_term': int(bg['debt'] / max(1, bg.get('debt_payment', 1))),
+            'amount': bg['debt'], 'interest_rate': STUDENT_LOAN_RATE, 'monthly_payment': bg.get('debt_payment', 0),
+            'total_interest': float(loan['interest']), 'remaining_balance': float(loan['total']),
+            'remaining_term': loan['term'],
         }).execute()
 
     _head_start(uid, bg)
@@ -476,6 +550,7 @@ def _reset_run(uid, bg, legacy_bonus=0):
         'monthly_income': bg.get('allowance', 0),
         'sanity': bg['sanity'],
         'credit_score': 650,
+        'trading_profits': 0,
         'last_free_recovery_at': None,
     }).eq('user_id', uid).execute()
 
@@ -538,7 +613,10 @@ def begin_life(user_id, background, avatar):
         if background in UNLOCKABLE_BACKGROUNDS and background not in legacy.unlocked_backgrounds(got):
             req = legacy.achievement(UNLOCKABLE_BACKGROUNDS[background]['requires'])
             raise LifeError('LOCKED_BACKGROUND', f"Unlock this by earning {req['title']}: {req['how']}", 403)
-        _reset_run(uid, bg, legacy.bonus_cash(got))
+        previous = supabase.table('player_lives').select('summary').eq('user_id', uid).eq('is_current', False) \
+            .order('life_number', desc=True).limit(1).execute().data or []
+        forced = bool(previous) and ((previous[0].get('summary') or {}).get('reason') in ('burnout', 'max_age'))
+        _reset_run(uid, bg, legacy.bonus_cash(got), forced=forced)
         start_age = bg['start_age']
 
     try:

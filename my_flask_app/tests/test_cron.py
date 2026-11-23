@@ -3,14 +3,14 @@ import pytest
 
 from tests.conftest import TEST_CRON_SECRET
 
-URL = '/api/cron/loan-deductions/'
+URL = '/api/cron/event-deadlines/'
 
 
 @pytest.fixture
 def job_calls(monkeypatch):
     from app.routes import cron_routes
     calls = []
-    monkeypatch.setattr(cron_routes, 'process_monthly_deductions', lambda: calls.append(1) or {'processed': 0})
+    monkeypatch.setattr(cron_routes, 'run_event_deadlines', lambda: calls.append(1) or {'processed': 0})
     return calls
 
 

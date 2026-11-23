@@ -364,7 +364,7 @@ on conflict (name) do update set
   service_cost = excluded.service_cost, service_every_months = excluded.service_every_months,
   lease_income = excluded.lease_income, lease_label = excluded.lease_label, lease_wear = excluded.lease_wear;
 
--- --- Bank loans: Kenyan-style rates, much bigger amounts ------------------------------
+-- --- Bank loans: high rates (13-24% a year), much bigger amounts ------------------------------
 -- interest_rate is a FRACTION per year; payments are amortised.
 insert into public.bank_loans (borrower_id, type, amount, interest_rate, term, monthly_payment, total_interest, credit_required, status, collateral) values
   (null, 'Quick Cash',         1000.00,   0.2400, 3,   346.75,  40.26,     550, 'available', 'none'),
@@ -373,9 +373,10 @@ insert into public.bank_loans (borrower_id, type, amount, interest_rate, term, m
   (null, 'Education Loan',     15000.00,  0.1400, 36,  512.66,  3455.92,   640, 'available', 'none'),
   (null, 'Debt Consolidation', 20000.00,  0.1700, 36,  713.05,  5669.96,   650, 'available', 'none'),
   (null, 'Car Loan',           30000.00,  0.1600, 48,  850.21,  10810.00,  660, 'available', 'vehicle'),
-  (null, 'Business Starter',   75000.00,  0.1700, 60,  1863.94, 36836.59,  690, 'available', 'business_assets'),
-  (null, 'Mortgage',           250000.00, 0.1300, 180, 3163.11, 319358.98, 720, 'available', 'property')
+  (null, 'Business Starter',   75000.00,  0.1700, 60,  1863.94, 36836.59,  690, 'available', 'business_assets')
 on conflict (type) where borrower_id is null do update set
   amount = excluded.amount, interest_rate = excluded.interest_rate, term = excluded.term,
   monthly_payment = excluded.monthly_payment, total_interest = excluded.total_interest,
   credit_required = excluded.credit_required, collateral = excluded.collateral;
+-- Mortgages come with buying a home (homes.py), not from this list.
+delete from public.bank_loans where type = 'Mortgage' and borrower_id is null;

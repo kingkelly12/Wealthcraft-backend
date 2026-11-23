@@ -1,7 +1,7 @@
 """
 Life event rules shared by the weekly deck (week_service), the event screen
 (routes/life_event_routes) and the daily auto-resolve job
-(jobs/trigger_random_events). Keep effects in ONE place so the paths can't
+(jobs/event_deadlines). Keep effects in ONE place so the paths can't
 drift apart.
 
 A choice's effect is exactly what is stored on that choice:

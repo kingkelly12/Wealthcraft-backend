@@ -79,10 +79,3 @@ def test_the_job_board_says_what_you_can_apply_for(client, market, wallets):
     titles = [j['title'] for j in data['market']]
     assert titles.index('Bank Teller') < titles.index('Junior Accountant') < titles.index('Chief Financial Officer')
     assert titles[-1] == 'Dog Walker'                               # gigs last
-
-
-def test_experience_resets_with_a_new_life(market):
-    uid, _ = _player(market)
-    market.rows('jobs').append({'user_id': uid, 'industry': 'Finance', 'kind': 'job', 'months_worked': 30})
-    careers.reset_for_new_life(uid)
-    assert careers.experience(uid) == {}

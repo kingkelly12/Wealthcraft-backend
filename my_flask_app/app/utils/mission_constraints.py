@@ -112,8 +112,24 @@ def emotion_sanity_delta(row: Dict) -> int:
     return happiness + int(motivation / 2) - stress
 
 
+def life_started_at(player_id: str) -> Optional[str]:
+    """
+    When the player's CURRENT life began. A new life is a fresh run: missions completed, and decision
+    rewards taken, in a previous life belong to that life. None for a player's first ('original')
+    life, which carries their pre-lives history, or when they have no life yet.
+    """
+    rows = supabase.table('player_lives').select('started_at, background') \
+        .eq('user_id', str(player_id)).eq('is_current', True).limit(1).execute().data or []
+    if not rows or rows[0].get('background') == 'original':
+        return None
+    return rows[0].get('started_at')
+
+
 def earlier_runs(player_id: str, mission_id: str, current_run_id: str) -> list:
-    """Ids of the player's previous (abandoned/failed) runs of the same mission."""
-    rows = supabase.table('player_mission_progress').select('id') \
-        .eq('player_id', str(player_id)).eq('mission_id', str(mission_id)).execute().data or []
-    return [r['id'] for r in rows if str(r['id']) != str(current_run_id)]
+    """Ids of the player's previous (abandoned/failed) runs of the same mission IN THIS LIFE."""
+    query = supabase.table('player_mission_progress').select('id') \
+        .eq('player_id', str(player_id)).eq('mission_id', str(mission_id))
+    started = life_started_at(player_id)
+    if started:
+        query = query.gte('started_at', started)
+    return [r['id'] for r in query.execute().data or [] if str(r['id']) != str(current_run_id)]

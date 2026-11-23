@@ -265,7 +265,8 @@ create table public.player_homes (
   months_held    integer not null default 0,
   is_active      boolean not null default true,
   purchased_at   timestamptz not null default now(),
-  sold_at        timestamptz
+  sold_at        timestamptz,
+  repossessed_at timestamptz                    -- the bank took it after missed mortgage payments
 );
 create index player_homes_player_idx on public.player_homes (player_id) where is_active;
 -- You live in at most one home you own.
@@ -354,6 +355,9 @@ create table public.liabilities (
   interest_rate     numeric(6,2) not null default 0, -- percent
   monthly_payment   numeric(15,2) not null default 0,
   remaining_balance numeric(15,2),                   -- principal + interest still owed
+  total_interest    numeric(15,2) not null default 0, -- interest in the original balance (refunded in proportion on early payoff)
+  player_home_id    uuid references public.player_homes(id) on delete set null, -- a mortgage: the home it is secured on
+  missed_streak     integer not null default 0,      -- paydays missed in a row; a mortgage is repossessed after 3
   remaining_term    integer,
   due_date          timestamptz,
   p2p_loan_id       uuid references public.p2p_loans(id) on delete set null,
@@ -927,12 +931,21 @@ create table public.squad_member_weeks (
   user_id          uuid not null references public.profiles(user_id) on delete cascade,
   week_start       date not null,
   start_net_worth  numeric(14,2) not null default 0,
-  end_net_worth    numeric(14,2),                 -- set when the week is settled
+  end_net_worth    numeric(14,2),                 -- net worth at their last finished game week of the week (MVP is judged on it)
   weeks_played     integer not null default 0,
-  rewarded         boolean not null default false,  -- got the squad-goal reward this week
   primary key (squad_id, user_id, week_start)
 );
 create index squad_member_weeks_user_idx on public.squad_member_weeks (user_id, week_start);
+
+-- Squad-goal payouts, once per player per calendar week. No FK to squads: it must outlive an
+-- emptied (deleted) squad, or leave -> re-create -> replay pays out again.
+create table public.squad_rewards (
+  user_id    uuid not null references public.profiles(user_id) on delete cascade,
+  week_start date not null,
+  squad_id   uuid,
+  created_at timestamptz not null default now(),
+  primary key (user_id, week_start)
+);
 
 create table public.squad_feed (
   id          uuid primary key default gen_random_uuid(),
@@ -999,6 +1012,9 @@ begin
 
   insert into public.transactions (user_id, type, category, amount, description)
   values (new.id, 'income', 'starting_balance', c_starting_balance, 'Starting cash');
+
+  -- Every player is on game time from the start (week 1, a day's weeks ready to play).
+  insert into public.player_game_clock (user_id) values (new.id) on conflict do nothing;
 
   return new;
 end $$;

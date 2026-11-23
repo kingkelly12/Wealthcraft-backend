@@ -198,3 +198,53 @@ def test_week_ready_nudge_is_capped_and_relevant(player, fake_supabase, user_id,
     assert sent[0]['data'] == {'screen': '/week'}
     sent.clear()
     assert job.run_week_ready_nudge()['queued'] == 0          # already nudged today
+
+
+# --- housing and texts: loose ends ------------------------------------------------------------
+
+def _roommates_active(fake, holder, mate):
+    fake.rows('roommates').append({'id': 'rm9', 'leaseholder_id': holder, 'roommate_id': mate, 'status': 'active', 'rent_share': 0.5})
+
+
+def test_the_leaseholder_moving_out_ends_the_roommate_arrangement(client, auth_headers, player, fake_supabase, user_id):
+    friend = _friend(fake_supabase)
+    rid = _rent(fake_supabase, user_id)
+    _roommates_active(fake_supabase, user_id, friend)
+    fake_supabase.rows('roommates').append({'id': 'rm10', 'leaseholder_id': user_id, 'roommate_id': 'someone', 'status': 'pending', 'rent_share': 0.5})
+    res = client.post('/api/rentals/moveout/', json={}, headers=auth_headers)
+    assert res.status_code == 200
+    assert roommates.active_for(friend) is None and roommates.active_for(user_id) is None
+    assert {r['status'] for r in fake_supabase.rows('roommates')} <= {'ended', 'declined'}
+
+
+def test_a_roommate_who_rents_their_own_place_stops_sharing(client, auth_headers, player, fake_supabase, user_id, balance):
+    friend = _friend(fake_supabase)
+    _rent(fake_supabase, friend)
+    _roommates_active(fake_supabase, friend, user_id)
+    fake_supabase.rows('rental_properties').append({'id': '5b1f0d3e-0000-4000-8000-000000000001', 'name': 'Own flat', 'monthly_rent': 400, 'property_type': 'studio'})
+    res = client.post('/api/rentals/rent/', json={'property_id': '5b1f0d3e-0000-4000-8000-000000000001'}, headers=auth_headers)
+    assert res.status_code == 200, res.get_json()
+    assert roommates.active_for(user_id) is None
+
+
+def test_moving_out_survives_a_rental_whose_property_is_gone(client, auth_headers, player, fake_supabase, user_id):
+    fake_supabase.rows('player_rentals').append({'id': 'r-gone', 'player_id': user_id, 'monthly_rent': 500, 'is_active': True, 'rental_properties': None})
+    assert client.post('/api/rentals/moveout/', json={}, headers=auth_headers).status_code == 200
+
+
+def test_unread_badge_ignores_texts_from_people_no_longer_in_your_life(player, fake_supabase, user_id):
+    cast.send(user_id, 'roommate', 'band practice friday?')           # Sam, but you don't rent
+    cast.send(user_id, 'mom', 'call me')
+    assert cast.unread_count(user_id) == 1                            # only Mom's thread can be opened
+
+
+def test_a_failed_payment_leaves_the_reply_open(client, auth_headers, player, fake_supabase, user_id, balance, monkeypatch):
+    msg = cast.send(user_id, 'bestie', 'drinks?', replies=[cast._opt('a', 'Sure', 'yay', rel=3, cash=-15)])
+    from app.services.balance_service import BalanceService
+
+    def boom(*a, **k):
+        raise RuntimeError('db down')
+    monkeypatch.setattr(BalanceService, 'subtract_balance', staticmethod(boom))
+    assert client.post(f"/api/texts/messages/{msg['id']}/reply/", json={'reply_id': 'a'}, headers=auth_headers).status_code == 500
+    assert next(m for m in fake_supabase.rows('cast_messages') if m['id'] == msg['id'])['replied_with'] is None
+    assert cast.relationships(user_id)['bestie'] == 50

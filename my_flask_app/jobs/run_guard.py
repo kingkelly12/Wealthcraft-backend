@@ -19,9 +19,5 @@ def claim_run(job_name: str, period: str) -> Optional[str]:
         raise
 
 
-def claim_monthly_run(job_name: str) -> Optional[str]:
-    return claim_run(job_name, datetime.utcnow().strftime('%Y-%m'))
-
-
 def claim_daily_run(job_name: str) -> Optional[str]:
     return claim_run(job_name, datetime.utcnow().strftime('%Y-%m-%d'))

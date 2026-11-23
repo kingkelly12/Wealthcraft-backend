@@ -80,9 +80,12 @@ class ProfileService:
 
             # 4. Debt actually owed (bank + P2P loans). The old code ignored loans,
             #    so borrowing raised net worth and topped the leaderboard.
-            debt_res = supabase.table('liabilities').select('remaining_balance') \
+            #    What counts is what clearing each loan costs today: the interest not yet earned is
+            #    included in the balance but isn't owed (a mortgage would otherwise wipe out its home's value).
+            from app.game import economy
+            debt_res = supabase.table('liabilities').select('*') \
                 .eq('user_id', str(user_id)).gt('remaining_balance', 0).execute()
-            debt_total = sum(float(d.get('remaining_balance') or 0) for d in (debt_res.data or []))
+            debt_total = sum(float(economy.payoff_amount(d)) for d in (debt_res.data or []))
 
             # 5. Homes you own, at their current value.
             from app.game import homes

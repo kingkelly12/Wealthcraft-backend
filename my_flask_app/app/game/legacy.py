@@ -15,6 +15,10 @@ from app import supabase
 
 LEGACY_CASH_PER = 200
 
+# A life must last this long (a game year) to earn anything but "One Down". Otherwise a life ended after
+# a few weeks, from a background that starts with cash or no debt, could collect achievements for free.
+MIN_WEEKS_FOR_ACHIEVEMENTS = 52
+
 # Starting backgrounds everyone has; finishing a life with each earns "Tried Everything".
 BASE_BACKGROUNDS = ('scholarship', 'student_loans', 'rich_parents', 'moved_out_17')
 
@@ -53,15 +57,23 @@ def finished_lives(uid) -> list:
     return [r for r in rows if r.get('summary')]
 
 
+def _full_life(s) -> bool:
+    """Long enough to count (summaries from before weeks were recorded do)."""
+    weeks = s.get('weeks_lived')
+    return weeks is None or weeks >= MIN_WEEKS_FOR_ACHIEVEMENTS
+
+
 def earned(summaries) -> dict:
     """{achievement key: life number it was first earned in}."""
     out = {}
     backgrounds = set()
     for s in summaries:
         n = s.get('life_number')
-        backgrounds.add((s.get('background') or {}).get('key'))
+        counts = _full_life(s)
+        if counts:
+            backgrounds.add((s.get('background') or {}).get('key'))
         for key, _, _, _, test in ACHIEVEMENTS:
-            if key not in out and test is not None and test(s):
+            if key not in out and test is not None and (counts or key == 'first_life') and test(s):
                 out[key] = n
         if 'tried_everything' not in out and set(BASE_BACKGROUNDS) <= backgrounds:
             out['tried_everything'] = n
@@ -114,6 +126,7 @@ def view(uid) -> dict:
         'level': len(got),
         'bonus_cash': bonus_cash(got),
         'cash_per_achievement': LEGACY_CASH_PER,
+        'min_weeks_for_achievements': MIN_WEEKS_FOR_ACHIEVEMENTS,
         'achievements': [{**achievement(k), 'earned': k in got, 'earned_in_life': got.get(k)} for k in ACHIEVEMENT_KEYS],
         'endings': [{'key': k, 'emoji': e, 'title': t.replace(' at {age}', '').replace(' by {age}', ''), 'line': line,
                      'collected': k in ending_counts, 'times': ending_counts.get(k, 0)}

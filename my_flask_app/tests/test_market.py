@@ -139,3 +139,33 @@ def test_a_new_life_gets_a_fresh_market(exchange):
     market.advance(uid, 1)
     market.reset_for_new_life(uid)
     assert not [r for r in exchange.rows('player_market_prices') if r['user_id'] == uid]
+
+
+def test_selling_uses_the_holdings_own_asset_not_a_name_lookalike(client, exchange, wallets, monkeypatch):
+    uid, h = _player(exchange)
+    wallets[uid] = Decimal('0')
+    exchange.rows('assets').insert(0, {**VTI, 'id': 'a-vti2', 'price': 999})      # same name, different asset
+    exchange.rows('player_market_prices').append({'user_id': uid, 'asset_id': 'a-vti', 'price': 300, 'prev_price': 250, 'week': 1})
+    exchange.rows('user_assets').append({'id': 'h9', 'user_id': uid, 'asset_id': 'a-vti', 'name': VTI['name'],
+                                         'asset_type': 'stocks', 'quantity': 1, 'value': 300, 'purchase_price': 250})
+    from app.services.profile_service import ProfileService
+    monkeypatch.setattr(ProfileService, 'update_trading_profits', staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(ProfileService, 'recalculate_monthly_income', staticmethod(lambda *a, **k: 0))
+    sold = client.post('/api/assets/sell/h9/', json={}, headers=h).get_json()
+    assert sold['success'] and wallets[uid] == Decimal('300')
+
+
+def test_a_failed_news_write_is_logged_not_swallowed(exchange, monkeypatch, caplog):
+    uid, _ = _player(exchange)
+    monkeypatch.setattr(market, 'roll_events', lambda rng: [{'key': 'stock_crash', 'category': 'stocks', 'shock_pct': -20.0,
+                                                             'emoji': '📉', 'title': 'Crash', 'body': 'x'}])
+    real = market.supabase.table
+
+    def table(name):
+        if name == 'player_market_events':
+            raise RuntimeError('db down')
+        return real(name)
+    monkeypatch.setattr(market.supabase, 'table', table)
+    with caplog.at_level('WARNING'):
+        week = market.advance(uid, 2)
+    assert week['events'] and 'db down' in caplog.text

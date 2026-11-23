@@ -367,3 +367,171 @@ def test_showcase_lists_flex_items_most_valuable_first():
     assert s['items'][3]['lease_label'] is None and s['items'][3]['value'] == 7650.0
     assert s['counts'] == {'cars': 1, 'motorbikes': 1, 'boats': 1, 'aircraft': 1}
     assert s['total_value'] == 4200000 + 18000 + 16000 + 7650
+
+
+def test_owning_several_properties_doesnt_cap_their_growth_at_one_unit():
+    """value is for the whole holding, purchase_price per unit: the 2x ceiling must scale with quantity."""
+    three = {'value': 720000, 'purchase_price': 240000, 'quantity': 3, 'months_held': 0}
+    value, held = economy.appreciate(three)
+    assert value == 723600 and held == 1                      # +0.5%, not cut down to 2 x one unit
+    at_ceiling = {'value': 1440000, 'purchase_price': 240000, 'quantity': 3, 'months_held': 30}
+    assert economy.appreciate(at_ceiling)[0] == 1440000        # 2 x all three
+
+
+# --- loans: atomic repayments and funding ---------------------------------------------------------
+
+def _debt(fake, uid, remaining=1000, payment=100, term=10, **extra):
+    row = {'id': 'd1', 'user_id': uid, 'name': 'Personal Loan', 'liability_type': 'bank_loan', 'monthly_payment': payment,
+           'remaining_balance': remaining, 'remaining_term': term, **extra}
+    fake.rows('liabilities').append(row)
+    return row
+
+
+def test_a_double_tapped_repayment_is_only_charged_once(client, fake_supabase, wallets, monkeypatch):
+    """Both taps read the same balance; only one may claim it, or the player pays twice for one repayment."""
+    uid, h = _player(fake_supabase)
+    wallets[uid] = Decimal('5000')
+    debt = _debt(fake_supabase, uid, remaining=1000)
+    from app.routes import loan_routes
+    real = loan_routes.BalanceService.get_current_balance
+    state = {'tapped': False}
+
+    def second_tap_lands_first(*a, **k):
+        if not state['tapped']:
+            state['tapped'] = True
+            client.post('/api/loans/repay/d1/', json={'amount': 300}, headers=h)      # the other tap completes first
+        return real(*a, **k)
+    monkeypatch.setattr(loan_routes.BalanceService, 'get_current_balance', staticmethod(second_tap_lands_first))
+    res = client.post('/api/loans/repay/d1/', json={'amount': 300}, headers=h)
+    assert res.status_code == 409
+    assert wallets[uid] == Decimal('4700')                    # one $300 payment, not two
+    assert debt['remaining_balance'] == 700
+
+
+def test_a_small_repayment_doesnt_shorten_the_term(client, fake_supabase, wallets):
+    uid, h = _player(fake_supabase)
+    wallets[uid] = Decimal('5000')
+    debt = _debt(fake_supabase, uid, remaining=1000, payment=100, term=10)
+    assert client.post('/api/loans/repay/d1/', json={'amount': 5}, headers=h).status_code == 200
+    assert debt['remaining_term'] == 10                      # $5 isn't an instalment
+    assert client.post('/api/loans/repay/d1/', json={'amount': 495}, headers=h).status_code == 200
+    assert debt['remaining_balance'] == 500 and debt['remaining_term'] == 5   # what's left at $100 a month
+
+
+def test_repaying_a_friend_loan_early_keeps_the_record_in_step(client, fake_supabase, wallets):
+    borrower, bh = _player(fake_supabase, 'borrower')
+    lender, _ = _player(fake_supabase, 'lender')
+    wallets[borrower] = Decimal('5000')
+    fake_supabase.rows('p2p_loans').append({'id': 'p1', 'lender_id': lender, 'borrower_id': borrower, 'status': 'active', 'amount': 1000,
+                                           'interest_rate': 10, 'term_months': 12, 'remaining_balance': 1100, 'payments_made': 0})
+    _debt(fake_supabase, borrower, remaining=1100, payment=91.67, term=12, liability_type='p2p_loan', p2p_loan_id='p1')
+    assert client.post('/api/loans/repay/d1/', json={'amount': 91.67}, headers=bh).status_code == 200
+    loan = fake_supabase.rows('p2p_loans')[0]
+    assert loan['payments_made'] == 1 and wallets[lender] == Decimal('91.67')
+
+
+def test_a_bank_loan_that_cant_be_paid_out_leaves_no_debt_behind(client, fake_supabase, wallets, monkeypatch):
+    uid, h = _player(fake_supabase, income=9000, credit=800)
+    fake_supabase.rows('bank_loans').append({'id': IDS['mortgage'], 'borrower_id': None, 'type': 'Personal Loan', 'amount': 5000, 'interest_rate': 0.1,
+                                            'term': 12, 'monthly_payment': 450, 'total_interest': 400, 'credit_required': 600, 'collateral': None})
+    from app.routes import loan_routes
+
+    def broken(*a, **k):
+        raise RuntimeError('db down')
+    monkeypatch.setattr(loan_routes.BalanceService, 'add_balance', staticmethod(broken))
+    assert client.post('/api/loans/apply/', json={'loan_id': IDS['mortgage']}, headers=h).status_code == 500
+    assert not fake_supabase.rows('liabilities')
+    assert [b for b in fake_supabase.rows('bank_loans') if b.get('borrower_id')] == []
+
+
+def test_a_friend_loan_that_fails_to_fund_goes_back_on_offer(client, fake_supabase, wallets, monkeypatch):
+    lender, lh = _player(fake_supabase, 'lender')
+    borrower, bh = _player(fake_supabase, 'borrower')
+    wallets[lender] = Decimal('5000')
+    offer = client.post('/api/loans/p2p/offer/', json={'amount': 1000, 'interest_rate': 10, 'term_months': 12}, headers=lh).get_json()['loan_id']
+    from app.routes import loan_routes
+    monkeypatch.setattr(loan_routes.BalanceService, 'add_balance',
+                        staticmethod(lambda *a, **k: (_ for _ in ()).throw(RuntimeError('db down'))))
+    assert client.post('/api/loans/p2p/accept/', json={'loan_id': offer}, headers=bh).status_code == 500
+    loan = fake_supabase.rows('p2p_loans')[0]
+    assert loan['status'] == 'pending' and not loan.get('borrower_id')     # still on offer, escrow intact
+    assert not fake_supabase.rows('liabilities')
+
+
+# --- paying off early, and failures on payday ----------------------------------------------------
+
+def test_paying_a_loan_off_early_refunds_the_interest_not_yet_earned(client, fake_supabase, wallets):
+    uid, h = _player(fake_supabase)
+    wallets[uid] = Decimal('5000')
+    # $1,000 borrowed, $100 interest in all, half paid back: $550 left, of which $50 is interest.
+    _debt(fake_supabase, uid, remaining=550, payment=100, term=6, amount=1000, total_interest=100)
+    res = client.post('/api/loans/repay/d1/', json={'amount': 9999}, headers=h).get_json()
+    assert res['success'] and res['is_fully_paid'] and res['payment_amount'] == pytest.approx(500)
+    assert wallets[uid] == Decimal('4500') and not fake_supabase.rows('liabilities')
+
+
+def test_a_payment_short_of_the_payoff_is_not_discounted(client, fake_supabase, wallets):
+    uid, h = _player(fake_supabase)
+    wallets[uid] = Decimal('5000')
+    debt = _debt(fake_supabase, uid, remaining=550, payment=100, term=6, amount=1000, total_interest=100)
+    client.post('/api/loans/repay/d1/', json={'amount': 300}, headers=h)
+    assert wallets[uid] == Decimal('4700') and debt['remaining_balance'] == 250
+
+
+def test_late_fees_are_not_rebated_on_payoff(client, fake_supabase, wallets):
+    uid, h = _player(fake_supabase)
+    wallets[uid] = Decimal('5000')
+    _debt(fake_supabase, uid, remaining=1200, payment=100, term=6, amount=1000, total_interest=100)    # $100 of late fees
+    res = client.post('/api/loans/repay/d1/', json={'amount': 9999}, headers=h).get_json()
+    assert res['payment_amount'] == pytest.approx(1100)       # at most the interest is rebated, never more
+
+
+def test_the_overview_shows_what_paying_off_today_costs(client, fake_supabase, wallets):
+    uid, h = _player(fake_supabase)
+    _debt(fake_supabase, uid, remaining=550, payment=100, term=6, amount=1000, total_interest=100)
+    assert economy.payoff_amount(fake_supabase.rows('liabilities')[0]) == Decimal('500.00')
+
+
+def test_one_failing_charge_doesnt_skip_the_rest_of_payday(fake_supabase, wallets, monkeypatch):
+    uid, _ = _player(fake_supabase, income=0)
+    fake_supabase.rows('liabilities').extend([
+        {'id': 'a', 'user_id': uid, 'name': 'Loan A', 'liability_type': 'bank_loan', 'monthly_payment': 100, 'remaining_balance': 1000},
+        {'id': 'b', 'user_id': uid, 'name': 'Loan B', 'liability_type': 'bank_loan', 'monthly_payment': 50, 'remaining_balance': 500},
+    ])
+    fake_supabase.rows('player_rentals').append({'id': 'r', 'player_id': uid, 'monthly_rent': 300, 'is_active': True, 'rental_properties': {'name': 'Flat'}})
+    wallets[uid] = Decimal('5000')
+    from app.services.balance_service import BalanceService
+    real = BalanceService.subtract_balance
+
+    def flaky(user_id, amount, reason, category='x'):
+        if 'Loan A' in reason:
+            raise RuntimeError('db blip')
+        return real(user_id, amount, reason, category)
+    monkeypatch.setattr(BalanceService, 'subtract_balance', staticmethod(flaky))
+    month = process_month_for_user(uid)
+    lines = _lines(month)
+    assert lines['Loan B']['amount'] == -50.0 and lines['Rent: Flat']['amount'] == -300.0        # the rest still ran
+    problem = next(l for l in month['lines'] if l.get('error'))
+    assert 'Loan A' in problem['label'] and problem['missed'] is True and problem['amount'] == 0
+
+
+def test_my_loans_list_what_each_costs_to_clear(client, fake_supabase, wallets):
+    uid, h = _player(fake_supabase)
+    lender, _ = _player(fake_supabase, 'pat')
+    wallets[uid] = Decimal('800')
+    fake_supabase.rows('p2p_loans').append({'id': 'p1', 'lender_id': lender, 'borrower_id': uid, 'status': 'active', 'amount': 500})
+    _debt(fake_supabase, uid, remaining=550, payment=100, term=6, amount=1000, total_interest=100)
+    _debt(fake_supabase, uid, remaining=220, payment=55, term=4, amount=200, total_interest=20, id='d2',
+          name='Friend loan (Rent)', liability_type='p2p_loan', p2p_loan_id='p1')
+    fake_supabase.rows('liabilities').append({'id': 'gone', 'user_id': uid, 'name': 'Paid', 'liability_type': 'bank_loan', 'remaining_balance': 0, 'monthly_payment': 10})
+    other, _ = _player(fake_supabase, 'other')
+    _debt(fake_supabase, other, id='theirs')
+    data = client.get('/api/loans/mine/', headers=h).get_json()['data']
+    assert data['balance'] == 800
+    loans = {l['id']: l for l in data['loans']}
+    assert set(loans) == {'d1', 'd2'}                                  # not paid-off ones, not other players'
+    bank = loans['d1']
+    assert bank['kind'] == 'bank' and bank['payoff_amount'] == 500 and bank['interest_saved'] == 50
+    assert bank['paid_share'] == pytest.approx(0.5) and bank['monthly_payment'] == 100 and bank['remaining_term'] == 6
+    friend = loans['d2']
+    assert friend['kind'] == 'friend' and friend['lender']['username'] == 'pat' and friend['payoff_amount'] == 200

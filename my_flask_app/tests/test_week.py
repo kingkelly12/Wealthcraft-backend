@@ -233,15 +233,76 @@ def test_fourth_week_runs_the_players_month(client, auth_headers, player, fake_s
     assert ('add', Decimal('3000.00'), 'Monthly salary') in balance['log']
 
 
-def test_calendar_payday_skips_players_on_game_time(fake_supabase, balance, monkeypatch):
-    from jobs import monthly_loan_deductions as job
-    monkeypatch.setattr(job.ExpoPushService, 'send_notifications_to_users', staticmethod(lambda **kw: None))
-    for uid in ('calendar-player', 'clocked-player'):
-        fake_supabase.rows('profiles').append({'user_id': uid, 'username': uid, 'monthly_income': 0, 'base_monthly_income': 0, 'sanity': 80})
-        fake_supabase.rows('jobs').append({'user_id': uid, 'title': 'Job', 'salary': 12000, 'is_current': True})
-    fake_supabase.rows('player_game_clock').append({'user_id': 'clocked-player', 'week': 3, 'banked_weeks': 1, 'bank_updated_on': '2026-11-21'})
+# --- robustness and economy fixes ------------------------------------------------------
 
-    result = job.process_monthly_deductions()
-    assert result['players_on_game_time'] == 1
-    paid = [reason for op, amount, reason in balance['log'] if reason == 'Monthly salary']
-    assert len(paid) == 1   # only the calendar player
+def _set_deck(fake, cards):
+    deck = fake.rows('player_weeks')[0]
+    for i, c in enumerate(cards):
+        c['id'], c['chosen'], c['result'] = f'x{i}', None, None
+    deck['cards'] = cards
+    return deck
+
+
+def _card(key):
+    return week_service._everyday_card(next(c for c in CARDS if c['key'] == key))
+
+
+def test_raise_goes_on_the_job_not_permanent_income(client, auth_headers, player, fake_supabase, user_id):
+    fake_supabase.rows('jobs').append({'id': 'j1', 'user_id': user_id, 'salary': 36000, 'is_current': True, 'kind': 'job'})
+    _get(client, auth_headers)
+    _set_deck(fake_supabase, [_card('ask_raise')])
+    r = _choose(client, auth_headers, 'x0', 'right')
+    assert r.status_code == 200 and r.get_json()['data']['result']['income'] == 100
+    assert fake_supabase.rows('jobs')[0]['salary'] == 37200
+    assert player['base_monthly_income'] == 0          # quitting the job loses the raise
+
+
+def test_raise_without_a_job_now_does_nothing(client, auth_headers, player, fake_supabase):
+    _get(client, auth_headers)
+    _set_deck(fake_supabase, [_card('ask_raise')])
+    assert _choose(client, auth_headers, 'x0', 'right').get_json()['data']['result']['income'] == 0
+
+
+def test_raise_card_is_not_dealt_again_within_a_year(fake_supabase, user_id):
+    fake_supabase.rows('player_weeks').append(
+        {'user_id': user_id, 'week': 10, 'cards': [{'kind': 'everyday', 'key': 'ask_raise'}, {'kind': 'everyday', 'key': 'found_twenty'}]})
+    recent = week_service._recent_everyday_keys(user_id, 40)
+    assert 'ask_raise' in recent and 'found_twenty' not in recent      # 30 weeks later: only the raise is cooling down
+    assert 'ask_raise' not in week_service._recent_everyday_keys(user_id, 63)
+
+
+def test_two_cards_played_at_once_both_keep_their_results(client, auth_headers, player, fake_supabase, user_id, balance, monkeypatch):
+    from app.services.balance_service import BalanceService
+    _get(client, auth_headers)
+    _set_deck(fake_supabase, [_card('found_twenty'), _card('found_twenty')])
+    real_add = BalanceService.add_balance
+    state = {'nested': False}
+
+    def add_and_play_the_other_card(user, amount, reason, category='balance_adjustment'):
+        out = real_add(user, amount, reason, category)
+        if not state['nested']:           # while card 1's payment is in flight, card 2 is played
+            state['nested'] = True
+            week_service.choose(user_id, 'x1', 'left')
+        return out
+    monkeypatch.setattr(BalanceService, 'add_balance', staticmethod(add_and_play_the_other_card))
+
+    assert _choose(client, auth_headers, 'x0', 'left').status_code == 200
+    cards = fake_supabase.rows('player_weeks')[0]['cards']
+    assert all(c['chosen'] == 'left' and c['result'] for c in cards)    # card 1's result used to be dropped
+
+
+def test_cast_failure_does_not_strand_the_week(client, auth_headers, player, fake_supabase, monkeypatch):
+    from app.game import cast
+    monkeypatch.setattr(cast, 'react_to_week', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('boom')))
+    assert _play_week(client, auth_headers).status_code == 200
+    week1 = next(w for w in fake_supabase.rows('player_weeks') if w['week'] == 1)
+    assert week1['status'] == 'completed' and week1['receipt']['texts'] == []
+
+
+def test_receipt_falls_back_to_listed_effects_when_a_result_is_missing(client, auth_headers, player, fake_supabase):
+    _get(client, auth_headers)
+    deck = _set_deck(fake_supabase, [_card('found_twenty')])
+    deck['cards'][0]['chosen'] = 'left'           # chosen, result never stored
+    r = client.post('/api/week/complete/', headers=auth_headers)
+    line = r.get_json()['data']['receipt']['cards'][0]
+    assert line['cash'] == deck['cards'][0]['choices'][0]['cash'] == 20
