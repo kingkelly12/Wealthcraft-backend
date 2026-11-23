@@ -1,6 +1,5 @@
-from app import db, supabase
-import os
-from datetime import datetime, timedelta, timezone
+from app import supabase
+from datetime import datetime, timezone
 from app.services.balance_service import BalanceService
 from app.services.push_notification_service import ExpoPushService
 from decimal import Decimal
@@ -181,6 +180,24 @@ def _run_month(scope, profiles_map, game_years):
     return summary_by_user
 
 
+def _mission_multipliers(scope):
+    """
+    {user_id: (income_multiplier, expense_multiplier)} for players on an active
+    mission. The app shows these ("Income: 80%"); they were never applied.
+    """
+    rows = scope.filter(supabase.table('player_mission_progress').select('player_id, constraints_applied')
+                        .eq('is_active', True), 'player_id').execute().data or []
+    out = {}
+    for r in rows:
+        c = r.get('constraints_applied') or {}
+        try:
+            out[str(r['player_id'])] = (Decimal(str(c.get('income_multiplier') or 1)),
+                                        Decimal(str(c.get('expense_multiplier') or 1)))
+        except Exception:
+            continue
+    return out
+
+
 def _pay_salaries(scope, profiles_map, get_summary):
     """
     Payday: main job salaries (annual / 12) + permanent income boosts.
@@ -192,11 +209,13 @@ def _pay_salaries(scope, profiles_map, get_summary):
     pay_by_user = {}
     for job in jobs_res.data or []:
         pay_by_user.setdefault(job['user_id'], []).append(job)
+    multipliers = _mission_multipliers(scope)
     for uid, profile in profiles_map.items():
         jobs = pay_by_user.get(uid, [])
         salary = sum((Decimal(str(j.get('salary') or 0)) for j in jobs if j.get('kind', 'job') != 'gig'), Decimal('0')) / 12
         boosts = Decimal(str(profile.get('base_monthly_income') or 0))
-        pay = (salary + boosts).quantize(Decimal('0.01'))
+        income_mult = multipliers.get(str(uid), (Decimal('1'), Decimal('1')))[0]
+        pay = ((salary + boosts) * income_mult).quantize(Decimal('0.01'))
         if pay > 0:
             BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
             get_summary(uid).credit(pay, 'Salary')
@@ -464,6 +483,7 @@ def _charge_living_costs(scope, profiles_map, get_summary, game_years):
     owned_rows = scope.filter(supabase.table('player_homes').select('player_id, home_id').eq('is_active', True).eq('lives_in', True), 'player_id').execute().data or []
     own_listing = homes._listings({str(r['home_id']) for r in owned_rows})
     owner_home = {str(r['player_id']): own_listing.get(str(r['home_id'])) for r in owned_rows if own_listing.get(str(r['home_id']))}
+    multipliers = _mission_multipliers(scope)
 
     for user_id in uids:
         profile = profiles_map[user_id]
@@ -491,7 +511,11 @@ def _charge_living_costs(scope, profiles_map, get_summary, game_years):
             if home > 0:
                 lines.append(('Chipping in at home', home, 'Living with your parents'))
 
+        expense_mult = multipliers.get(uid, (Decimal('1'), Decimal('1')))[1]
         for label, cost, note in lines:
+            if expense_mult != 1:
+                cost = (cost * expense_mult).quantize(Decimal('0.01'))
+                note = f"{note + ' · ' if note else ''}mission: {expense_mult * 100:.0f}% of usual"
             if cost <= 0:
                 continue
             if BalanceService.get_current_balance(user_id) >= cost:
@@ -605,6 +629,9 @@ def _send_month_notifications(summary_by_user, profiles_map):
         logger.info(f"Batched {len(notifications_to_send)} end of month notifications.")
 
 
+_KNOWN_METRICS = {'net_worth', 'monthly_income', 'credit_score', 'asset_value',
+                  'business_value', 'passive_income', 'debt_ratio'}
+
 CREDIT_ON_TIME_PAYMENT = 2
 CREDIT_MISSED_PAYMENT = -25
 
@@ -625,13 +652,38 @@ def _adjust_credit_score(profiles_map, user_id, delta):
         logger.error(f"Failed to update credit score for {user_id}: {e}")
 
 
+def _mission_metrics(player_id, profile):
+    """
+    Every goal metric the schema allows, for one player. Previously only
+    net_worth / monthly_income / credit_score were evaluated, so a mission
+    with an asset_value, debt_ratio, passive_income or business_value goal
+    could never be completed. 'custom' has no formula engine and stays unmet.
+    """
+    metrics = {k: profile.get(k) for k in ('net_worth', 'monthly_income', 'credit_score')}
+    holdings = supabase.table('user_assets').select('name, asset_type, value, quantity') \
+        .eq('user_id', player_id).execute().data or []
+    metrics['asset_value'] = sum(Decimal(str(h.get('value') or 0)) for h in holdings)
+    metrics['business_value'] = sum(Decimal(str(h.get('value') or 0)) for h in holdings
+                                    if h.get('asset_type') == 'business')
+    names = list({h['name'] for h in holdings if h.get('name')})
+    yields = {}
+    if names:
+        yields = {a['name']: Decimal(str(a.get('monthly_income') or 0)) for a in
+                  (supabase.table('assets').select('name, monthly_income').in_('name', names).execute().data or [])}
+    metrics['passive_income'] = sum(yields.get(h.get('name'), Decimal('0')) * Decimal(str(h.get('quantity') or 1))
+                                    for h in holdings)
+    debts = supabase.table('liabilities').select('monthly_payment') \
+        .eq('user_id', player_id).gt('remaining_balance', 0).execute().data or []
+    income = Decimal(str(profile.get('monthly_income') or 0))
+    payments = sum(Decimal(str(d.get('monthly_payment') or 0)) for d in debts)
+    # debt-to-income; with no income any debt is "infinitely" bad, none is 0
+    metrics['debt_ratio'] = (payments / income) if income > 0 else (Decimal('999') if payments else Decimal('0'))
+    return metrics
+
+
 def _criterion_met(criterion, profile):
     metric = criterion.get('metric')
-    value = {
-        'net_worth': profile.get('net_worth'),
-        'monthly_income': profile.get('monthly_income'),
-        'credit_score': profile.get('credit_score'),
-    }.get(metric)
+    value = profile.get(metric) if metric in _KNOWN_METRICS else None
     if value is None:
         logger.warning(f"Mission metric '{metric}' is not evaluated yet; counting as not met")
         return False, None
@@ -671,27 +723,30 @@ def _advance_missions(scope=None):
         duration = int(mission.get('duration_months') or 1)
         next_month = int(pm.get('current_month') or 1) + 1
 
-        if next_month <= duration:
-            supabase.table('player_mission_progress').update({'current_month': next_month}) \
-                .eq('id', pm['id']).eq('is_active', True).execute()
-            continue
-
         player_id = pm['player_id']
         prof_res = supabase.table('profiles').select('net_worth, monthly_income, credit_score') \
             .eq('user_id', player_id).limit(1).execute()
         if not prof_res.data:
             continue
         profile = prof_res.data[0]
+        metrics = _mission_metrics(player_id, profile)
         criteria = supabase.table('mission_success_criteria').select('*') \
             .eq('mission_id', pm['mission_id']).execute().data or []
 
+        # Refresh the goal tracking EVERY month so the app's progress bars move
+        # (it was only written when the mission ended).
         met = 0
         for c in criteria:
-            ok, value = _criterion_met(c, profile)
+            ok, value = _criterion_met(c, metrics)
             met += int(ok)
             supabase.table('player_mission_success_tracking').update({
                 'current_value': float(value or 0), 'is_met': ok,
             }).eq('player_mission_id', pm['id']).eq('criteria_id', c['id']).execute()
+
+        if next_month <= duration:
+            supabase.table('player_mission_progress').update({'current_month': next_month}) \
+                .eq('id', pm['id']).eq('is_active', True).execute()
+            continue
 
         total = len(criteria)
         success = met == total

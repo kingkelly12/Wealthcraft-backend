@@ -13,7 +13,7 @@ from datetime import date, datetime, timezone
 
 from app import supabase
 from app.game.cast import CAST, relationships
-from app.game.week_service import MAX_BANKED
+from app.game.week_service import topped_up
 from app.services.push_notification_service import ExpoPushService
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def _available_weeks(clock, today):
     last = date.fromisoformat(str(clock['bank_updated_on'])[:10])
-    return min(MAX_BANKED, int(clock['banked_weeks']) + max(0, (today - last).days))
+    return topped_up(clock['banked_weeks'], (today - last).days)
 
 
 def _teaser(uid, week):

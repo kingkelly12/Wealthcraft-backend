@@ -453,6 +453,13 @@ create table public.life_events (
 );
 create trigger life_events_updated_at before update on public.life_events
   for each row execute function public.set_updated_at();
+-- New events, regularly (migration 20261202000000): release dates and yearly seasons.
+alter table public.life_events add column if not exists released_at timestamptz;
+alter table public.life_events add column if not exists season_start text check (season_start ~ '^[0-1][0-9]-[0-3][0-9]$');
+alter table public.life_events add column if not exists season_end text check (season_end ~ '^[0-1][0-9]-[0-3][0-9]$');
+alter table public.life_events add column if not exists season_label text;
+alter table public.life_events add column if not exists season_emoji text;
+alter table public.life_events add column if not exists pack text;
 
 create table public.life_event_choices (
   id                  uuid primary key default gen_random_uuid(),

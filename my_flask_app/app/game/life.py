@@ -56,6 +56,43 @@ BACKGROUNDS = {
     },
 }
 
+# Earned through legacy achievements (app/game/legacy.py). Each starts with a head
+# start: an asset you own, a home you live in rent-free, or work experience.
+UNLOCKABLE_BACKGROUNDS = {
+    'family_business': {
+        'name': 'Family Business', 'emoji': '🏪',
+        'tagline': 'The shop is half yours. So are the problems.',
+        'description': 'Your family hands you a vending machine business and $1,500. It pays every month, if you keep it running.',
+        'cash': 1500, 'debt': 0, 'allowance': 0, 'sanity': 75, 'start_age': 18,
+        'difficulty': 'Medium', 'requires': 'business_owner',
+        'start_asset': 'Vending Machine',
+        'perks': ['Own a Vending Machine (~$85 a month)'],
+    },
+    'inheritance': {
+        'name': 'The Inheritance', 'emoji': '🏡',
+        'tagline': 'Grandma left you a flat. And a cat.',
+        'description': 'You inherit a studio flat and $500. No rent, ever. Just upkeep, bills and a cat with opinions.',
+        'cash': 500, 'debt': 0, 'allowance': 0, 'sanity': 75, 'start_age': 18,
+        'difficulty': 'Easy', 'requires': 'homeowner',
+        'start_home': 'Studio Flat',
+        'perks': ['Live rent-free in a Studio Flat you own'],
+    },
+    'connected': {
+        'name': 'The Connected One', 'emoji': '🤝',
+        'tagline': 'Your uncle knows people.',
+        'description': "A summer at your uncle's firm counts as 18 months of finance experience. Mid-level finance jobs are open from day one.",
+        'cash': 1500, 'debt': 0, 'allowance': 0, 'sanity': 80, 'start_age': 19,
+        'difficulty': 'Medium', 'requires': 'corner_office',
+        'start_experience': ('Finance', 18),
+        'perks': ['18 months of Finance experience'],
+    },
+}
+
+
+def _background(key):
+    return BACKGROUNDS.get(key) or UNLOCKABLE_BACKGROUNDS.get(key)
+
+
 # Existing players keep the life they already have; never offered for new lives.
 ORIGINAL = {
     'name': 'The Original', 'emoji': '🌱',
@@ -66,7 +103,7 @@ ORIGINAL = {
 
 
 def background_info(key):
-    return ORIGINAL if key == 'original' else BACKGROUNDS.get(key)
+    return ORIGINAL if key == 'original' else _background(key)
 
 
 # --- avatar -------------------------------------------------------------------------
@@ -213,11 +250,21 @@ def state(user_id):
     life = current_life(uid)
     past = supabase.table('player_lives').select('life_number, background, ending, summary, ended_at') \
         .eq('user_id', uid).eq('is_current', False).order('life_number', desc=True).limit(20).execute().data or []
+    from app.game import legacy
+    got = legacy.earned([r['summary'] for r in sorted(past, key=lambda r: r['life_number']) if r.get('summary')])
+    unlocked = legacy.unlocked_backgrounds(got)
+    unlockables = []
+    for k, b in UNLOCKABLE_BACKGROUNDS.items():
+        req = legacy.achievement(b['requires'])
+        unlockables.append({'key': k, **{f: v for f, v in b.items() if f not in ('requires', 'start_experience')},
+                            'locked': k not in unlocked, 'unlock_hint': f"{req['emoji']} {req['title']}: {req['how']}"})
     return {
         'current': public_life(life),
         'needs_setup': life is None,
         'can_keep_current': life is None and not past and _has_progress(uid),
-        'backgrounds': [{'key': k, **{f: v for f, v in b.items()}} for k, b in BACKGROUNDS.items()],
+        'backgrounds': [{'key': k, **{f: v for f, v in b.items()}, 'locked': False} for k, b in BACKGROUNDS.items()] + unlockables,
+        # Carried between lives: +$ per achievement on every new life.
+        'legacy': {'level': len(got), 'bonus_cash': legacy.bonus_cash(got), 'achievements_total': len(legacy.ACHIEVEMENTS)},
         'past_lives': past,
         'max_age': MAX_AGE,
         'min_weeks_before_retiring': MIN_WEEKS_BEFORE_RETIRING,
@@ -232,8 +279,12 @@ def _snapshot(uid):
     profile = prof[0] if prof else {}
     debts = supabase.table('liabilities').select('remaining_balance').eq('user_id', uid).gt('remaining_balance', 0).execute().data or []
     assets = supabase.table('user_assets').select('asset_type, value').eq('user_id', uid).execute().data or []
-    job = supabase.table('jobs').select('title').eq('user_id', uid).eq('is_current', True).limit(1).execute().data
+    jobs = supabase.table('jobs').select('title, level, kind').eq('user_id', uid).eq('is_current', True).execute().data or []
+    job = [j for j in jobs if (j.get('kind') or 'job') != 'gig'] or jobs
     rental = supabase.table('player_rentals').select('id').eq('player_id', uid).eq('is_active', True).limit(1).execute().data
+    homes = supabase.table('player_homes').select('lives_in').eq('player_id', uid).eq('is_active', True).execute().data or []
+    owned = supabase.table('player_liabilities').select('*, liability_items(category)').eq('player_id', uid).eq('is_active', True).execute().data or []
+    from app.game import economy
     return {
         'net_worth': float(profile.get('net_worth') or 0),
         'income': float(profile.get('monthly_income') or 0),
@@ -244,7 +295,11 @@ def _snapshot(uid):
         'assets_value': float(sum(Decimal(str(a.get('value') or 0)) for a in assets)),
         'owns_business': any((a.get('asset_type') or '').lower() == 'business' for a in assets),
         'job': job[0]['title'] if job else None,
-        'has_home': bool(rental),
+        'job_level': (job[0].get('level') or 'entry') if job else None,
+        # A home: renting, or living in one you own.
+        'has_home': bool(rental) or any(h.get('lives_in') for h in homes),
+        'owns_home': bool(homes),
+        'owns_aircraft': any((economy.item_of(p).get('category') or '').lower() == 'aircraft' for p in owned),
     }
 
 
@@ -337,6 +392,12 @@ def end_life(user_id):
         **snap,
         **_week_stats(uid),
     }
+    # What this life adds to your legacy (achievements, unlocks, starting bonus).
+    try:
+        from app.game import legacy
+        summary['legacy'] = legacy.newly_earned([r['summary'] for r in legacy.finished_lives(uid)], summary)
+    except Exception as e:
+        logger.warning(f'Legacy for ended life failed for {uid}: {e}')
     closed = supabase.table('player_lives').update({
         'is_current': False,
         'ended_at': datetime.now(timezone.utc).isoformat(),
@@ -355,7 +416,7 @@ def end_life(user_id):
 
 # --- beginning ----------------------------------------------------------------------
 
-def _reset_run(uid, bg):
+def _reset_run(uid, bg, legacy_bonus=0):
     """Wipe the run (money, job, home, assets, loans, missions, clock). Keep the person."""
     now = datetime.now(timezone.utc).isoformat()
 
@@ -385,16 +446,17 @@ def _reset_run(uid, bg):
     roommates.end_all_for(uid)
     cast.reset(uid)
 
-    # A fresh clock: week 1, one week ready to play.
+    # A fresh clock: week 1, a day's weeks ready to play.
+    from app.game.week_service import WEEKS_PER_DAY
     supabase.table('player_weeks').delete().eq('user_id', uid).execute()
     today = datetime.now(timezone.utc).date().isoformat()
-    clock = supabase.table('player_game_clock').update({'week': 1, 'banked_weeks': 1, 'bank_updated_on': today}).eq('user_id', uid).execute()
+    clock = supabase.table('player_game_clock').update({'week': 1, 'banked_weeks': WEEKS_PER_DAY, 'bank_updated_on': today}).eq('user_id', uid).execute()
     if not clock.data:
-        supabase.table('player_game_clock').insert({'user_id': uid, 'week': 1, 'banked_weeks': 1, 'bank_updated_on': today}).execute()
+        supabase.table('player_game_clock').insert({'user_id': uid, 'week': 1, 'banked_weeks': WEEKS_PER_DAY, 'bank_updated_on': today}).execute()
 
-    # Money: set the balance to the background's starting cash.
+    # Money: the background's starting cash, plus the legacy bonus.
     current = BalanceService.get_current_balance(uid)
-    target = Decimal(str(bg['cash']))
+    target = Decimal(str(bg['cash'])) + Decimal(str(legacy_bonus or 0))
     if target > current:
         BalanceService.add_balance(uid, target - current, f"New life: {bg['name']}", category='new_life')
     elif current > target:
@@ -406,6 +468,8 @@ def _reset_run(uid, bg):
             'amount': bg['debt'], 'interest_rate': 5, 'monthly_payment': bg.get('debt_payment', 0),
             'remaining_balance': bg['debt'], 'remaining_term': int(bg['debt'] / max(1, bg.get('debt_payment', 1))),
         }).execute()
+
+    _head_start(uid, bg)
 
     supabase.table('profiles').update({
         'base_monthly_income': bg.get('allowance', 0),
@@ -420,6 +484,31 @@ def _reset_run(uid, bg):
         ProfileService.recalculate_net_worth(uuid.UUID(uid))
     except Exception as e:
         logger.warning(f'Net worth refresh after new life failed for {uid}: {e}')
+
+
+def _head_start(uid, bg):
+    """Unlocked backgrounds start with an asset, a home or experience."""
+    if bg.get('start_asset'):
+        a = supabase.table('assets').select('*').eq('name', bg['start_asset']).limit(1).execute().data
+        if a:
+            a = a[0]
+            supabase.table('user_assets').insert({
+                'user_id': uid, 'asset_id': a['id'], 'asset_type': (a.get('category') or 'business').replace('real_estate', 'property'),
+                'name': a['name'], 'value': float(a['price']), 'quantity': 1, 'purchase_price': float(a['price']),
+            }).execute()
+    if bg.get('start_home'):
+        h = supabase.table('home_listings').select('*').eq('name', bg['start_home']).limit(1).execute().data
+        if h:
+            supabase.table('player_homes').insert({
+                'player_id': uid, 'home_id': str(h[0]['id']), 'purchase_price': float(h[0]['price']),
+                'current_value': float(h[0]['price']), 'lives_in': True, 'months_held': 0, 'is_active': True,
+            }).execute()
+    if bg.get('start_experience'):
+        industry, months = bg['start_experience']
+        supabase.table('jobs').insert({
+            'user_id': uid, 'title': f'Intern ({industry})', 'company': "Your uncle's firm", 'salary': 0,
+            'level': 'entry', 'kind': 'job', 'industry': industry, 'months_worked': months, 'is_current': False,
+        }).execute()
 
 
 def begin_life(user_id, background, avatar):
@@ -441,10 +530,15 @@ def begin_life(user_id, background, avatar):
             raise LifeError('INVALID_BACKGROUND', 'Pick a background for your new life.', 400)
         start_age = DEFAULT_START_AGE
     else:
-        bg = BACKGROUNDS.get(background)
+        bg = _background(background)
         if not bg:
             raise LifeError('INVALID_BACKGROUND', 'Unknown background.', 400)
-        _reset_run(uid, bg)
+        from app.game import legacy
+        got = legacy.earned([r['summary'] for r in legacy.finished_lives(uid)])
+        if background in UNLOCKABLE_BACKGROUNDS and background not in legacy.unlocked_backgrounds(got):
+            req = legacy.achievement(UNLOCKABLE_BACKGROUNDS[background]['requires'])
+            raise LifeError('LOCKED_BACKGROUND', f"Unlock this by earning {req['title']}: {req['how']}", 403)
+        _reset_run(uid, bg, legacy.bonus_cash(got))
         start_age = bg['start_age']
 
     try:

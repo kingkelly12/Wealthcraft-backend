@@ -92,7 +92,8 @@ def test_new_player_must_set_up_a_life(client, auth_headers, player):
     data = _get(client, auth_headers)
     assert data['needs_setup'] and data['current'] is None
     assert not data['can_keep_current']                     # nothing to keep yet
-    assert {b['key'] for b in data['backgrounds']} == set(life.BACKGROUNDS)
+    assert {b['key'] for b in data['backgrounds'] if not b['locked']} == set(life.BACKGROUNDS)
+    assert {b['key'] for b in data['backgrounds'] if b['locked']} == set(life.UNLOCKABLE_BACKGROUNDS)
 
 
 def test_keeping_the_current_life_changes_nothing(client, auth_headers, player, fake_supabase, user_id, balance):

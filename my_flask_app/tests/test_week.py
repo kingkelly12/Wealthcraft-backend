@@ -75,7 +75,7 @@ def _shift_days(monkeypatch, days):
 def test_first_visit_starts_the_clock_and_deals_a_week(client, auth_headers, player, fake_supabase, user_id):
     data = _get(client, auth_headers)
     assert data['week'] == 1 and data['month'] == 1
-    assert data['can_play'] and data['banked_weeks'] == 1
+    assert data['can_play'] and data['banked_weeks'] == week_service.WEEKS_PER_DAY
     assert data['deck']['total'] == week_service.CARDS_PER_WEEK == data['deck']['remaining']
     assert data['teaser']
     assert len(fake_supabase.rows('player_game_clock')) == 1
@@ -125,29 +125,43 @@ def test_week_cannot_end_with_cards_left(client, auth_headers, player):
 
 
 def test_completing_a_week_advances_the_clock_and_locks_until_tomorrow(client, auth_headers, player):
-    res = _play_week(client, auth_headers)
+    assert _play_week(client, auth_headers).status_code == 200      # today's first week...
+    res = _play_week(client, auth_headers)                            # ...and its second
     assert res.status_code == 200
     body = res.get_json()['data']
-    assert body['receipt']['week'] == 1 and len(body['receipt']['cards']) == week_service.CARDS_PER_WEEK
+    assert body['receipt']['week'] == 2 and len(body['receipt']['cards']) == week_service.CARDS_PER_WEEK
     assert body['receipt']['month_summary'] is None  # not a payday week
     nxt = body['next']
-    assert nxt['week'] == 2 and not nxt['can_play'] and nxt['next_unlock_at']
+    assert nxt['week'] == 3 and not nxt['can_play'] and nxt['next_unlock_at']
     assert nxt['teaser']                              # the cliffhanger is already dealt
-    assert nxt['last_receipt']['week'] == 1
+    assert nxt['last_receipt']['week'] == 2
 
     card = nxt['deck']['cards'][0]
     assert _choose(client, auth_headers, card['id'], 'left').status_code == 403
     assert client.post('/api/week/complete/', headers=auth_headers).status_code in (400, 403)
 
 
-def test_a_new_day_unlocks_a_week_and_missed_days_bank_a_catch_up(client, auth_headers, player, monkeypatch):
+def test_two_weeks_a_day_and_missed_days_bank_up_to_seven(client, auth_headers, player, monkeypatch):
+    assert week_service.WEEKS_PER_DAY == 2 and week_service.MAX_BANKED == 7
+    assert _get(client, auth_headers)['banked_weeks'] == 2           # day one: two weeks
     assert _play_week(client, auth_headers).status_code == 200
-    _shift_days(monkeypatch, 5)                        # away for 5 days
+    assert _play_week(client, auth_headers).status_code == 200
+    assert not _get(client, auth_headers)['can_play']                # that's today's two
+    _shift_days(monkeypatch, 1)
+    assert _get(client, auth_headers)['banked_weeks'] == 2
+    _shift_days(monkeypatch, 5)                                       # away for a long weekend
     data = _get(client, auth_headers)
-    assert data['can_play'] and data['banked_weeks'] == week_service.MAX_BANKED
-    assert _play_week(client, auth_headers).status_code == 200
-    assert _play_week(client, auth_headers).status_code == 200   # the catch-up week
+    assert data['can_play'] and data['banked_weeks'] == 7 and data['weeks_per_day'] == 2
+    for _ in range(7):
+        assert _play_week(client, auth_headers).status_code == 200
     assert not _get(client, auth_headers)['can_play']
+
+
+def test_topped_up_is_capped():
+    assert week_service.topped_up(0, 1) == 2
+    assert week_service.topped_up(3, 1) == 5
+    assert week_service.topped_up(6, 3) == 7
+    assert week_service.topped_up(1, 0) == 1
 
 
 def test_unlimited_mode_for_playtesting(client, auth_headers, player, monkeypatch):
@@ -187,7 +201,7 @@ def test_pending_life_event_is_dealt_and_resolved(client, auth_headers, player, 
     card = next(c for c in cards if c['kind'] == 'life_event')
     assert 'user_life_event_id' not in card and all('choice_id' not in ch for ch in card['choices'])
     assert card['choices'][1]['cash'] == -195.0 and card['choices'][1]['sanity'] == 5
-    assert card['choices'][0]['sanity'] == -10        # falls back to the event's sanity
+    assert card['choices'][0]['sanity'] == 0          # the choice's own value; no fallback to the event's -10
 
     assert _choose(client, auth_headers, card['id'], 'right').status_code == 200
     assert fake_supabase.rows('user_life_events')[0]['choice_id'] == 'ev1-b'

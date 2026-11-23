@@ -118,3 +118,81 @@ def test_acknowledge_unknown_event_is_404(client, auth_headers, fake_supabase, a
 
 def test_acknowledge_without_active_mission_is_404(client, auth_headers, fake_supabase, profile, balance):
     assert _ack(client, auth_headers, 'anything').status_code == 404
+
+
+def test_story_hit_bigger_than_balance_takes_what_they_have(client, auth_headers, fake_supabase, active_mission, profile, balance):
+    _story(fake_supabase, id='fine', immediate_cash=-500)
+    balance['amount'] = Decimal('120')
+    assert _ack(client, auth_headers, 'fine').status_code == 200
+    assert balance['amount'] == Decimal('0')          # was: recorded, then "insufficient funds", never paid
+
+
+def _earlier_run(fake, user_id, run_id='pm-0'):
+    fake.rows('player_mission_progress').append({'id': run_id, 'player_id': user_id, 'mission_id': 'm-1',
+                                                 'is_active': False, 'abandoned_at': '2026-10-01T00:00:00+00:00'})
+
+
+def test_restarted_mission_does_not_repay_story_rewards(client, auth_headers, fake_supabase, active_mission, profile, balance, user_id):
+    _story(fake_supabase, id='bonus', immediate_cash=250, happiness_change=10)
+    _earlier_run(fake_supabase, user_id)
+    fake_supabase.rows('player_story_progress').append(
+        {'id': 'old', 'player_mission_id': 'pm-0', 'story_event_id': 'bonus', 'has_been_viewed': True})
+    assert _ack(client, auth_headers, 'bonus').status_code == 200
+    assert balance['amount'] == Decimal('0') and profile['sanity'] == 50
+
+
+# ---- decisions --------------------------------------------------------------------
+
+@pytest.fixture
+def decision(fake_supabase, active_mission):
+    fake_supabase.rows('mission_decision_points').append(
+        {'id': 'dp1', 'mission_id': 'm-1', 'month': 1, 'title': 'Paycheck Day', 'description': '...'})
+    fake_supabase.rows('mission_decision_options').extend([
+        {'id': 'save', 'decision_point_id': 'dp1', 'label': 'Save 20%', 'immediate_cash': 0,
+         'happiness_change': 0, 'stress_change': 0, 'motivation_change': 0},
+        {'id': 'splurge', 'decision_point_id': 'dp1', 'label': 'Treat yourself', 'immediate_cash': -300,
+         'happiness_change': 8, 'stress_change': 0, 'motivation_change': 0},
+        {'id': 'gig', 'decision_point_id': 'dp1', 'label': 'Side gig', 'immediate_cash': 250,
+         'happiness_change': 0, 'stress_change': 6, 'motivation_change': 4},
+    ])
+
+
+def _decide(client, headers, option, point='dp1'):
+    return client.post('/api/missions/decision/', json={'decision_point_id': point, 'option_id': option}, headers=headers)
+
+
+def test_decision_applies_cash_and_sanity(client, auth_headers, fake_supabase, decision, profile, balance):
+    r = _decide(client, auth_headers, 'gig')
+    assert r.status_code == 200
+    assert balance['amount'] == Decimal('250')
+    assert profile['sanity'] == 46 and r.get_json()['data']['sanity_change'] == -4   # 0 + 4/2 - 6
+    assert _decide(client, auth_headers, 'gig').status_code == 400                    # once only
+
+
+def test_unaffordable_option_is_refused_and_not_recorded(client, auth_headers, fake_supabase, decision, profile, balance):
+    balance['amount'] = Decimal('100')
+    r = _decide(client, auth_headers, 'splurge')
+    assert r.status_code == 400 and r.get_json()['error'] == 'INSUFFICIENT_FUNDS'
+    assert fake_supabase.rows('player_mission_decisions') == []    # still decidable
+    assert _decide(client, auth_headers, 'save').status_code == 200
+
+
+def test_restarted_mission_does_not_repay_decision_rewards(client, auth_headers, fake_supabase, decision, profile, balance, user_id):
+    _earlier_run(fake_supabase, user_id)
+    fake_supabase.rows('player_mission_decisions').append(
+        {'id': 'old', 'player_mission_id': 'pm-0', 'decision_point_id': 'dp1', 'chosen_option_id': 'gig'})
+    r = _decide(client, auth_headers, 'gig')
+    assert r.status_code == 200 and r.get_json()['data']['repeat_run'] is True
+    assert balance['amount'] == Decimal('0')       # no second +$250
+    assert profile['sanity'] == 46                 # the setback still applies
+
+
+def test_a_missed_decision_is_still_offered(client, auth_headers, fake_supabase, decision, active_mission):
+    active_mission['current_month'] = 2            # month 1's decision was never made
+    data = client.get('/api/missions/active/', headers=auth_headers).get_json()['data']
+    assert data['next_decision']['id'] == 'dp1'
+
+
+def test_future_decision_is_not_due(client, auth_headers, fake_supabase, decision, profile, balance):
+    fake_supabase.rows('mission_decision_points')[0]['month'] = 3
+    assert _decide(client, auth_headers, 'save').get_json()['error'] == 'DECISION_NOT_DUE'

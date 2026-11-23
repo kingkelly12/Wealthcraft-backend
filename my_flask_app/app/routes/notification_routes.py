@@ -7,8 +7,6 @@ from pydantic import ValidationError, BaseModel, Field
 from app.utils.jwt_helper import require_auth
 from app.services.push_notification_service import ExpoPushService
 from app import supabase
-import os
-import uuid
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -44,18 +42,26 @@ def register_push_token(current_user_id: str):
     """
     try:
         # Validate request
-        data = RegisterTokenRequest(**request.json)
+        data = RegisterTokenRequest(**(request.get_json(silent=True) or {}))
         
-        # Validate token format - must be ExponentPushToken[...]
         if not ExpoPushService.validate_push_token(data.push_token):
             return jsonify({
                 'success': False,
                 'error': 'INVALID_TOKEN_FORMAT',
-                'message': 'Invalid Expo push token format. Expected ExponentPushToken[...]'
+                'message': 'Invalid Expo push token format. Expected ExponentPushToken[...] or ExpoPushToken[...]'
             }), 400
         
-        # Save token to database
         try:
+            # A device belongs to one player. If someone else signed in on this
+            # phone before (and never signed out cleanly), take the token off
+            # their profile, or they'd keep receiving this player's pushes and
+            # this player would receive theirs.
+            supabase.table('profiles') \
+                .update({'expo_push_token': None, 'push_token_updated_at': datetime.now(timezone.utc).isoformat()}) \
+                .eq('expo_push_token', data.push_token) \
+                .neq('user_id', current_user_id) \
+                .execute()
+
             result = supabase.table('profiles') \
                 .update({
                     'expo_push_token': data.push_token,
@@ -113,21 +119,25 @@ def update_push_token(current_user_id: str):
 @require_auth
 def unregister_push_token(current_user_id: str):
     """
-    Remove a user's push token (e.g., on logout or app uninstall)
-    
-    This prevents notifications from being sent to devices
-    where the user has logged out.
+    Remove the player's push token (called by the app before signing out).
+
+    Optional ?push_token=<this device's token>: only clear it if the profile
+    still holds THIS device's token, so signing out on an old phone doesn't
+    silence the phone the player actually uses now.
     """
     try:
-        result = supabase.table('profiles') \
+        query = supabase.table('profiles') \
             .update({
                 'expo_push_token': None,
                 'push_token_updated_at': datetime.now(timezone.utc).isoformat()
             }) \
-            .eq('user_id', current_user_id) \
-            .execute()
+            .eq('user_id', current_user_id)
+        device_token = request.args.get('push_token')
+        if device_token:
+            query = query.eq('expo_push_token', device_token)
+        result = query.execute()
         
-        if result.data:
+        if result.data or device_token:
             logger.info(f"Push token unregistered for user {current_user_id}")
             return jsonify({
                 'success': True,

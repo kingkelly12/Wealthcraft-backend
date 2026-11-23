@@ -198,6 +198,21 @@ def cron_week_ready():
 
 # ── Diagnostic Endpoint ─────────────────────────────────────────
 
+@cron_bp.route('/push-receipts/', methods=['POST'], strict_slashes=False)
+@require_cron_secret
+def cron_push_receipts():
+    """Read Expo push receipts and clear tokens of uninstalled apps — Schedule: hourly"""
+    from app import supabase
+    from app.services.push_notification_service import ExpoPushService
+    try:
+        result = ExpoPushService.check_receipts(supabase)
+        return jsonify({'success': True, 'data': result}), 200
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Push receipts failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e), 'type': type(e).__name__}), 500
+
+
 @cron_bp.route('/health/', methods=['GET', 'POST'], strict_slashes=False)
 @require_cron_secret
 def cron_health():

@@ -97,3 +97,23 @@ def story_event_due(event: Dict, player_mission_id: str, current_month: int) -> 
         probability = 1.0 if probability is None else float(probability)  # 0.0 must mean "never"
         return story_roll(player_mission_id, event['id'], current_month) < probability
     return True
+
+
+def emotion_sanity_delta(row: Dict) -> int:
+    """
+    Story events and decision options carry happiness / stress / motivation.
+    They land on sanity, the game's single mental-health stat:
+        sanity += happiness + motivation / 2 - stress
+    Keep in sync with storySanityDelta() in the app's MissionStoryEventModal.
+    """
+    happiness = int(row.get('happiness_change') or 0)
+    motivation = int(row.get('motivation_change') or 0)
+    stress = int(row.get('stress_change') or 0)
+    return happiness + int(motivation / 2) - stress
+
+
+def earlier_runs(player_id: str, mission_id: str, current_run_id: str) -> list:
+    """Ids of the player's previous (abandoned/failed) runs of the same mission."""
+    rows = supabase.table('player_mission_progress').select('id') \
+        .eq('player_id', str(player_id)).eq('mission_id', str(mission_id)).execute().data or []
+    return [r['id'] for r in rows if str(r['id']) != str(current_run_id)]

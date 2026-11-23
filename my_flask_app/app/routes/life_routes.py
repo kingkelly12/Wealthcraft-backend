@@ -59,3 +59,11 @@ def avatar(current_user_id: str):
 def avatars(current_user_id: str):
     ids = [i for i in (request.args.get('ids') or '').split(',') if i][:200]
     return _run(life.avatars_for, ids)
+
+
+@life_bp.route('/legacy/', methods=['GET'])
+@require_auth
+def legacy_view(current_user_id: str):
+    """The Hall of Lives: achievements, endings collected, unlocks and past lives."""
+    from app.game import legacy
+    return _run(legacy.view, current_user_id)

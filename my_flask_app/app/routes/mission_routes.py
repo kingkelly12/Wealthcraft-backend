@@ -2,11 +2,9 @@ from flask import Blueprint, request, jsonify
 from app.utils.jwt_helper import require_auth
 from app import supabase
 from decimal import Decimal
-import os
-import uuid
 from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
-from app.utils.mission_constraints import constraint_violation, story_event_due
+from app.utils.mission_constraints import earlier_runs, emotion_sanity_delta, story_event_due
 from app.utils.db import fetch_one
 
 mission_bp = Blueprint('mission', __name__)
@@ -73,20 +71,6 @@ def get_available_missions(current_user_id: str):
     3. Returns filtered list of missions the player can start
     """
     try:
-        # Get user profile to check prerequisites
-        profile_response = fetch_one(supabase.table('profiles').select(
-            'net_worth, monthly_income, credit_score'
-        ).eq('user_id', current_user_id))
-        
-        if not profile_response.data:
-            return jsonify({
-                'success': False,
-                'error': 'PROFILE_NOT_FOUND',
-                'message': 'User profile not found'
-            }), 404
-        
-        profile = profile_response.data
-        
         # Get missions - support compact mode to avoid heavy joins
         compact = request.args.get('compact', 'false').lower() == 'true'
         
@@ -102,7 +86,6 @@ def get_available_missions(current_user_id: str):
             ).execute()
         
         if not missions_response.data:
-            print(f"[Missions] No missions found in integrated_missions table")
             return jsonify({
                 'success': True,
                 'data': {'missions': [], 'has_active_mission': False}
@@ -122,7 +105,6 @@ def get_available_missions(current_user_id: str):
         
         has_active_mission = bool(active_response.data)
         
-        print(f"[Missions] User {current_user_id}: has_active={has_active_mission}, completed={len(completed_mission_ids)}")
         
         # Filter missions based on prerequisites
         available_missions = []
@@ -209,7 +191,7 @@ def start_mission(current_user_id: str):
     4. Returns the player mission progress
     """
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         mission_id = data.get('mission_id')
         
         if not mission_id:
@@ -245,77 +227,24 @@ def start_mission(current_user_id: str):
                 'message': 'You already have an active mission. Complete or abandon it first.'
             }), 400
         
-        # Call the database function to start the mission
+        # The database function snapshots the player, copies the constraints and
+        # creates the goal tracking rows; its unique index rejects a second
+        # active mission. (A ~60-line Python copy used to run whenever the RPC
+        # errored, which also swallowed real errors and retried them.)
         try:
-            result = supabase.rpc('start_integrated_mission', {
+            player_mission_id = supabase.rpc('start_integrated_mission', {
                 'p_player_id': current_user_id,
                 'p_mission_id': mission_id
-            }).execute()
-            
-            player_mission_id = result.data
-            
-        except Exception as db_error:
-            # If the function doesn't exist or fails, create manually
-            # Get user profile for snapshot
-            profile_response = fetch_one(supabase.table('profiles').select(
-                'net_worth, monthly_income, credit_score'
-            ).eq('user_id', current_user_id))
-            
-            profile = profile_response.data
-            
-            # Create mission progress
-            progress_response = supabase.table('player_mission_progress').insert({
-                'player_id': current_user_id,
-                'mission_id': mission_id,
-                'is_active': True,
-                'current_month': 1,
-                'constraints_applied': {
-                    'income_multiplier': mission.get('income_multiplier', 1.0),
-                    'expense_multiplier': mission.get('expense_multiplier', 1.0),
-                    'can_change_job': mission.get('can_change_job', True),
-                    'can_buy_assets': mission.get('can_buy_assets', True),
-                    'can_take_loans': mission.get('can_take_loans', True),
-                    'can_rent_property': mission.get('can_rent_property', True),
-                    'can_sell_assets': mission.get('can_sell_assets', True),
-                    'can_buy_lifestyle_items': mission.get('can_buy_lifestyle_items', True),
-                    'allowed_asset_types': mission.get('allowed_asset_types'),
-                    'max_loan_amount': float(mission.get('max_loan_amount')) if mission.get('max_loan_amount') else None,
-                    'allowed_loan_types': mission.get('allowed_loan_types'),
-                    'max_monthly_spending': float(mission.get('max_monthly_spending')) if mission.get('max_monthly_spending') else None,
-                },
-                'game_state_snapshot': {
-                    'net_worth': float(profile.get('net_worth', 0)),
-                    'monthly_income': float(profile.get('monthly_income', 0)),
-                    'credit_score': profile.get('credit_score', 650),
-                    'started_at': datetime.now(timezone.utc).isoformat()
-                }
-            }).execute()
-            
-            player_mission_id = progress_response.data[0]['id'] if progress_response.data else None
-            
-            # Initialize success criteria tracking
-            criteria_response = supabase.table('mission_success_criteria').select(
-                '*'
-            ).eq('mission_id', mission_id).execute()
-            
-            if criteria_response.data:
-                for criteria in criteria_response.data:
-                    # Calculate initial value based on metric
-                    initial_value = 0
-                    if criteria['metric'] == 'net_worth':
-                        initial_value = float(profile.get('net_worth', 0))
-                    elif criteria['metric'] == 'monthly_income':
-                        initial_value = float(profile.get('monthly_income', 0))
-                    elif criteria['metric'] == 'credit_score':
-                        initial_value = profile.get('credit_score', 650)
-                    
-                    supabase.table('player_mission_success_tracking').insert({
-                        'player_mission_id': player_mission_id,
-                        'criteria_id': criteria['id'],
-                        'current_value': initial_value,
-                        'is_met': False
-                    }).execute()
-        
+            }).execute().data
+        except Exception as e:
+            if '23505' in str(e) or 'duplicate' in str(e).lower():
+                return jsonify({
+                    'success': False,
+                    'error': 'ACTIVE_MISSION_EXISTS',
+                    'message': 'You already have an active mission. Complete or abandon it first.'
+                }), 400
+            raise
+
         # Get the created progress
         progress_response = fetch_one(supabase.table('player_mission_progress').select(
             '*, integrated_missions!mission_id(*)'
@@ -405,12 +334,13 @@ def get_active_mission(current_user_id: str):
         
         player_decision_ids = [d['decision_point_id'] for d in (player_decisions_response.data or [])]
         
-        # Find next decision point
-        next_decision = None
-        for decision in (decisions_response.data or []):
-            if decision['month'] == progress['current_month'] and decision['id'] not in player_decision_ids:
-                next_decision = decision
-                break
+        # Next decision: the earliest one that's due and not yet made. (Only the
+        # current month's used to be offered, so a decision skipped while the
+        # month rolled over could never be made, though the API accepted it.)
+        due = sorted((d for d in (decisions_response.data or [])
+                      if d['month'] <= progress['current_month'] and d['id'] not in player_decision_ids),
+                     key=lambda d: d['month'])
+        next_decision = due[0] if due else None
         
         return jsonify({
             'success': True,
@@ -500,7 +430,7 @@ def make_decision(current_user_id: str):
         
         option = option_response.data[0]
         
-        # Record the decision (once per decision point)
+        # Once per decision point
         already = supabase.table('player_mission_decisions').select('id') \
             .eq('player_mission_id', progress['id']).eq('decision_point_id', decision_point_id).limit(1).execute()
         if already.data:
@@ -509,32 +439,64 @@ def make_decision(current_user_id: str):
                 'error': 'ALREADY_DECIDED',
                 'message': 'You already made this decision'
             }), 400
-        supabase.table('player_mission_decisions').insert({
+
+        from app.services.balance_service import BalanceService
+        cash = Decimal(str(option.get('immediate_cash') or 0))
+        sanity_delta = emotion_sanity_delta(option)
+
+        # A restarted mission doesn't pay its rewards again: abandon -> restart
+        # -> take the "+$250 side gig" again was an infinite-money loop. Costs
+        # and setbacks still apply.
+        earlier = earlier_runs(current_user_id, progress['mission_id'], progress['id'])
+        repeat = bool(earlier) and bool(
+            supabase.table('player_mission_decisions').select('id')
+            .in_('player_mission_id', earlier).eq('decision_point_id', decision_point_id).limit(1).execute().data)
+        if repeat:
+            cash = min(cash, Decimal('0'))
+            sanity_delta = min(sanity_delta, 0)
+
+        # Can they pay? Checked BEFORE recording (recording first and then
+        # failing the charge left the decision made and never paid for).
+        if cash < 0:
+            balance = BalanceService.get_current_balance(current_user_id)
+            if -cash > balance:
+                others = supabase.table('mission_decision_options').select('immediate_cash') \
+                    .eq('decision_point_id', decision_point_id).neq('id', option_id).execute().data or []
+                if any(Decimal(str(o.get('immediate_cash') or 0)) >= 0 for o in others):
+                    return jsonify({
+                        'success': False,
+                        'error': 'INSUFFICIENT_FUNDS',
+                        'message': f"You can't afford that (${-cash:,.0f}). Pick another option."
+                    }), 400
+                cash = -balance  # every option costs money: pay what you have
+
+        recorded = supabase.table('player_mission_decisions').insert({
             'player_mission_id': progress['id'],
             'decision_point_id': decision_point_id,
             'chosen_option_id': option_id,
             'month_made': progress['current_month'],
-            'decision_data': {}
+            'decision_data': {'repeat_run': repeat},
         }).execute()
-        
-        # Apply financial impacts
-        immediate_cash = float(option.get('immediate_cash', 0))
-        
-        if immediate_cash != 0:
-            from app.services.balance_service import BalanceService
-            if immediate_cash > 0:
-                BalanceService.add_balance(
-                    user_id=current_user_id,
-                    amount=Decimal(str(immediate_cash)),
-                    reason=f'Mission decision: {option.get("label", "Decision reward")}'
-                )
-            else:
-                BalanceService.subtract_balance(
-                    user_id=current_user_id,
-                    amount=Decimal(str(abs(immediate_cash))),
-                    reason=f'Mission decision: {option.get("label", "Decision cost")}'
-                )
-        
+
+        reason = f'Mission decision: {option.get("label", "Decision")}'
+        try:
+            if cash > 0:
+                BalanceService.add_balance(current_user_id, cash, reason, category='mission')
+            elif cash < 0:
+                BalanceService.subtract_balance(current_user_id, -cash, reason, category='mission')
+        except Exception:
+            if recorded.data:
+                supabase.table('player_mission_decisions').delete().eq('id', recorded.data[0]['id']).execute()
+            raise
+
+        sanity_change = 0
+        if sanity_delta:
+            before = fetch_one(supabase.table('profiles').select('sanity').eq('user_id', current_user_id)).data or {}
+            before = 100 if before.get('sanity') is None else int(before['sanity'])
+            new = supabase.rpc('adjust_sanity', {'p_user_id': current_user_id, 'p_delta': sanity_delta}).execute().data
+            sanity_change = (int(new) if new is not None else before) - before
+        immediate_cash = float(cash)
+
         # Create notification
         supabase.table('notifications').insert({
             'user_id': current_user_id,
@@ -549,7 +511,9 @@ def make_decision(current_user_id: str):
             'message': 'Decision recorded successfully',
             'data': {
                 'option': option,
-                'immediate_cash': immediate_cash
+                'immediate_cash': immediate_cash,
+                'sanity_change': sanity_change,
+                'repeat_run': repeat,
             }
         }), 200
         
@@ -593,7 +557,7 @@ def abandon_mission(current_user_id: str):
             'is_active': False,
             'abandoned_at': datetime.now(timezone.utc).isoformat(),
             'updated_at': datetime.now(timezone.utc).isoformat()
-        }).eq('id', progress['id']).execute()
+        }).eq('id', progress['id']).eq('is_active', True).execute()
         
         # Create notification
         supabase.table('notifications').insert({
@@ -652,102 +616,9 @@ def get_mission_history(current_user_id: str):
         }), 500
 
 
-@mission_bp.route('/check-constraints/', methods=['POST'])
-@require_auth
-def check_constraints(current_user_id: str):
-    """
-    Check if an action is allowed under current mission constraints.
-    
-    This is a helper endpoint for the mobile app to validate actions
-    before attempting them.
-    """
-    try:
-        data = request.json
-        action = data.get('action')  # e.g., 'buy_asset', 'take_loan', 'change_job'
-        action_data = data.get('data') or {}
-        
-        if not action:
-            return jsonify({
-                'success': False,
-                'error': 'VALIDATION_ERROR',
-                'message': 'action is required'
-            }), 400
-        
-        # Get active mission
-        progress_response = supabase.table('player_mission_progress').select(
-            'constraints_applied'
-        ).eq('player_id', current_user_id).eq('is_active', True).execute()
-        
-        if not progress_response.data:
-            # No active mission, all actions allowed
-            return jsonify({
-                'success': True,
-                'allowed': True,
-                'reason': None
-            }), 200
-        
-        constraints = progress_response.data[0]['constraints_applied']
-        
-        reason = constraint_violation(constraints or {}, action, action_data)
-        allowed = reason is None
-
-        return jsonify({
-            'success': True,
-            'allowed': allowed,
-            'reason': reason,
-            'constraints': constraints
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': 'OPERATION_FAILED',
-            'message': str(e)
-        }), 500
-
-
 # ============================================
 # STORY EVENT ENDPOINTS
 # ============================================
-
-@mission_bp.route('/<mission_id>/story-events/', methods=['GET'])
-@require_auth
-def get_mission_story_events(current_user_id: str, mission_id: str):
-    """
-    Get all story events for a specific mission.
-    
-    Returns story events ordered by display_order.
-    """
-    try:
-        # Validate mission exists
-        mission_response = fetch_one(supabase.table('integrated_missions').select(
-            'id, name'
-        ).eq('id', mission_id))
-        
-        if not mission_response.data:
-            return jsonify({
-                'success': False,
-                'error': 'MISSION_NOT_FOUND',
-                'message': 'Mission not found'
-            }), 404
-        
-        # Get all story events for this mission
-        events_response = supabase.table('mission_story_events').select(
-            '*'
-        ).eq('mission_id', mission_id).eq('is_active', True).order('display_order').execute()
-        
-        return jsonify({
-            'success': True,
-            'data': events_response.data or []
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': 'OPERATION_FAILED',
-            'message': str(e)
-        }), 500
-
 
 @mission_bp.route('/active/pending-story-events/', methods=['GET'])
 @require_auth
@@ -825,12 +696,6 @@ def get_pending_story_events(current_user_id: str):
             'message': str(e)
         }), 500
 
-@mission_bp.route('/quit/', methods=['POST'])
-@require_auth
-def quit_mission(current_user_id: str):
-    """Alias for abandon mission"""
-    return abandon_mission.__wrapped__(current_user_id)  # skip re-running @require_auth
-
 @mission_bp.route('/story-events/<event_id>/acknowledge/', methods=['POST'])
 @require_auth
 def acknowledge_story_event(current_user_id: str, event_id: str):
@@ -894,59 +759,62 @@ def acknowledge_story_event(current_user_id: str, event_id: str):
                 'data': {'event': event, 'impacts_applied': {}}
             }), 200
 
+        from app.services.balance_service import BalanceService
+        cash = Decimal(str(event.get('immediate_cash') or 0))
+        sanity_delta = emotion_sanity_delta(event)
+
+        # A restarted mission doesn't pay the same story rewards again
+        # (abandon -> restart -> collect was a money loop). Setbacks still apply.
+        earlier = earlier_runs(current_user_id, progress['mission_id'], player_mission_id)
+        if earlier and supabase.table('player_story_progress').select('id') \
+                .in_('player_mission_id', earlier).eq('story_event_id', event_id) \
+                .eq('has_been_viewed', True).limit(1).execute().data:
+            cash = min(cash, Decimal('0'))
+            sanity_delta = min(sanity_delta, 0)
+
+        # A story hit can't be declined: if it's more than they have, they pay
+        # what they have (it used to be recorded, then fail, and never be paid).
+        if cash < 0:
+            cash = -min(-cash, BalanceService.get_current_balance(current_user_id))
+
+        now = datetime.now(timezone.utc).isoformat()
         if existing_response.data:
-            # Triggered but not yet viewed: mark viewed
+            # Triggered but not yet viewed: mark viewed (only if still unviewed)
             supabase.table('player_story_progress').update({
-                'has_been_viewed': True,
-                'viewed_at': datetime.now(timezone.utc).isoformat(),
-                'updated_at': datetime.now(timezone.utc).isoformat()
-            }).eq('id', existing_response.data[0]['id']).execute()
+                'has_been_viewed': True, 'viewed_at': now, 'updated_at': now,
+            }).eq('id', existing_response.data[0]['id']).eq('has_been_viewed', False).execute()
+            undo = lambda: supabase.table('player_story_progress').update({'has_been_viewed': False}) \
+                .eq('id', existing_response.data[0]['id']).execute()
         else:
-            # Create new progress record
-            supabase.table('player_story_progress').insert({
+            # unique (player_mission_id, story_event_id): a double tap fails here, before any money
+            created = supabase.table('player_story_progress').insert({
                 'player_mission_id': player_mission_id,
                 'story_event_id': event_id,
                 'has_triggered': True,
                 'has_been_viewed': True,
-                'triggered_at': datetime.now(timezone.utc).isoformat(),
-                'viewed_at': datetime.now(timezone.utc).isoformat(),
+                'triggered_at': now,
+                'viewed_at': now,
                 'mission_month': progress['current_month']
             }).execute()
-        
-        # Apply impacts
+            undo = lambda: supabase.table('player_story_progress').delete() \
+                .eq('id', created.data[0]['id']).execute() if created.data else None
+
         impacts_applied = {}
-        
-        # Apply immediate cash
-        immediate_cash = float(event.get('immediate_cash', 0))
-        if immediate_cash != 0:
-            from app.services.balance_service import BalanceService
-            if immediate_cash > 0:
-                BalanceService.add_balance(
-                    user_id=current_user_id,
-                    amount=Decimal(str(immediate_cash)),
-                    reason=f'Story event: {event.get("title", "Mission story")}'
-                )
-            else:
-                BalanceService.subtract_balance(
-                    user_id=current_user_id,
-                    amount=Decimal(str(abs(immediate_cash))),
-                    reason=f'Story event: {event.get("title", "Mission story")}'
-                )
-            impacts_applied['cash_change'] = immediate_cash
-        
-        # Emotions land on sanity, the game's single mental-health stat:
-        #   sanity += happiness + motivation / 2 - stress   (clamped 0-100)
-        # Keep in sync with storySanityDelta() in the app's MissionStoryEventModal.
-        happiness = int(event.get('happiness_change') or 0)
-        motivation = int(event.get('motivation_change') or 0)
-        stress = int(event.get('stress_change') or 0)
-        sanity_delta = happiness + int(motivation / 2) - stress
-        if sanity_delta != 0:
-            before = supabase.table('profiles').select('sanity').eq(
-                'user_id', current_user_id
-            ).limit(1).execute().data
-            current_sanity = (before[0].get('sanity') if before else None)
-            current_sanity = 100 if current_sanity is None else current_sanity
+        reason = f'Story event: {event.get("title", "Mission story")}'
+        try:
+            if cash > 0:
+                BalanceService.add_balance(current_user_id, cash, reason, category='mission')
+            elif cash < 0:
+                BalanceService.subtract_balance(current_user_id, -cash, reason, category='mission')
+        except Exception:
+            undo()
+            raise
+        if cash:
+            impacts_applied['cash_change'] = float(cash)
+
+        if sanity_delta:
+            before = fetch_one(supabase.table('profiles').select('sanity').eq('user_id', current_user_id)).data or {}
+            current_sanity = 100 if before.get('sanity') is None else int(before['sanity'])
             # atomic clamp in SQL (no lost update if another sanity change races)
             new_sanity = supabase.rpc('adjust_sanity', {
                 'p_user_id': current_user_id, 'p_delta': sanity_delta
