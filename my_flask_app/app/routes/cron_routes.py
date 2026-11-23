@@ -198,6 +198,19 @@ def cron_week_ready():
 
 # ── Diagnostic Endpoint ─────────────────────────────────────────
 
+@cron_bp.route('/mission-deadlines/', methods=['POST'], strict_slashes=False)
+@require_cron_secret
+def cron_mission_deadlines():
+    """Decide mission decisions left past their deadline — Schedule: daily"""
+    from app.game.mission_decisions import run_mission_deadlines
+    try:
+        return jsonify({'success': True, 'data': run_mission_deadlines()}), 200
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception('Mission deadlines failed')
+        return jsonify({'success': False, 'error': str(e), 'type': type(e).__name__}), 500
+
+
 @cron_bp.route('/push-receipts/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_push_receipts():

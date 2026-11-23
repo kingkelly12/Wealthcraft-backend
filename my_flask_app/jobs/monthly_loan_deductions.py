@@ -724,6 +724,15 @@ def _advance_missions(scope=None):
         next_month = int(pm.get('current_month') or 1) + 1
 
         player_id = pm['player_id']
+
+        # A required decision still open at the end of the month is made for the
+        # player now (app.game.mission_decisions), before the month moves on.
+        try:
+            from app.game.mission_decisions import auto_decide
+            auto_decide([pm], month_end=True)
+        except Exception as e:
+            logger.error(f"Auto-deciding required decisions failed for {pm['id']}: {e}")
+
         prof_res = supabase.table('profiles').select('net_worth, monthly_income, credit_score') \
             .eq('user_id', player_id).limit(1).execute()
         if not prof_res.data:
@@ -744,8 +753,10 @@ def _advance_missions(scope=None):
             }).eq('player_mission_id', pm['id']).eq('criteria_id', c['id']).execute()
 
         if next_month <= duration:
-            supabase.table('player_mission_progress').update({'current_month': next_month}) \
-                .eq('id', pm['id']).eq('is_active', True).execute()
+            supabase.table('player_mission_progress').update({
+                'current_month': next_month,
+                'month_started_at': datetime.now(timezone.utc).isoformat(),  # decision deadlines count from here
+            }).eq('id', pm['id']).eq('is_active', True).execute()
             continue
 
         total = len(criteria)

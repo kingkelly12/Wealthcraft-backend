@@ -611,6 +611,7 @@ create table public.player_mission_progress (
   is_failed           boolean not null default false,
   current_month       integer not null default 1,
   started_at          timestamptz not null default now(),
+  month_started_at    timestamptz not null default now(),  -- decision deadlines count from here
   completed_at        timestamptz,
   failed_at           timestamptz,
   abandoned_at        timestamptz,

@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from app.services.push_notification_service import ExpoPushService
 from app.utils.mission_constraints import earlier_runs, emotion_sanity_delta, story_event_due
+from app.game.mission_decisions import DecisionError, apply_decision, deadline
 from app.utils.db import fetch_one
 
 mission_bp = Blueprint('mission', __name__)
@@ -341,6 +342,11 @@ def get_active_mission(current_user_id: str):
                       if d['month'] <= progress['current_month'] and d['id'] not in player_decision_ids),
                      key=lambda d: d['month'])
         next_decision = due[0] if due else None
+        if next_decision:
+            # Tell the app when the game will decide this one for the player
+            due_at = deadline(next_decision, progress)
+            next_decision['deadline_at'] = due_at.isoformat() if due_at else None
+            next_decision['decides_at_month_end'] = bool(next_decision.get('is_required'))
         
         return jsonify({
             'success': True,
@@ -430,72 +436,13 @@ def make_decision(current_user_id: str):
         
         option = option_response.data[0]
         
-        # Once per decision point
-        already = supabase.table('player_mission_decisions').select('id') \
-            .eq('player_mission_id', progress['id']).eq('decision_point_id', decision_point_id).limit(1).execute()
-        if already.data:
-            return jsonify({
-                'success': False,
-                'error': 'ALREADY_DECIDED',
-                'message': 'You already made this decision'
-            }), 400
-
-        from app.services.balance_service import BalanceService
-        cash = Decimal(str(option.get('immediate_cash') or 0))
-        sanity_delta = emotion_sanity_delta(option)
-
-        # A restarted mission doesn't pay its rewards again: abandon -> restart
-        # -> take the "+$250 side gig" again was an infinite-money loop. Costs
-        # and setbacks still apply.
-        earlier = earlier_runs(current_user_id, progress['mission_id'], progress['id'])
-        repeat = bool(earlier) and bool(
-            supabase.table('player_mission_decisions').select('id')
-            .in_('player_mission_id', earlier).eq('decision_point_id', decision_point_id).limit(1).execute().data)
-        if repeat:
-            cash = min(cash, Decimal('0'))
-            sanity_delta = min(sanity_delta, 0)
-
-        # Can they pay? Checked BEFORE recording (recording first and then
-        # failing the charge left the decision made and never paid for).
-        if cash < 0:
-            balance = BalanceService.get_current_balance(current_user_id)
-            if -cash > balance:
-                others = supabase.table('mission_decision_options').select('immediate_cash') \
-                    .eq('decision_point_id', decision_point_id).neq('id', option_id).execute().data or []
-                if any(Decimal(str(o.get('immediate_cash') or 0)) >= 0 for o in others):
-                    return jsonify({
-                        'success': False,
-                        'error': 'INSUFFICIENT_FUNDS',
-                        'message': f"You can't afford that (${-cash:,.0f}). Pick another option."
-                    }), 400
-                cash = -balance  # every option costs money: pay what you have
-
-        recorded = supabase.table('player_mission_decisions').insert({
-            'player_mission_id': progress['id'],
-            'decision_point_id': decision_point_id,
-            'chosen_option_id': option_id,
-            'month_made': progress['current_month'],
-            'decision_data': {'repeat_run': repeat},
-        }).execute()
-
-        reason = f'Mission decision: {option.get("label", "Decision")}'
+        options = supabase.table('mission_decision_options').select('*') \
+            .eq('decision_point_id', decision_point_id).execute().data or []
         try:
-            if cash > 0:
-                BalanceService.add_balance(current_user_id, cash, reason, category='mission')
-            elif cash < 0:
-                BalanceService.subtract_balance(current_user_id, -cash, reason, category='mission')
-        except Exception:
-            if recorded.data:
-                supabase.table('player_mission_decisions').delete().eq('id', recorded.data[0]['id']).execute()
-            raise
-
-        sanity_change = 0
-        if sanity_delta:
-            before = fetch_one(supabase.table('profiles').select('sanity').eq('user_id', current_user_id)).data or {}
-            before = 100 if before.get('sanity') is None else int(before['sanity'])
-            new = supabase.rpc('adjust_sanity', {'p_user_id': current_user_id, 'p_delta': sanity_delta}).execute().data
-            sanity_change = (int(new) if new is not None else before) - before
-        immediate_cash = float(cash)
+            fx = apply_decision(current_user_id, progress, decision_point_id, option, options)
+        except DecisionError as e:
+            return jsonify({'success': False, 'error': e.code, 'message': e.message}), e.status
+        immediate_cash, sanity_change, repeat = fx['immediate_cash'], fx['sanity_change'], fx['repeat_run']
 
         # Create notification
         supabase.table('notifications').insert({
