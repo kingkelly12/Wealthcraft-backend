@@ -1,185 +1,94 @@
 #!/bin/bash
+# Adulting backend: deploy to Google Cloud Run.
+#
+#   ./deploy.sh secrets   copy the secret settings from my_flask_app/.env into Secret Manager
+#   ./deploy.sh deploy    build the image in the cloud from the Dockerfile and deploy it
+#   ./deploy.sh all       secrets, then deploy (first time)
+#   ./deploy.sh url       print the live address
+#   ./deploy.sh logs      show recent logs
+#
+# Needs: gcloud logged in to an account with access to the project, and billing enabled on it.
+# Secrets are read with python-dotenv (so quotes and stray spaces in .env are removed, which
+# plain `docker --env-file` does not do) and are never printed.
+set -euo pipefail
+cd "$(dirname "$0")"
 
-# 🚀 Adulting Backend - Cloud Run Quick Deploy Script
-# Usage: ./deploy.sh [build|test|push|deploy|all]
+PROJECT="${GCP_PROJECT_ID:-adulting-515620}"
+REGION="${GCP_REGION:-europe-west1}"   # next to the Supabase database (eu-west-1, Ireland)
+SERVICE="adulting-api"                 # Cloud Run names must be lowercase
+ENV_FILE="my_flask_app/.env"
+PY=".venv/bin/python"
 
-set -e  # Exit on any error
+# Read from Secret Manager at runtime. Anything empty in .env is skipped.
+SECRETS=(SUPABASE_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET DATABASE_URL SECRET_KEY CRON_SECRET EXPO_ACCESS_TOKEN QWEN_API_KEY)
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+gc() { gcloud "$@" --project "$PROJECT" --quiet; }
 
-# Configuration
-PROJECT_ID="${GCP_PROJECT_ID}"
-IMAGE_NAME="Adulting-backend"
-REGION="europe-west2"
-REGISTRY="gcr.io"
+secrets() {
+  echo "==> Storing secrets in project $PROJECT"
+  ENV_FILE="$ENV_FILE" PROJECT="$PROJECT" SECRETS="${SECRETS[*]}" "$PY" - <<'PYEOF'
+import os, subprocess
+from dotenv import dotenv_values
+env = {k: (v or '').strip() for k, v in dotenv_values(os.environ['ENV_FILE']).items()}
+project = os.environ['PROJECT']
+def gcloud(*args, data=None):
+    r = subprocess.run(['gcloud', *args, '--project', project, '--quiet'], input=data, capture_output=True, text=True)
+    return r.returncode, (r.stderr or r.stdout).strip()
+for name in os.environ['SECRETS'].split():
+    value = env.get(name, '')
+    if not value:
+        print(f'  {name:27} skipped (empty in .env)'); continue
+    exists = gcloud('secrets', 'describe', name)[0] == 0
+    rc, msg = gcloud('secrets', 'versions', 'add', name, '--data-file=-', data=value) if exists else \
+              gcloud('secrets', 'create', name, '--replication-policy=automatic', '--data-file=-', data=value)
+    print(f'  {name:27} {("updated" if exists else "created") if rc == 0 else "FAILED: " + msg.splitlines()[-1]}')
+    if rc != 0: raise SystemExit(1)
+PYEOF
 
-# Function to print colored output
-print_step() {
-    echo -e "\n${BLUE}==>${NC} $1"
+  # The service runs as the project's default compute account: let it read the secrets.
+  NUM="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+  gc projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:${NUM}-compute@developer.gserviceaccount.com" \
+    --role roles/secretmanager.secretAccessor >/dev/null
+  echo "  runtime account can read secrets"
 }
 
-print_success() {
-    echo -e "${GREEN}✓${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}✗${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠${NC} $1"
-}
-
-# Check if GCP_PROJECT_ID is set
-check_project_id() {
-    if [ -z "$PROJECT_ID" ]; then
-        print_error "GCP_PROJECT_ID environment variable not set"
-        echo "Set it with: export GCP_PROJECT_ID=your-project-id"
-        exit 1
-    fi
-    print_success "Using GCP Project: $PROJECT_ID"
-}
-
-# Build Docker image locally
-build() {
-    print_step "Building Docker image: $IMAGE_NAME:latest"
-    docker build -t $IMAGE_NAME:latest .
-    print_success "Docker image built successfully"
-}
-
-# Test image locally
-test() {
-    print_step "Testing Docker image locally..."
-    
-    if [ ! -f ".env" ]; then
-        print_warning "No .env file found. Creating template..."
-        cat > .env.example << 'EOF'
-FLASK_CONFIG=production
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-SUPABASE_JWT_SECRET=  # legacy HS256 projects only
-QWEN_API_KEY=your_qwen_key
-SECRET_KEY=your_secret_key
-DATABASE_URL=your_postgres_url
-EOF
-        print_warning "Created .env.example - Copy and update with your values"
-        exit 1
-    fi
-    
-    print_step "Starting container on port 8080..."
-    docker run -d \
-        -p 8080:8080 \
-        --env-file .env \
-        --name $IMAGE_NAME-test \
-        $IMAGE_NAME:latest
-    
-    # Wait for container to start
-    sleep 3
-    
-    print_step "Testing health endpoint..."
-    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
-        print_success "Health check passed!"
-        curl -s http://localhost:8080/health | jq .
-    else
-        print_error "Health check failed!"
-        docker logs $IMAGE_NAME-test
-        docker stop $IMAGE_NAME-test
-        docker rm $IMAGE_NAME-test
-        exit 1
-    fi
-    
-    docker stop $IMAGE_NAME-test
-    docker rm $IMAGE_NAME-test
-    print_success "Local test passed!"
-}
-
-# Push image to GCR
-push() {
-    check_project_id
-    
-    print_step "Tagging image for Google Container Registry..."
-    docker tag $IMAGE_NAME:latest $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest
-    
-    print_step "Pushing to GCR..."
-    docker push $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest
-    
-    print_success "Image pushed to: $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest"
-}
-
-# Deploy to Cloud Run
 deploy() {
-    check_project_id
-    
-    print_step "Deploying to Cloud Run..."
-    
-    gcloud run deploy $IMAGE_NAME \
-        --image $REGISTRY/$PROJECT_ID/$IMAGE_NAME:latest \
-        --platform managed \
-        --region $REGION \
-        --memory 1Gi \
-        --cpu 1 \
-        --timeout 300 \
-        --allow-unauthenticated \
-        --set-env-vars "FLASK_CONFIG=production" \
-        --max-instances 5
+  SUPABASE_URL="$("$PY" -c "from dotenv import dotenv_values as d; print((d('$ENV_FILE').get('SUPABASE_URL') or '').strip())")"
+  [ -n "$SUPABASE_URL" ] || { echo "SUPABASE_URL missing in $ENV_FILE"; exit 1; }
 
-    
-    print_success "Deployment complete!"
-    
-    print_step "Getting service URL..."
-    SERVICE_URL=$(gcloud run services describe $IMAGE_NAME --region $REGION --format='value(status.url)')
-    print_success "Your API is live at: $SERVICE_URL"
-    print_success "Health check: curl $SERVICE_URL/health"
+  # Only wire up the secrets that exist in Secret Manager.
+  SET=""
+  for s in "${SECRETS[@]}"; do
+    if gcloud secrets describe "$s" --project "$PROJECT" >/dev/null 2>&1; then SET="${SET:+$SET,}$s=$s:latest"; fi
+  done
+
+  echo "==> Deploying $SERVICE to $REGION (the image is built in the cloud from ./Dockerfile)"
+  # --no-cpu-throttling: the app sends push notifications from background threads after replying;
+  #   with the default setting Cloud Run slows the CPU once the reply is sent and they can stall.
+  # --allow-unauthenticated: the phone app calls it directly; every route checks its own login token
+  #   (and the cron routes check CRON_SECRET).
+  gc run deploy "$SERVICE" \
+    --source . \
+    --region "$REGION" \
+    --allow-unauthenticated \
+    --no-cpu-throttling \
+    --cpu 1 --memory 1Gi \
+    --timeout 300 \
+    --min-instances 0 --max-instances 5 \
+    --set-env-vars "FLASK_CONFIG=production,SUPABASE_URL=$SUPABASE_URL" \
+    --set-secrets "$SET"
+  url
 }
 
-# Show logs
-logs() {
-    check_project_id
-    print_step "Showing Cloud Run logs..."
-    gcloud run logs read $IMAGE_NAME --limit 50 --region $REGION --follow
-}
+url()  { gc run services describe "$SERVICE" --region "$REGION" --format='value(status.url)'; }
+logs() { gc run services logs read "$SERVICE" --region "$REGION" --limit 50; }
 
-# Main script logic
-case "${1:-all}" in
-    build)
-        build
-        ;;
-    test)
-        test
-        ;;
-    push)
-        build
-        push
-        ;;
-    deploy)
-        check_project_id
-        deploy
-        ;;
-    logs)
-        logs
-        ;;
-    all)
-        build
-        test
-        push
-        deploy
-        ;;
-    *)
-        echo "Usage: $0 {build|test|push|deploy|logs|all}"
-        echo ""
-        echo "Commands:"
-        echo "  build   - Build Docker image locally"
-        echo "  test    - Test Docker image locally (requires .env)"
-        echo "  push    - Build and push to Google Container Registry"
-        echo "  deploy  - Deploy to Cloud Run"
-        echo "  logs    - View Cloud Run logs"
-        echo "  all     - Run all steps (build → test → push → deploy)"
-        exit 1
-        ;;
+case "${1:-}" in
+  secrets) secrets ;;
+  deploy)  deploy ;;
+  all)     secrets; deploy ;;
+  url)     url ;;
+  logs)    logs ;;
+  *) echo "Usage: $0 {secrets|deploy|all|url|logs}"; exit 1 ;;
 esac
