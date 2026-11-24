@@ -252,13 +252,16 @@ class ExpoPushService:
         amount: Optional[float] = None,
         profit: Optional[float] = None
     ) -> None:
-        """Tell everyone following this player about a move (push + in-app feed), in the background."""
+        """Record the move on the player's own profile, then tell everyone following them (push + in-app
+        feed) in the background."""
         from app.utils.background_task import run_in_background
+
+        cls.record_activity(supabase_client, user_id, move_type, item_name, amount, profit)
 
         def background_task():
             try:
                 profile_res = supabase_client.table('profiles').select('username').eq('user_id', user_id).limit(1).execute()
-                username = profile_res.data[0].get('username', 'Your student') if profile_res.data else 'Your student'
+                username = profile_res.data[0].get('username', 'A friend') if profile_res.data else 'A friend'
 
                 followers_res = supabase_client.table('user_follows').select('follower_id').eq('following_id', user_id).execute()
                 follower_ids = [f['follower_id'] for f in (followers_res.data or [])]
@@ -286,27 +289,66 @@ class ExpoPushService:
 
         run_in_background(background_task)
 
+    # The player's own timeline (their profile's Activity tab): (emoji, what they did).
+    _ACTIVITY = {
+        'buy_asset': ('📈', 'Invested in {item}'),
+        'sell_asset': ('💰', 'Sold {item}'),
+        'buy_liability': ('🛍️', 'Bought the {item}'),
+        'sell_liability': ('🔄', 'Sold the {item}'),
+        'buy_home': ('🔑', 'Bought the {item}'),
+        'sell_home': ('🏡', 'Sold the {item}'),
+        'take_loan': ('💳', 'Took out a {item} loan'),
+        'repay_loan': ('📉', 'Paid down their {item}'),
+        'post_p2p_offer': ('🤝', 'Offered a friend loan'),
+        'rent_property': ('🏠', 'Moved into {item}'),
+        'move_out': ('📦', 'Moved out of {item}'),
+        'new_job': ('💼', 'Started as a {item}'),
+        'quit_job': ('👋', 'Quit as a {item}'),
+        'enroll_course': ('🎓', 'Started {item}'),
+        'complete_course': ('📜', 'Completed {item}'),
+        'life_event': ('🎲', 'Chose: {item}'),
+    }
+
+    @classmethod
+    def record_activity(cls, supabase_client, user_id: str, move_type: str, item_name: str,
+                        amount: Optional[float] = None, profit: Optional[float] = None) -> None:
+        """One line on the player's public timeline. Never blocks the move it describes."""
+        emoji, text = cls._ACTIVITY.get(move_type, ('💵', 'Made a move: {item}'))
+        try:
+            supabase_client.table('player_activity').insert({
+                'user_id': user_id, 'kind': move_type, 'emoji': emoji, 'text': text.format(item=item_name),
+                'item_name': item_name, 'amount': amount if isinstance(amount, (int, float)) else None,
+                'profit': profit if isinstance(profit, (int, float)) else None,
+            }).execute()
+        except Exception as e:
+            logger.warning(f"Activity not recorded for {user_id} ({move_type}): {e}")
+
     @staticmethod
     def _follower_copy(move_type: str, username: str, item_name: str,
                        amount: Optional[float], profit: Optional[float]) -> Tuple[str, str]:
         money = f"${amount:,.2f}" if isinstance(amount, (int, float)) else "some money"
         copy = {
-            'buy_asset': ('📊 Student Move', f'{username} just invested in {item_name}. Are you keeping up?'),
-            'buy_liability': ('🚗 Student Splurge', f'{username} just bought {item_name} for {money}. Will this ruin their budget?'),
-            'sell_liability': ('🔄 Student Downsized', f'{username} just sold their {item_name}. Smart move or forced cut?'),
-            'take_loan': ('💳 Student Debt', f'{username} took out a {item_name} loan for {money}. Keep an eye on them.'),
+            'buy_asset': ('📊 Friend Move', f'{username} just invested in {item_name}. Are you keeping up?'),
+            'buy_liability': ('🚗 Friend Splurge', f'{username} just bought {item_name} for {money}. Will this ruin their budget?'),
+            'sell_liability': ('🔄 Friend Downsized', f'{username} just sold their {item_name}. Smart move or forced cut?'),
+            'take_loan': ('💳 Friend Took a Loan', f'{username} took out a {item_name} loan for {money}. Keep an eye on them.'),
             'repay_loan': ('📉 Debt Reduced', f'{username} just paid off {money} of their {item_name}. Building financial freedom.'),
-            'post_p2p_offer': ('🤝 Student Lending', f'{username} is offering {money} as a P2P loan. Playing the bank today?'),
-            'rent_property': ('🏠 Student Housing Move', f'{username} just rented {item_name} at {money}/month. Watching their burn rate?'),
-            'move_out': ('📦 Student Relocated', f'{username} just moved out of {item_name}. Living situation changed.'),
-            'new_job': ('💼 Student Employed', f'{username} started as a {item_name}. Salary incoming!'),
-            'quit_job': ('👋 Student Resigned', f'{username} quit their job as {item_name}. Planning their next move?'),
-            'enroll_course': ('🎓 Student Enrolled', f'{username} started {item_name}. Investing in their future.'),
-            'complete_course': ('📜 Student Graduated', f'{username} completed {item_name}! Their earning potential just went up.'),
-            'life_event': ('🎲 Student Decision', f'{username} made a choice: "{item_name}". How will it impact them?'),
+            'post_p2p_offer': ('🤝 Friend Lending', f'{username} is offering {money} as a P2P loan. Playing the bank today?'),
+            'rent_property': ('🏠 Friend Moved House', f'{username} just rented {item_name} at {money}/month. Watching their burn rate?'),
+            'move_out': ('📦 Friend Relocated', f'{username} just moved out of {item_name}. Living situation changed.'),
+            'new_job': ('💼 Friend Hired', f'{username} started as a {item_name}. Salary incoming!'),
+            'quit_job': ('👋 Friend Resigned', f'{username} quit their job as {item_name}. Planning their next move?'),
+            'enroll_course': ('🎓 Friend Enrolled', f'{username} started {item_name}. Investing in their future.'),
+            'complete_course': ('📜 Friend Levelled Up', f'{username} completed {item_name}! Their earning potential just went up.'),
+            'life_event': ('🎲 Friend Decision', f'{username} made a choice: "{item_name}". How will it impact them?'),
+            'buy_home': ('🔑 Friend Bought a Home', f'{username} just bought the {item_name} for {money}. Homeowner era.'),
         }
+        if move_type == 'sell_home':
+            if isinstance(profit, (int, float)) and profit >= 0:
+                return '🏡 Friend Sold a Home', f'{username} sold the {item_name} for a ${profit:,.0f} profit.'
+            return '🏡 Friend Sold a Home', f'{username} sold the {item_name} at a loss. Ouch.'
         if move_type == 'sell_asset':
             if isinstance(profit, (int, float)) and profit >= 0:
-                return '💰 Student Win', f'{username} sold {item_name} for a ${profit:,.2f} profit. Impressive moves.'
-            return '📉 Student Alert', f'{username} sold {item_name} at a loss. Mentor them?'
+                return '💰 Friend Win', f'{username} sold {item_name} for a ${profit:,.2f} profit. Impressive moves.'
+            return '📉 Friend Alert', f'{username} sold {item_name} at a loss. Will they bounce back?'
         return copy.get(move_type, ('💵 Financial Move', f'{username} made a financial move involving {item_name}.'))

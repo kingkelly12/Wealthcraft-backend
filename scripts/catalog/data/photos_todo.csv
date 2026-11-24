@@ -1,0 +1,387 @@
+name,image_url,image_credit,what
+Studio Flat,,,home
+One-Bedroom Apartment,,,home
+Two-Bedroom Apartment,,,home
+Townhouse,,,home
+Bungalow,,,home
+Lakehouse,,,home
+Beach Villa,,,home
+Penthouse,,,home
+Mansion,,,home
+Country Manor,,,home
+Micro Studio,,,home
+Garden-Level Studio,,,home
+Canal View Studio,,,home
+Artist Studio Flat,,,home
+Corner Studio,,,home
+Rooftop Studio,,,home
+Smart Studio,,,home
+Harbour Studio,,,home
+Market Square Studio,,,home
+Riverside Studio,,,home
+Starter One-Bed,,,home
+Sunny One-Bed,,,home
+Balcony One-Bed,,,home
+Quiet One-Bed,,,home
+City One-Bed,,,home
+Two-Bed Garden Flat,,,home
+Two-Bed Corner Flat,,,home
+Two-Bed With Gym,,,home
+Two-Bed River Flat,,,home
+Family Three-Bed Flat,,,home
+Three-Bed Harbour Flat,,,home
+Old Town Apartment,,,home
+Seafront Apartment,,,home
+Market View Apartment,,,home
+Arts Quarter Apartment,,,home
+Lakeshore Apartment,,,home
+Tower Condo 12F,,,home
+Pool Deck Condo,,,home
+Skyline Condo,,,home
+Garden Condo,,,home
+Marina Condo,,,home
+Corner Condo 20F,,,home
+Rooftop Pool Condo,,,home
+Three-Bed Condo,,,home
+Golf View Condo,,,home
+Riverside Condo,,,home
+Tech Park Condo,,,home
+Harbour Condo,,,home
+Warehouse Loft,,,home
+Converted Factory Loft,,,home
+Mezzanine Loft,,,home
+Skylight Loft,,,home
+Printworks Loft,,,home
+Riverside Loft,,,home
+Brick Loft Studio,,,home
+Penthouse Loft,,,home
+Gallery Loft,,,home
+Tech Loft,,,home
+Brick Townhouse,,,home
+Garden Townhouse,,,home
+Corner Townhouse,,,home
+Canal Townhouse,,,home
+Colourful Row House,,,home
+Modern Townhouse,,,home
+Four-Bed Townhouse,,,home
+Mews House,,,home
+Brownstone,,,home
+Seaside Townhouse,,,home
+Gated Townhouse,,,home
+Hillside Terrace House,,,home
+Garden Duplex,,,home
+Split-Level Duplex,,,home
+Modern Duplex,,,home
+Semi-Detached Family Home,,,home
+Seaview Duplex,,,home
+Riverside Duplex,,,home
+Stone Cottage,,,home
+Thatched Cottage,,,home
+Hillside Cottage,,,home
+Garden Cottage,,,home
+Fishing Cottage,,,home
+Forest Cabin,,,home
+Tea Estate Cottage,,,home
+Mountain Chalet,,,home
+Starter Bungalow,,,home
+Garden Bungalow,,,home
+Veranda Bungalow,,,home
+Modern Bungalow,,,home
+Hillside Bungalow,,,home
+Four-Bed Bungalow,,,home
+Coastal Bungalow,,,home
+Farmhouse,,,home
+Pool Villa,,,home
+Hilltop Villa,,,home
+Vineyard Villa,,,home
+Mediterranean Villa,,,home
+Garden Villa,,,home
+Tropical Villa,,,home
+Clifftop Villa,,,home
+Lakeside Villa,,,home
+Beach Shack,,,home
+Surf House,,,home
+Dune House,,,home
+Beachfront Family House,,,home
+Island Beach House,,,home
+Stilt House,,,home
+Lake Cabin,,,home
+Lakeside Cottage,,,home
+Lake Lodge,,,home
+Modern Lakehouse,,,home
+Island Lakehouse,,,home
+Skyline Penthouse,,,home
+Rooftop Pool Penthouse,,,home
+Harbour Penthouse,,,home
+Duplex Penthouse,,,home
+Sky Garden Penthouse,,,home
+Beachfront Penthouse,,,home
+Glass Penthouse,,,home
+Crown Penthouse,,,home
+Gated Mansion,,,home
+Modern Mansion,,,home
+Hillside Mansion,,,home
+Colonial Mansion,,,home
+Beachfront Mansion,,,home
+Tech Mogul Mansion,,,home
+Estate Mansion,,,home
+Mega Mansion,,,home
+Country Estate,,,home
+Stately Manor,,,home
+Highland Manor,,,home
+Castle Estate,,,home
+Phone Repair Kiosk,,,business
+Online Thrift Store,,,business
+Vending Machine,,,business
+Small Farm,,,business
+Car Wash,,,business
+Print & Copy Shop,,,business
+Barbershop,,,business
+Beauty Salon,,,business
+Coffee Kiosk,,,business
+Convenience Store,,,business
+Food Truck,,,business
+Gym,,,business
+Laundromat,,,business
+Co-working Space,,,business
+Event Venue,,,business
+Franchise Restaurant,,,business
+Boutique Hotel,,,business
+Street Food Cart,,,business
+Shoe Shine Stand,,,business
+Juice Stand,,,business
+Ice Cream Cart,,,business
+Bike Repair Stall,,,business
+Mobile Car Detailing,,,business
+Market Fruit Stand,,,business
+Pop-up Coffee Bike,,,business
+Flower Stall,,,business
+Newsstand & Snacks,,,business
+Tailoring Booth,,,business
+Photo Booth Hire,,,business
+Dog Walking Crew,,,business
+House Cleaning Service,,,business
+Lawn Care Service,,,business
+Window Cleaning Round,,,business
+Mobile Phone Accessories Shop,,,business
+Nail Bar,,,business
+Barber Studio,,,business
+Hair Braiding Salon,,,business
+Laundry & Dry Cleaning,,,business
+Bakery,,,business
+Doughnut Shop,,,business
+Bubble Tea Shop,,,business
+Juice & Smoothie Bar,,,business
+Neighbourhood Cafe,,,business
+Coffee Roastery,,,business
+Tea House,,,business
+Taco Truck,,,business
+Burger Truck,,,business
+Pizza Takeaway,,,business
+Noodle Bar,,,business
+Dumpling House,,,business
+Sushi Counter,,,business
+Ramen Shop,,,business
+Fried Chicken Joint,,,business
+BBQ Smokehouse,,,business
+Shawarma Spot,,,business
+Kebab & Grill,,,business
+Curry House,,,business
+Vegan Kitchen,,,business
+Ghost Kitchen,,,business
+Catering Company,,,business
+Ice Cream Parlour,,,business
+Chocolate Shop,,,business
+Cupcake Bakery,,,business
+Corner Minimart,,,business
+Mini Supermarket,,,business
+Butcher Shop,,,business
+Fishmonger,,,business
+Pharmacy,,,business
+Hardware Store,,,business
+Bookshop,,,business
+Record Store,,,business
+Vintage Clothing Store,,,business
+Sneaker Boutique,,,business
+Fashion Boutique,,,business
+Jewellery Store,,,business
+Optician,,,business
+Electronics Shop,,,business
+Computer Repair Shop,,,business
+Print Studio,,,business
+Florist,,,business
+Pet Grooming Salon,,,business
+Pet Supplies Store,,,business
+Day Spa,,,business
+Yoga Studio,,,business
+Boxing Gym,,,business
+Climbing Gym,,,business
+Fitness Centre,,,business
+Dance Studio,,,business
+Martial Arts Dojo,,,business
+Music School,,,business
+Tutoring Centre,,,business
+Language School,,,business
+Driving School,,,business
+Daycare Centre,,,business
+Recording Studio,,,business
+Photography Studio,,,business
+Tattoo Parlour,,,business
+Escape Room,,,business
+Arcade,,,business
+Karaoke Lounge,,,business
+Bowling Alley,,,business
+Cinema,,,business
+Rooftop Bar,,,business
+Craft Brewery,,,business
+Vineyard,,,business
+Self-Storage Units,,,business
+Car Rental Office,,,business
+Taxi Fleet,,,business
+Moving Company,,,business
+Courier Service,,,business
+Solar Installer,,,business
+Greenhouse Farm,,,business
+Mushroom Farm,,,business
+Fish Farm,,,business
+Honey Apiary,,,business
+Flower Farm,,,business
+Dairy Farm,,,business
+Surf School,,,business
+Dive Shop,,,business
+Campsite,,,business
+Guesthouse,,,business
+Backpacker Hostel,,,business
+Bed & Breakfast,,,business
+Wedding Venue,,,business
+Co-working Hub,,,business
+Web Design Agency,,,business
+Marketing Agency,,,business
+App Studio,,,business
+Event Rentals,,,business
+Car Dealership,,,business
+Petrol Station,,,business
+Shopping Plaza,,,business
+Beach Resort,,,business
+Gym Membership+,,,luxury
+Latest Smartphone,,,luxury
+Designer Handbag,,,luxury
+Rolex Submariner,,,luxury
+Used Sedan,,,luxury
+Adventure Motorbike,,,luxury
+Jet Ski,,,luxury
+Superbike,,,luxury
+Cruiser Motorbike,,,luxury
+Classic Convertible,,,luxury
+Electric Saloon,,,luxury
+Luxury SUV,,,luxury
+Speedboat,,,luxury
+Sports Coupe,,,luxury
+Light Aircraft,,,luxury
+Supercar,,,luxury
+Sailing Catamaran,,,luxury
+Helicopter,,,luxury
+Superyacht,,,luxury
+Private Jet,,,luxury
+City Runabout,,,luxury
+Compact Hatchback,,,luxury
+Retro Hatchback,,,luxury
+Hot Hatch,,,luxury
+Family Saloon,,,luxury
+Estate Wagon,,,luxury
+Hybrid Saloon,,,luxury
+Executive Saloon,,,luxury
+Chauffeur Limousine,,,luxury
+Luxury Grand Saloon,,,luxury
+Electric Hatchback,,,luxury
+Electric Crossover,,,luxury
+Electric Performance Saloon,,,luxury
+Compact SUV,,,luxury
+Off-road 4x4,,,luxury
+Double-Cab Pickup,,,luxury
+Safari Land Cruiser,,,luxury
+Seven-Seat SUV,,,luxury
+Full-size Luxury SUV,,,luxury
+Camper Van,,,luxury
+Vintage Camper Bus,,,luxury
+Classic Roadster,,,luxury
+V8 Muscle Car,,,luxury
+Hot Rod,,,luxury
+Vintage Coupe,,,luxury
+Sports Roadster,,,luxury
+Grand Tourer,,,luxury
+Track Car,,,luxury
+Mid-engine Supercar,,,luxury
+V12 Supercar,,,luxury
+Hypercar,,,luxury
+Electric Hypercar,,,luxury
+City Scooter,,,luxury
+Retro Scooter,,,luxury
+Electric Scooter,,,luxury
+Delivery Scooter,,,luxury
+Commuter Motorbike,,,luxury
+Dirt Bike,,,luxury
+Enduro Adventure Bike,,,luxury
+Cafe Racer Bike,,,luxury
+Streetfighter Bike,,,luxury
+Sport Touring Bike,,,luxury
+Litre Superbike,,,luxury
+Electric Motorbike,,,luxury
+Bobber Motorbike,,,luxury
+Chopper Motorbike,,,luxury
+Touring Cruiser Bike,,,luxury
+Custom Show Bike,,,luxury
+Racing Superbike,,,luxury
+Sidecar Motorbike,,,luxury
+Trike Motorbike,,,luxury
+Quad Bike,,,luxury
+Side-by-side Buggy,,,luxury
+Kayak Pair,,,luxury
+Aluminium Fishing Boat,,,luxury
+Wooden Rowing Boat,,,luxury
+Inflatable RIB,,,luxury
+Jet Ski Pair,,,luxury
+Bowrider,,,luxury
+Wakeboard Boat,,,luxury
+Offshore Powerboat,,,luxury
+Pontoon Party Boat,,,luxury
+Canal Narrowboat,,,luxury
+Houseboat,,,luxury
+Sailing Dinghy,,,luxury
+Racing Sailboat,,,luxury
+Cruising Sailboat,,,luxury
+Blue-water Sailing Yacht,,,luxury
+Luxury Catamaran,,,luxury
+Traditional Dhow,,,luxury
+Longtail Boat,,,luxury
+Felucca,,,luxury
+Cabin Cruiser,,,luxury
+Sport Yacht,,,luxury
+Flybridge Motor Yacht,,,luxury
+Trawler Yacht,,,luxury
+Classic Wooden Yacht,,,luxury
+Gulet,,,luxury
+Explorer Yacht,,,luxury
+Megayacht,,,luxury
+Paraglider Kit,,,luxury
+Microlight,,,luxury
+Gyrocopter,,,luxury
+Sailplane Glider,,,luxury
+Hot Air Balloon,,,luxury
+Vintage Biplane,,,luxury
+Two-seat Trainer,,,luxury
+Four-seat Single Prop,,,luxury
+Seaplane,,,luxury
+Bush Plane,,,luxury
+Twin-engine Plane,,,luxury
+Turboprop,,,luxury
+Light Business Jet,,,luxury
+Midsize Jet,,,luxury
+Super-midsize Jet,,,luxury
+Long-range Jet,,,luxury
+Ultra-long-range Jet,,,luxury
+VIP Airliner,,,luxury
+Light Helicopter,,,luxury
+Utility Helicopter,,,luxury
+Executive Helicopter,,,luxury
+Twin-engine VIP Helicopter,,,luxury

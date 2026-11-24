@@ -75,6 +75,45 @@ def _homes_for(uid):
         return []
 
 
+def _num(v):
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _owned_grid(assets, liabilities, homes_list):
+    """What a player owns, as tiles for the profile grid: homes, flex items and businesses."""
+    tiles = []
+    for h in homes_list:
+        tiles.append({'kind': 'home', 'id': h.get('id'), 'name': h.get('name'), 'image_url': h.get('image_url'),
+                      'category': h.get('home_type'), 'value': _num(h.get('value')),
+                      'note': 'Lives here' if h.get('lives_in') else 'Let out'})
+    for li in liabilities:
+        item = li.get('liability_items') or {}
+        if isinstance(item, list):
+            item = item[0] if item else {}
+        tiles.append({'kind': 'item', 'id': li.get('id'), 'name': item.get('name') or li.get('name') or 'Item',
+                      'image_url': item.get('image_url'), 'category': item.get('category'),
+                      'value': _num(li.get('current_value') if li.get('current_value') is not None else li.get('purchase_price')),
+                      'note': 'Leased out' if li.get('is_leased') else None})
+    ids = [a['asset_id'] for a in assets if a.get('asset_id')]
+    listings = {}
+    if ids:
+        try:
+            listings = {str(r['id']): r for r in supabase.table('assets').select('id, name, category, image_url').in_('id', ids).execute().data or []}
+        except Exception as e:
+            logger.warning(f"Asset listings for the profile grid failed: {e}")
+    for a in assets:
+        row = listings.get(str(a.get('asset_id'))) or {}
+        if (row.get('category') or a.get('asset_type') or '').lower() != 'business':
+            continue
+        tiles.append({'kind': 'business', 'id': a.get('id'), 'name': row.get('name') or a.get('name'), 'image_url': row.get('image_url'),
+                      'category': 'business', 'value': _num(a.get('value')), 'note': None})
+    tiles.sort(key=lambda t: -t['value'])
+    return tiles
+
+
 @profile_bp.route('/overview/', methods=['GET'])
 @require_auth
 def get_comprehensive_dashboard(current_user_id: str):
@@ -156,6 +195,44 @@ def get_comprehensive_dashboard(current_user_id: str):
         rank_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()
         rank = (rank_res.count or 0) + 1
 
+        # 8b. You and them: do you follow them, do they follow you (not on your own profile)
+        relationship = None
+        if str(target_user_id) not in [str(current_user_id)]:
+            try:
+                is_following = bool(supabase.table('user_follows').select('id').eq('follower_id', current_user_id)
+                                    .in_('following_id', user_ids).limit(1).execute().data)
+                follows_you = bool(supabase.table('user_follows').select('id').in_('follower_id', user_ids)
+                                   .eq('following_id', current_user_id).limit(1).execute().data)
+                relationship = {'is_following': is_following, 'follows_you': follows_you}
+            except Exception as e:
+                logger.warning(f"Relationship lookup failed: {e}")
+
+        # 8c. Their timeline: what they bought, sold, started and quit
+        try:
+            activity = supabase.table('player_activity').select('id, kind, emoji, text, amount, profit, created_at') \
+                .in_('user_id', user_ids).order('created_at', desc=True).limit(30).execute().data or []
+        except Exception as e:
+            logger.warning(f"Activity lookup failed: {e}")
+            activity = []
+
+        # 8d. The balance sheet: what they own and what they owe
+        homes_list = _homes_for(target_user_id)
+        try:
+            loans = supabase.table('liabilities').select('remaining_balance').in_('user_id', user_ids).execute().data or []
+        except Exception as e:
+            logger.warning(f"Debt lookup failed: {e}")
+            loans = []
+        owned = _owned_grid(assets, liabilities, homes_list)
+        investments = sum(_num(a.get('value')) for a in assets) - sum(t['value'] for t in owned if t['kind'] == 'business')
+        balance_sheet = {
+            'cash': float(balance),
+            'investments': round(max(investments, 0), 2),
+            'businesses': round(sum(t['value'] for t in owned if t['kind'] == 'business'), 2),
+            'homes': round(sum(t['value'] for t in owned if t['kind'] == 'home'), 2),
+            'possessions': round(sum(t['value'] for t in owned if t['kind'] == 'item'), 2),
+            'debt': round(sum(max(_num(l.get('remaining_balance')), 0) for l in loans), 2),
+        }
+
         # 9. Education (Enrolled & Completed Courses)
         try:
             education_res = supabase.table('user_courses').select('*, courses(*)').in_('user_id', user_ids).execute()
@@ -174,7 +251,12 @@ def get_comprehensive_dashboard(current_user_id: str):
                 # Cars, boats, aircraft and luxury pieces to show off.
                 'showcase': economy.showcase(liabilities),
                 # Homes they own (and whether they live in one).
-                'homes': _homes_for(target_user_id),
+                'homes': homes_list,
+                # Tiles for the profile grid, their timeline, and what they own vs owe.
+                'owned': owned,
+                'activity': activity,
+                'balance_sheet': balance_sheet,
+                'relationship': relationship,
                 'jobs': jobs,
                 'rental': rental,
                 'education': education,

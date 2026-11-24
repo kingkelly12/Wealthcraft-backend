@@ -500,8 +500,9 @@ def _reset_run(uid, bg, legacy_bonus=0, forced=False):
     supabase.table('player_rentals').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('player_liabilities').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('user_assets').delete().eq('user_id', uid).execute()
-    from app.game import homes
+    from app.game import homes, showroom
     homes.clear_for_new_life(uid)
+    showroom.clear_for_new_life(uid)
     supabase.table('liabilities').delete().eq('user_id', uid).execute()
     supabase.table('bank_loans').update({'status': 'completed'}).eq('borrower_id', uid).eq('status', 'active').execute()
     # All courses: a completed one blocked re-enrolling for good, yet its salary boost was already gone.

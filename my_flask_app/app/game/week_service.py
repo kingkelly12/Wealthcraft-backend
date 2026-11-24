@@ -625,8 +625,16 @@ def _pay_gigs(uid):
     except Exception as e:
         logger.warning(f"Could not load gigs for {uid}: {e}")
         return out
+    from app.game import courses
     for g in gigs:
         pay = economy.money(g.get('weekly_pay'))
+        try:  # side-hustle courses raise a gig's pay
+            pct, titles = courses.gig_bonus(uid, g['title'])
+        except Exception as e:
+            logger.warning(f"Gig course bonus for {uid} failed: {e}")
+            pct, titles = Decimal('0'), []
+        if pct > 0:
+            pay = economy.money(pay * (1 + pct))
         if pay > 0:
             BalanceService.add_balance(uid, pay, f"Gig: {g['title']}", category='gig')
         sanity = int(g.get('sanity_per_week') or 0)
@@ -635,8 +643,26 @@ def _pay_gigs(uid):
                 supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': sanity}).execute()
             except Exception as e:
                 logger.warning(f"Gig sanity for {uid} failed: {e}")
-        out.append({'title': g['title'], 'pay': float(pay), 'sanity': sanity})
+        out.append({'title': g['title'], 'pay': float(pay), 'sanity': sanity, **({'bonus_pct': float(pct * 100), 'bonus_from': titles} if pct > 0 else {})})
     return out
+
+
+def _course_finished(uid, c):
+    """Tell the player (push) and their followers that a course is done."""
+    from app.services.push_notification_service import ExpoPushService
+    what = []
+    if c.get('target_gig') and c.get('gig_bonus_pct'):
+        what.append(f"+{c['gig_bonus_pct']:g}% pay as a {c['target_gig']}")
+    if c.get('experience_months'):
+        what.append(f"counts as {c['experience_months']} months in {c['industry']}")
+    if c.get('pay_bonus_pct'):
+        what.append(f"+{c['pay_bonus_pct']:g}% pay while you work in {c['industry']}")
+    try:
+        ExpoPushService.send_notification_to_user(supabase, uid, '📜 Course complete', f"You finished {c['title']}: {', '.join(what) or 'well done'}.",
+                                                  notification_type='course_complete', data={'type': 'course_complete', 'screen': '/education'})
+        ExpoPushService.notify_followers_of_financial_move(supabase_client=supabase, user_id=uid, move_type='complete_course', item_name=c['title'])
+    except Exception as e:
+        logger.warning(f'Course alerts failed for {uid}: {e}')
 
 
 def complete_week(user_id: str) -> dict:
@@ -741,6 +767,20 @@ def complete_week(user_id: str) -> dict:
     except Exception as e:  # the squad never blocks a week
         logger.warning(f'Squad update failed for {uid} at week {week}: {e}')
         receipt['squad'] = None
+    try:
+        from app.game import courses
+        receipt['courses_finished'] = courses.after_week(uid)
+        for c in receipt['courses_finished']:
+            _course_finished(uid, c)
+    except Exception as e:  # courses never block a week
+        logger.warning(f'Course update failed for {uid} at week {week}: {e}')
+        receipt['courses_finished'] = []
+    try:
+        from app.game import showroom
+        receipt['wishlist_unlocked'] = showroom.after_week(uid)
+    except Exception as e:  # the showroom never blocks a week
+        logger.warning(f'Wishlist check failed for {uid} at week {week}: {e}')
+        receipt['wishlist_unlocked'] = []
 
     supabase.table('player_weeks').update({
         'status': 'completed', 'receipt': receipt, 'completed_at': receipt['completed_at'],

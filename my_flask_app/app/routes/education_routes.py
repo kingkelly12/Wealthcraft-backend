@@ -1,411 +1,87 @@
 """
-Education management routes
-Handles course enrollment and completion with JWT authentication
+Courses (see app/game/courses.py): industry courses on game time that count as experience and
+pay a bonus while you work in that industry.
+
+GET  /api/education/overview/   every course with your status, your experience, your current bonus
+POST /api/education/enroll/     {"course_id"}        pay and start (finishes after its game weeks)
+POST /api/education/complete/   {"user_course_id"}   finish one whose weeks are up (normally automatic)
 """
-from flask import Blueprint, request, jsonify
-from pydantic import ValidationError
-from app.utils.jwt_helper import require_auth
-from app.services.balance_service import BalanceService
-from app.services.mentor_service import MentorService
-from app.schemas.education_schema import CourseEnrollmentRequest, CourseCompletionRequest, CourseEnrollmentResponse, CourseCompletionResponse
-import uuid
-import random
-from datetime import datetime, timezone
-from decimal import Decimal
-from app.services.push_notification_service import ExpoPushService
-from app import supabase
-from app.services.profile_service import ProfileService
 import logging
 
-logger = logging.getLogger(__name__)
+from flask import Blueprint, jsonify, request
 
-def resolve_user_ids(user_id):
-    """
-    Given a user_id (could be Auth UID or Profile ID),
-    return a list of both possible IDs to ensure robust matching across tables.
-    """
-    try:
-        uuid_obj = uuid.UUID(user_id)
-        # Try finding profile by user_id First
-        profile = ProfileService.get_profile_by_user_id(uuid_obj)
-        if profile:
-            return [str(profile.user_id), str(profile.id)]
-        
-        # If not found, try finding by profile ID
-        from app.models.profile import Profile
-        profile = Profile.query.filter_by(id=uuid_obj).first()
-        if profile:
-            return [str(profile.user_id), str(profile.id)]
-            
-        return [user_id]
-    except:
-        return [user_id]
+from app import supabase
+from app.game import courses
+from app.game.courses import CourseError
+from app.services.push_notification_service import ExpoPushService
+from app.utils.jwt_helper import require_auth
 
 education_bp = Blueprint('education', __name__)
+logger = logging.getLogger(__name__)
+
+
+def _error(e: CourseError):
+    return jsonify({'success': False, 'error': e.code, 'message': e.message, **({'data': e.data} if e.data else {})}), e.status
+
+
+def _failed(what):
+    logger.exception(f'Course {what} failed')
+    return jsonify({'success': False, 'error': 'OPERATION_FAILED', 'message': f'Could not {what}. Try again.'}), 500
 
 
 @education_bp.route('/overview/', methods=['GET'])
 @require_auth
-def get_education_overview(current_user_id: str):
-    """
-    Consolidated endpoint for Virtual Academy screen.
-    Returns both available courses and user's current progress.
-    Optimized to minimize API calls (2 queries instead of 3).
-    """
+def overview(current_user_id: str):
     try:
-        user_ids = resolve_user_ids(current_user_id)
-        logger.info(f"Education Overview: fetching data for user_ids {user_ids}")
-        
-        # 1. Fetch all available courses (sorted by cost)
-        courses_res = supabase.table('courses').select('*').order('cost').execute()
-        available_courses = courses_res.data or []
-        
-        # 2. Fetch enrolled courses - GET COURSES DETAILS IN ONE JOIN (avoid separate query)
-        # Try to fetch user_courses with course details via FK
-        # If explicit FK fails, try implicit relationship or fetch separately
-        try:
-            enrolled_res = supabase.table('user_courses').select('*, courses(*)').in_('user_id', user_ids).execute()
-        except:
-            # Fallback: fetch user_courses only, join won't work
-            enrolled_res = supabase.table('user_courses').select('*').in_('user_id', user_ids).execute()
-        enrolled_courses = enrolled_res.data or []
-        
-        # 3. Academy Insights (AI)
-        news_res = supabase.table('market_news')\
-            .select('*')\
-            .eq('category', 'education')\
-            .order('created_at', desc=True)\
-            .limit(3)\
-            .execute()
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'available': available_courses,
-                'enrolled': enrolled_courses,
-                'insights': news_res.data or []
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"[Education Overview] Error: {str(e)}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': 'FETCH_FAILED',
-            'message': str(e)
-        }), 500
+        return jsonify({'success': True, 'data': courses.overview(current_user_id)}), 200
+    except Exception:
+        return _failed('load courses')
 
-
-@education_bp.route('/courses/', methods=['GET'])
-def get_courses():
-    """Get available courses"""
-    try:
-        response = supabase.table('courses').select('*').order('cost').execute()
-        return jsonify({'success': True, 'data': response.data}), 200
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@education_bp.route('/enrolled/', methods=['GET'])
-@require_auth
-def get_enrolled_courses(current_user_id: str):
-    """Get courses the user is enrolled in - includes course details via join"""
-    try:
-        # Use join to get course details in one query instead of two
-        try:
-            response = supabase.table('user_courses').select('*, courses(*)').eq('user_id', current_user_id).execute()
-        except:
-            response = supabase.table('user_courses').select('*').eq('user_id', current_user_id).execute()
-        enrolled_courses = response.data or []
-                    
-        return jsonify({'success': True, 'data': enrolled_courses}), 200
-    except Exception as e:
-        logger.error(f"[Get Enrolled Courses] Error: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 @education_bp.route('/enroll/', methods=['POST'])
 @require_auth
-def enroll_in_course(current_user_id: str):
-    """
-    Enroll in a course
-    
-    This endpoint:
-    1. Validates the request
-    2. Checks if already enrolled
-    3. Checks if user has sufficient funds
-    4. Deducts course cost
-    5. Creates enrollment record
-    6. Logs transaction
-    """
+def enroll(current_user_id: str):
+    course_id = (request.get_json(silent=True) or {}).get('course_id')
+    if not course_id:
+        return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'Pick a course.'}), 400
     try:
-        # Validate request
-        data = CourseEnrollmentRequest(**request.json)
-        
-        # 1. Get course details
-        course_response = supabase.table('courses').select('*').eq('id', str(data.course_id)).limit(1).execute()
-        
-        if not course_response.data:
-            return jsonify({
-                'success': False,
-                'error': 'COURSE_NOT_FOUND',
-                'message': f'Course {data.course_id} not found'
-            }), 404
-        
-        course = course_response.data[0]
-        
-        # 2. Check if already enrolled
-        existing_enrollment = supabase.table('user_courses').select('id').eq('user_id', current_user_id).eq('course_id', str(data.course_id)).execute()
-        
-        if existing_enrollment.data and len(existing_enrollment.data) > 0:
-            return jsonify({
-                'success': False,
-                'error': 'ALREADY_ENROLLED',
-                'message': 'You have already enrolled in or completed this course.'
-            }), 400
-        
-        # 3. Check if user has sufficient funds
-        current_balance = BalanceService.get_current_balance(current_user_id)
-        course_cost = Decimal(str(course['cost']))
-        
-        if current_balance < course_cost:
-            return jsonify({
-                'success': False,
-                'error': 'INSUFFICIENT_FUNDS',
-                'message': f"You don't have enough cash to enroll in this course. Need ${course_cost}, have ${current_balance}"
-            }), 400
-        
-        # 4. Claim the enrollment first: unique (user_id, course_id) rejects a
-        #    concurrent duplicate BEFORE any money moves.
-        enrollment_id = str(uuid.uuid4())
-        try:
-            supabase.table('user_courses').insert({
-                'id': enrollment_id,
-                'user_id': current_user_id,
-                'course_id': str(data.course_id),
-                'progress': 0,
-                'started_at': datetime.now(timezone.utc).isoformat()
-            }).execute()
-        except Exception as e:
-            if '23505' in str(e) or 'duplicate' in str(e).lower():
-                return jsonify({'success': False, 'error': 'ALREADY_ENROLLED',
-                                'message': 'You have already enrolled in or completed this course.'}), 400
-            raise
-
-        # 5. Charge (free courses skip the wallet); release the claim on failure
-        if course_cost > 0:
-            try:
-                balance_result = BalanceService.subtract_balance(
-                    user_id=current_user_id,
-                    amount=course_cost,
-                    reason=f"Enrolled in {course['title']}",
-                    category='education',
-                )
-            except Exception:
-                supabase.table('user_courses').delete().eq('id', enrollment_id).execute()
-                raise
-        else:
-            balance_result = {'new_balance': current_balance}
-
-        # Notify followers about the enrollment
+        course = courses.enroll(current_user_id, str(course_id))
+    except CourseError as e:
+        return _error(e)
+    except Exception:
+        return _failed('enroll')
+    try:
         ExpoPushService.notify_followers_of_financial_move(
-            supabase_client=supabase,
-            user_id=current_user_id,
-            move_type='enroll_course',
-            item_name=course['title'],
-            amount=float(course_cost)
-        )
-        
-        return jsonify({
-            'success': True,
-            'message': f'You have successfully enrolled in {course["title"]}.',
-            'enrollment_id': enrollment_id,
-            'new_balance': float(balance_result['new_balance']),
-            'cost': float(course_cost)
-        }), 200
-        
-    except ValidationError as e:
-        return jsonify({
-            'success': False,
-            'error': 'VALIDATION_ERROR',
-            'message': 'Invalid request data',
-            'details': e.errors()
-        }), 400
+            supabase_client=supabase, user_id=current_user_id, move_type='enroll_course',
+            item_name=course.get('title', 'a course'), amount=float(course.get('cost') or 0))
     except Exception as e:
-        error_message = str(e)
-        
-        if 'Insufficient funds' in error_message:
-            return jsonify({
-                'success': False,
-                'error': 'INSUFFICIENT_FUNDS',
-                'message': error_message
-            }), 400
-        
-        return jsonify({
-            'success': False,
-            'error': 'OPERATION_FAILED',
-            'message': error_message
-        }), 500
+        logger.warning(f'Follower alert failed for {current_user_id}: {e}')
+    return jsonify({'success': True, 'message': f"You started {course['title']}.", 'data': courses.overview(current_user_id)}), 200
 
 
 @education_bp.route('/complete/', methods=['POST'])
 @require_auth
-def complete_course(current_user_id: str):
-    """
-    Complete a course
-    
-    This endpoint:
-    1. Marks course as completed
-    2. Applies salary boost to profile
-    3. Gives completion bonus (2x salary boost)
-    4. Logs transaction
-    """
+def complete(current_user_id: str):
+    user_course_id = (request.get_json(silent=True) or {}).get('user_course_id')
+    if not user_course_id:
+        return jsonify({'success': False, 'error': 'VALIDATION_ERROR', 'message': 'Pick a course.'}), 400
     try:
-        # Validate request (older app builds sent the enrollment id as `course_id`)
-        body = request.get_json(silent=True) or {}
-        if 'user_course_id' not in body and 'course_id' in body:
-            body['user_course_id'] = body['course_id']
-        data = CourseCompletionRequest(**body)
-
-        user_course_response = supabase.table('user_courses').select('*, courses(*)') \
-            .eq('id', str(data.user_course_id)).eq('user_id', current_user_id).limit(1).execute()
-
-        if not user_course_response.data:
-            return jsonify({
-                'success': False,
-                'error': 'ENROLLMENT_NOT_FOUND',
-                'message': 'Course enrollment not found or does not belong to you'
-            }), 404
-
-        user_course = user_course_response.data[0]
-        course = user_course.get('courses') or {}
-
-        if not course:
-            return jsonify({
-                'success': False,
-                'error': 'COURSE_NOT_FOUND',
-                'message': 'Course details not found'
-            }), 404
-
-        # Course time must actually have elapsed (enroll → complete instantly
-        # used to be possible straight from the API).
-        try:
-            started = datetime.fromisoformat(str(user_course.get('started_at')).replace('Z', '+00:00'))
-            if started.tzinfo is not None:
-                started = started.astimezone(timezone.utc).replace(tzinfo=None)
-            hours_needed = float(course.get('duration_hours') or 0)
-            hours_done = (datetime.utcnow() - started).total_seconds() / 3600
-            if hours_done < hours_needed:
-                return jsonify({
-                    'success': False,
-                    'error': 'COURSE_IN_PROGRESS',
-                    'message': f'Keep studying: {hours_needed - hours_done:.1f} more hours to go.'
-                }), 400
-        except (TypeError, ValueError):
-            pass
-
-        # 2. Mark as completed — atomically, and only once. Previously this could
-        #    be called repeatedly, stacking the salary boost and bonus every time.
-        claim = supabase.table('user_courses').update({
-            'progress': 100,
-            'completed_at': datetime.now(timezone.utc).isoformat()
-        }).eq('id', str(data.user_course_id)).eq('user_id', current_user_id) \
-          .is_('completed_at', 'null').execute()
-        if not claim.data:
-            return jsonify({
-                'success': False,
-                'error': 'ALREADY_COMPLETED',
-                'message': 'You have already completed this course.'
-            }), 400
-
-        # 3. Apply salary boost to profile (permanent income increase)
-        try:
-            salary_boost = Decimal(str(course.get('salary_boost', 0)))
-            user_uuid = uuid.UUID(current_user_id)
-            ProfileService.update_monthly_income(user_uuid, float(salary_boost))
-        except Exception as e:
-            logger.error(f"Failed to update salary boost for user {current_user_id}: {e}")
-            salary_boost = Decimal('0')
-        
-        # 4. Give completion bonus (2x salary boost)
-        bonus = salary_boost * 2
-        if bonus > 0:
-            balance_result = BalanceService.add_balance(
-                user_id=current_user_id,
-                amount=bonus,
-                reason=f"Course completion bonus for {course['title']}",
-                category='education',
-            )
-        else:
-            balance_result = {'new_balance': BalanceService.get_current_balance(current_user_id)}
-        
-        # Send push notification
-        try:
-            ExpoPushService.send_notification_to_user(
-                supabase_client=supabase,
-                user_id=current_user_id,
-                title='🎓 Course Completed',
-                body=f'You completed {course["title"]}! Salary +${salary_boost}/mo and ${bonus} bonus',
-                notification_type='course_completed',
-                data={
-                    'course_id': course['id'],
-                    'salary_boost': float(salary_boost),
-                    'bonus': float(bonus),
-                    'screen': '/education'
-                }
-            )
-        except Exception as e:
-            print(f"Failed to send push notification: {str(e)}")
-        
-        # ============ PHASE 3: REAL-TIME MENTOR TRIGGER ============
-        # Check for mentor congratulations on course completion
-        try:
-            trigger = MentorService.check_real_time_triggers(
-                player_id=current_user_id,
-                action='complete_course',
-                action_data={
-                    'course_name': course.get('title'),
-                    'salary_boost': float(salary_boost),
-                    'bonus': float(bonus)
-                }
-            )
-            
-            if trigger:
-                # Send mentor message to player (with push notification in Phase 4)
-                MentorService.send_mentor_message(
-                    player_id=current_user_id,
-                    mentor_data=trigger,
-                    metrics={},
-                    supabase_client=supabase
-                )
-        except Exception as e:
-            print(f"Failed to trigger mentor response: {str(e)}")
-        
-        # Notify followers about the course completion
+        course = courses.complete(current_user_id, str(user_course_id))
+    except CourseError as e:
+        return _error(e)
+    except Exception:
+        return _failed('finish the course')
+    try:
         ExpoPushService.notify_followers_of_financial_move(
-            supabase_client=supabase,
-            user_id=current_user_id,
-            move_type='complete_course',
-            item_name=course.get('title', 'Course'),
-            amount=float(bonus)
-        )
-        
-        return jsonify({
-            'success': True,
-            'message': f"You finished {course['title']}! Your salary increased by ${salary_boost}/mo and you got a ${bonus} bonus.",
-            'salary_boost': float(salary_boost),
-            'bonus': float(bonus),
-            'new_balance': float(balance_result['new_balance'])
-        }), 200
-        
-    except ValidationError as e:
-        return jsonify({
-            'success': False,
-            'error': 'VALIDATION_ERROR',
-            'message': 'Invalid request data',
-            'details': e.errors()
-        }), 400
+            supabase_client=supabase, user_id=current_user_id, move_type='complete_course', item_name=course.get('title', 'a course'))
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': 'OPERATION_FAILED',
-            'message': str(e)
-        }), 500
+        logger.warning(f'Follower alert failed for {current_user_id}: {e}')
+    try:  # the mentor's congratulations
+        from app.services.mentor_service import MentorService
+        trigger = MentorService.check_real_time_triggers(player_id=current_user_id, action='complete_course',
+                                                         action_data={'course_name': course.get('title')})
+        if trigger:
+            MentorService.send_mentor_message(player_id=current_user_id, mentor_data=trigger, metrics={}, supabase_client=supabase)
+    except Exception as e:
+        logger.warning(f'Mentor response failed for {current_user_id}: {e}')
+    return jsonify({'success': True, 'message': f"You finished {course['title']}.", 'data': courses.overview(current_user_id)}), 200

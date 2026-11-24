@@ -67,23 +67,27 @@ def follow_user(current_user_id: str):
             'created_at': datetime.now(timezone.utc).isoformat()
         }).execute()
         
-        # Create notification for followed user — framed as MENTORSHIP
+        # Tell them who it was: "amina started following you" (and whether you already follow back).
+        me = supabase.table('profiles').select('username').eq('user_id', current_user_id).limit(1).execute().data
+        name = (me[0].get('username') if me else None) or 'Someone'
+        follows_back = bool(supabase.table('user_follows').select('id').eq('follower_id', str(data.target_user_id))
+                            .eq('following_id', current_user_id).limit(1).execute().data)
+        body = f'{name} started following you.' + ('' if follows_back else ' Follow back?')
         supabase.table('notifications').insert({
             'user_id': str(data.target_user_id),
             'type': 'follow', # Standardized type for frontend handling
-            'title': '🎓 New Student',
-            'message': 'A player just chose you as their mentor. They\'ll learn from your moves.',
+            'title': '👋 New follower',
+            'message': body,
             'related_user_id': current_user_id,
             'read': False
         }).execute()
-        
-        # Send push notification — mentorship framing
+
         try:
             ExpoPushService.send_notification_to_user(
                 supabase_client=supabase,
                 user_id=str(data.target_user_id),
-                title='🎓 You Have a New Student',
-                body='Someone just chose you as their financial mentor. They\'ll learn from your moves.',
+                title='👋 New follower',
+                body=body,
                 notification_type='follow', # Unified type
                 data={
                     'userId': current_user_id, # Standard key for follow navigation

@@ -109,7 +109,9 @@ create table public.assets (
   mission_only            boolean not null default false,
   unlocks_on_purchase     text[] not null default '{}',
   created_at              timestamptz not null default now(),
-  updated_at              timestamptz not null default now()
+  updated_at              timestamptz not null default now(),
+  image_url               text,
+  image_credit            text
 );
 create index assets_category_idx on public.assets (category);
 create trigger assets_updated_at before update on public.assets
@@ -199,7 +201,18 @@ create table public.courses (
   mission_only          boolean not null default false,
   difficulty_rating     integer not null default 1,
   learning_path         text,
-  created_at            timestamptz not null default now()
+  created_at            timestamptz not null default now(),
+  -- Courses on game time (app/game/courses.py)
+  industry              text,                              -- career courses: the ladder they help you climb
+  tier                  text not null default 'certificate', -- certificate | diploma | executive | skill
+  emoji                 text,
+  weeks                 integer not null default 4,         -- game weeks to finish
+  experience_months     integer not null default 0,         -- counts as this much experience in the industry
+  pay_bonus_pct         numeric not null default 0,         -- paid on paydays while your main job is in the industry
+  min_months            integer not null default 0,         -- experience needed to enrol
+  target_job            text,                              -- the job_market job it leads to
+  target_gig            text,                              -- side-hustle courses: the gig it boosts
+  gig_bonus_pct         numeric not null default 0          -- extra weekly pay for that gig
 );
 
 create table public.user_courses (
@@ -210,6 +223,7 @@ create table public.user_courses (
   started_at   timestamptz not null default now(),
   completed_at timestamptz,
   created_at   timestamptz not null default now(),
+  started_week integer,                                    -- game week enrolled (courses run on game time)
   unique (user_id, course_id)
 );
 
@@ -252,6 +266,7 @@ create table public.home_listings (
   description  text,
   upkeep       jsonb not null default '[]', -- [{"label": "Insurance", "monthly": 40}, ...]
   image_url    text,
+  image_credit text,                         -- "Photo: name / CC BY 4.0" when the licence asks for credit
   created_at   timestamptz not null default now()
 );
 
@@ -280,6 +295,7 @@ create table public.liability_items (
   monthly_cost numeric(15,2) not null default 0,
   description  text,
   image_url    text,
+  image_credit text,
   created_at   timestamptz not null default now()
 );
 
@@ -939,6 +955,67 @@ create index squad_member_weeks_user_idx on public.squad_member_weeks (user_id, 
 
 -- Squad-goal payouts, once per player per calendar week. No FK to squads: it must outlive an
 -- emptied (deleted) squad, or leave -> re-create -> replay pays out again.
+-- Player activity: the timeline on a player's profile. Server-only.
+create table public.player_activity (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.profiles(user_id) on delete cascade,
+  kind       text not null,
+  emoji      text,
+  text       text not null,
+  item_name  text,
+  amount     numeric,
+  profit     numeric,
+  created_at timestamptz not null default now()
+);
+create index player_activity_user_idx on public.player_activity (user_id, created_at desc);
+alter table public.player_activity enable row level security;
+
+-- Showroom: wishlists, first-seen weeks and deals (app/game/showroom.py). Server-only.
+create table public.showroom_wishlist (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references public.profiles(user_id) on delete cascade,
+  kind        text not null check (kind in ('home', 'business', 'item')),
+  item_id     text not null,
+  added_at    timestamptz not null default now(),
+  notified_at timestamptz,
+  unique (user_id, kind, item_id)
+);
+create index showroom_wishlist_user_idx on public.showroom_wishlist (user_id);
+alter table public.showroom_wishlist enable row level security;
+
+create table public.showroom_seen (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references public.profiles(user_id) on delete cascade,
+  life_number     integer not null default 1,
+  kind            text not null check (kind in ('home', 'business', 'item')),
+  item_id         text not null,
+  first_seen_week integer not null,
+  price           numeric not null,
+  seen_at         timestamptz not null default now(),
+  unique (user_id, life_number, kind, item_id)
+);
+create index showroom_seen_user_idx on public.showroom_seen (user_id, life_number);
+alter table public.showroom_seen enable row level security;
+
+create table public.showroom_deals (
+  id                uuid primary key default gen_random_uuid(),
+  user_id           uuid not null references public.profiles(user_id) on delete cascade,
+  life_number       integer not null default 1,
+  window_start_week integer not null,
+  ends_week         integer not null,
+  kind              text not null check (kind in ('home', 'item')),
+  item_id           text not null,
+  discount_pct      numeric not null check (discount_pct > 0 and discount_pct < 0.5),
+  label             text,
+  emoji             text,
+  created_at        timestamptz not null default now(),
+  redeemed_at       timestamptz,
+  saving            numeric,
+  unique (user_id, life_number, kind, item_id)
+);
+create index showroom_deals_window_idx on public.showroom_deals (user_id, life_number, window_start_week);
+alter table public.showroom_deals enable row level security;
+
 create table public.squad_rewards (
   user_id    uuid not null references public.profiles(user_id) on delete cascade,
   week_start date not null,

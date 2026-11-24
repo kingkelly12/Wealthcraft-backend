@@ -8,8 +8,9 @@ for a third (transferable skills). So a barista can't walk into Chief
 Financial Officer, but can start as a bank teller and climb.
 
 A month of experience is earned on every payday you hold a main job (each
-game month for players on game time). Gigs don't count. Experience belongs to
-the current life: it resets when you start a new one.
+game month for players on game time). Gigs don't count. Finished courses count
+as months in their industry (courses.py). Experience belongs to the current
+life: it resets when you start a new one.
 """
 from app import supabase
 
@@ -20,7 +21,8 @@ TRANSFER = 1 / 3          # experience in other industries counts for a third
 
 
 def experience(uid) -> dict:
-    """{industry: months worked} for main jobs in this life (current and past)."""
+    """{industry: months} for main jobs in this life (current and past), plus finished courses
+    (courses.py: a course counts as months in its industry)."""
     rows = supabase.table('jobs').select('industry, months_worked, kind').eq('user_id', str(uid)).execute().data or []
     out = {}
     for r in rows:
@@ -30,6 +32,12 @@ def experience(uid) -> dict:
         if months > 0:
             key = r.get('industry') or 'Other'
             out[key] = out.get(key, 0) + months
+    try:
+        from app.game import courses
+        for industry, months in courses.credit_months(uid).items():
+            out[industry] = out.get(industry, 0) + months
+    except Exception:  # a missing courses table never blocks a job
+        pass
     return out
 
 

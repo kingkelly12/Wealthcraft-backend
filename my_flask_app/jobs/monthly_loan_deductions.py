@@ -182,6 +182,19 @@ def _pay_salaries(scope, profiles_map, get_summary):
             if pay > 0:
                 BalanceService.add_balance(user_id=uid, amount=pay, reason="Monthly salary", category='salary')
                 get_summary(uid).credit(pay, 'Salary')
+            # Certificates in your job's industry pay a little extra (courses.py).
+            try:
+                from app.game import courses
+                for j in jobs:
+                    if j.get('kind', 'job') == 'gig':
+                        continue
+                    pct, titles = courses.pay_bonus(uid, j.get('industry'))
+                    extra = (Decimal(str(j.get('salary') or 0)) / 12 * pct * income_mult).quantize(Decimal('0.01'))
+                    if extra > 0:
+                        BalanceService.add_balance(user_id=uid, amount=extra, reason="Certification bonus", category='salary')
+                        get_summary(uid).credit(extra, 'Certification bonus', note=f"+{float(pct * 100):g}% for {', '.join(titles)}")
+            except Exception as e:
+                logger.error(f"Certification bonus failed for {uid}: {e}")
             # A month of experience on your main job (careers.py: it unlocks the next rung).
             mains = [j['id'] for j in jobs if j.get('kind', 'job') != 'gig']
             if mains:
