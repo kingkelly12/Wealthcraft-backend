@@ -549,11 +549,7 @@ def _apply_stress(uid, summ, profile):
 
 
 def _send_month_notifications(summary_by_user, profiles_map):
-    """Calendar job only: stress check (with an AI line) and one push per player."""
-    from app.services.ai_service import AIService
-    from app.services.mentor_service import MentorService
-    import uuid
-
+    """Calendar job only: stress check and one push per player."""
     notifications_to_send = []
     logger.info(f"Checking financial stress and queueing notifications for {len(summary_by_user)} users...")
     for uid, summ in summary_by_user.items():
@@ -562,19 +558,10 @@ def _send_month_notifications(summary_by_user, profiles_map):
         profile = profiles_map.get(uid, {})
         is_stressed, _ = _apply_stress(uid, summ, profile)
 
-        ai_stress_message = None
-        if is_stressed:
-            try:
-                metrics = MentorService.analyze_player_finances(uuid.UUID(uid))
-                metrics['sanity'] = int(profile.get('sanity', 100))
-                ai_stress_message = AIService.analyze_financial_stress(profile.get('username', 'Player'), metrics).get('message')
-            except Exception as e:
-                logger.error(f"Failed to generate AI stress message for {uid}: {e}")
-
         net_change = summ.income - summ.expenses
         if is_stressed:
             title = "🚨 Financial Stress!"
-            body = f"{ai_stress_message or 'Expenses exceeded 60% of income. Sanity dropped (-10).'}\n\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(summ.details)
+            body = f"Expenses exceeded 60% of income. Sanity dropped (-10).\n\nNet: {'+' if net_change > 0 else '-'}${abs(net_change):,.2f}\n\n" + "\n".join(summ.details)
         else:
             title = "💰 End of Month Summary"
             if net_change > 0:

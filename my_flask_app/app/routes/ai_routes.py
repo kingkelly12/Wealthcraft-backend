@@ -294,62 +294,6 @@ def mentor_history(current_user_id: str, mentor_id: str):
         }), 500
 
 
-@ai_bp.route('/void/analyze/', methods=['POST'])
-@require_auth
-def analyze_void_scream(current_user_id: str):
-    """
-    Analyze a player's 'scream' into the void and receive an AI response.
-    
-    Request Body:
-        content: The text of the scream
-        
-    Returns:
-        The AI-generated analysis (mood, message, challenge).
-    """
-    try:
-        data = request.get_json(silent=True) or {}
-        content = (data.get('content') or '').strip()[:280]
-        
-        if not content:
-            return jsonify({
-                'success': False,
-                'error': 'INVALID_REQUEST',
-                'message': 'Scream content is required'
-            }), 400
-
-        # Get player profile
-        profile = Profile.query.filter_by(user_id=uuid.UUID(current_user_id)).first()
-        if not profile:
-            return jsonify({
-                'success': False,
-                'error': 'PROFILE_NOT_FOUND',
-                'message': 'Player profile not found'
-            }), 404
-
-        # Get financial metrics for context
-        metrics = MentorService.analyze_player_finances(uuid.UUID(current_user_id))
-        if not metrics:
-            metrics = {}
-
-        metrics['sanity'] = profile.sanity if hasattr(profile, 'sanity') else 100
-        metrics['username'] = profile.username
-
-        # Generate AI analysis
-        analysis = AIService.analyze_void_scream(content, metrics)
-
-        return jsonify({
-            'success': True,
-            'data': analysis
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Void analysis error: {str(e)}", exc_info=True)
-        return jsonify({
-            'success': False,
-            'error': 'ANALYSIS_FAILED',
-            'message': str(e)
-        }), 500
-
 @ai_bp.route('/market/news', methods=['GET'])
 @require_auth
 def get_market_news(current_user_id: str):

@@ -35,8 +35,6 @@ from app.models.player_story_progress import PlayerStoryProgress
 from app.models.mentor import Mentor
 from app.models.mentor_message import MentorMessage
 from app.models.player_mentor_interaction import PlayerMentorInteraction
-from app.models.void_post import VoidPost
-from app.models.void_reaction import VoidReaction
 
 __all__ = [
     'Profile',
@@ -74,6 +72,4 @@ __all__ = [
     'Mentor',
     'MentorMessage',
     'PlayerMentorInteraction',
-    'VoidPost',
-    'VoidReaction',
 ]

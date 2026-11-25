@@ -432,26 +432,6 @@ create table public.notifications (
 create index notifications_user_created_idx on public.notifications (user_id, created_at desc);
 create index notifications_user_unread_idx on public.notifications (user_id) where not read;
 
-create table public.void_posts (
-  id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references public.profiles(user_id) on delete cascade,
-  content     text not null check (char_length(content) between 1 and 280),
-  ai_analysis jsonb,
-  oof_count   integer not null default 0,
-  same_count  integer not null default 0,
-  created_at  timestamptz not null default now()
-);
-create index void_posts_created_idx on public.void_posts (created_at desc);
-
-create table public.void_reactions (
-  id            uuid primary key default gen_random_uuid(),
-  post_id       uuid not null references public.void_posts(id) on delete cascade,
-  user_id       uuid not null references public.profiles(user_id) on delete cascade,
-  reaction_type text not null check (reaction_type in ('oof', 'same')),
-  created_at    timestamptz not null default now(),
-  unique (post_id, user_id)
-);
-
 -- -----------------------------------------------------------------------------
 -- Life events
 -- -----------------------------------------------------------------------------
@@ -1154,18 +1134,6 @@ as $$
   returning sanity;
 $$;
 
--- Recount void reaction counters from the source of truth (no lost updates).
-create or replace function public.refresh_void_post_counts(p_post_id uuid)
-returns void
-language sql
-security definer set search_path = public
-as $$
-  update void_posts p
-     set oof_count  = (select count(*) from void_reactions r where r.post_id = p.id and r.reaction_type = 'oof'),
-         same_count = (select count(*) from void_reactions r where r.post_id = p.id and r.reaction_type = 'same')
-   where p.id = p_post_id;
-$$;
-
 create or replace function public.get_top_players(limit_count integer default 5)
 returns table (id uuid, user_id uuid, username text, net_worth numeric, profile_picture_url text)
 language sql stable
@@ -1242,12 +1210,10 @@ end $$;
 -- Server-only functions: never callable with the anon/authenticated key.
 revoke execute on function public.adjust_balance(uuid, numeric, text, text)   from public, anon, authenticated;
 revoke execute on function public.adjust_sanity(uuid, integer)                from public, anon, authenticated;
-revoke execute on function public.refresh_void_post_counts(uuid)              from public, anon, authenticated;
 revoke execute on function public.start_integrated_mission(uuid, uuid)        from public, anon, authenticated;
 revoke execute on function public.handle_new_user()                           from public, anon, authenticated;
 grant  execute on function public.adjust_balance(uuid, numeric, text, text)   to service_role;
 grant  execute on function public.adjust_sanity(uuid, integer)                to service_role;
-grant  execute on function public.refresh_void_post_counts(uuid)              to service_role;
 grant  execute on function public.start_integrated_mission(uuid, uuid)        to service_role;
 grant  execute on function public.get_top_players(integer)                    to anon, authenticated, service_role;
 
@@ -1341,14 +1307,9 @@ grant update (status) on public.chat_messages to authenticated;
 create policy "own life events" on public.user_life_events for select to authenticated using (user_id = auth.uid());
 create policy "own notifications" on public.notifications for select to authenticated using (user_id = auth.uid());
 
--- The Void feed (realtime subscription needs SELECT).
-create policy "void readable"           on public.void_posts     for select to authenticated using (true);
-create policy "void reactions readable" on public.void_reactions for select to authenticated using (true);
-
 -- =============================================================================
 -- Realtime (the app subscribes to these)
 -- =============================================================================
-alter publication supabase_realtime add table public.void_posts;
 alter publication supabase_realtime add table public.chat_messages;
 alter publication supabase_realtime add table public.assets;
 

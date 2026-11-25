@@ -313,14 +313,6 @@ CARDS = [
         'left': {'label': 'Not today', 'outcome': 'You keep the $5. Math wins again.', 'cash': 0, 'sanity': 0},
         'right': {'label': 'Scratch it', 'outcome': 'You won $5. You broke even and somehow feel like a genius.', 'cash': 0, 'sanity': 3},
     },
-    {
-        'key': 'void_scream', 'icon': '🕳️', 'category': 'void',
-        'title': 'The Void calls',
-        'body': "Today's Void prompt: 'What's the dumbest thing you bought this month?' Everyone's confessing.",
-        'teaser': 'The Void has a question for you 🕳️',
-        'left': {'label': 'Lurk', 'outcome': "Someone bought a $200 lamp shaped like a duck. You feel better.", 'cash': 0, 'sanity': 2},
-        'right': {'label': 'Confess', 'outcome': '43 people replied "same". You are not alone in the Void.', 'cash': 0, 'sanity': 5},
-    },
 
     # --- The cast (relationship-gated) ----------------------------------------------
     {

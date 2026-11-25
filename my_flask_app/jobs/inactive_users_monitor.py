@@ -58,11 +58,11 @@ def run_inactive_users_monitor():
                 body = "Your mentor dropped by and left a sticky note on your desk. Might want to see what they found."
                 data = {"type": "mentor", "screen": "/mentors"}
                 
-            # Variant C: The Void (Fallback)
+            # Variant C: the feed (fallback)
             else:
-                title = "👀 Meanwhile, in the Void..."
+                title = "👀 Meanwhile, in the Showroom..."
                 body = "People have been making moves. Time to check the temperature and see where you stand."
-                data = {"type": "social", "screen": "/(tabs)/void"}
+                data = {"type": "social", "screen": "/(tabs)"}
                 
             # Send Notification via Native Notify Indie Push
             # Note: We must use str(profile.user_id) because Indie ID expects strings.

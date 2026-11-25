@@ -52,6 +52,10 @@ Make a CSV with `name`, `image_url` and, if the photo's licence asks for credit,
 python3 scripts/catalog/catalog.py photos my_photos.csv -o photos.sql
 ```
 
+No Python handy? Open `scripts/catalog/photos_paste.sql`, paste the whole CSV (header
+included) between its two `$csv$` lines, and run that in the SQL Editor instead. Pasting the
+CSV on its own fails with `syntax error at or near "name"`: it's data, not SQL.
+
 Run `photos.sql` in the SQL Editor. It finds each name in homes, businesses or luxury items, and
 at the end lists any names it couldn't find (usually a typo). Lines without a link are skipped,
 so you can fill in a list a bit at a time.
