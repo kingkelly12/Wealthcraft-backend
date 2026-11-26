@@ -24,6 +24,8 @@ os.environ.setdefault('SUPABASE_KEY', 'test-anon-key')
 os.environ['SUPABASE_JWT_SECRET'] = TEST_JWT_SECRET
 os.environ.setdefault('GOOGLE_WEB_CLIENT_ID', 'test-google-client-id')
 os.environ['CRON_SECRET'] = TEST_CRON_SECRET
+# Catalogs are re-read every time in tests (each test has its own fake database).
+os.environ['CATALOG_CACHE_SECONDS'] = '0'
 # No service-role key: create_app() then never builds a real Supabase client.
 os.environ.pop('SUPABASE_SERVICE_ROLE_KEY', None)
 

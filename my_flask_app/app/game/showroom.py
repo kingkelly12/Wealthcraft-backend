@@ -21,6 +21,7 @@ from decimal import Decimal
 from app import supabase
 from app.game import economy
 from app.services.balance_service import BalanceService
+from app.utils.perf import cached, parallel
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +61,22 @@ def season(today=None):
 # --- Catalog ---------------------------------------------------------------------------------
 
 def _catalog():
-    """{(kind, id): {'name', 'price', 'row'}} for everything in the Showroom."""
-    out = {}
-    for h in supabase.table('home_listings').select('*').execute().data or []:
-        out[('home', str(h['id']))] = {'name': h['name'], 'price': Decimal(str(h['price'])), 'row': h}
-    for a in supabase.table('assets').select('*').eq('category', 'business').execute().data or []:
-        out[('business', str(a['id']))] = {'name': a['name'], 'price': Decimal(str(a['price'])), 'row': a}
-    for i in supabase.table('liability_items').select('*').execute().data or []:
-        out[('item', str(i['id']))] = {'name': i['name'], 'price': Decimal(str(i['base_price'])), 'row': i}
-    return out
+    """{(kind, id): {'name', 'price', 'row'}} for everything in the Showroom (cached for a few minutes)."""
+    def load():
+        homes, businesses, items = parallel(
+            lambda: supabase.table('home_listings').select('*').execute().data or [],
+            lambda: supabase.table('assets').select('*').eq('category', 'business').execute().data or [],
+            lambda: supabase.table('liability_items').select('*').execute().data or [],
+        )
+        out = {}
+        for h in homes:
+            out[('home', str(h['id']))] = {'name': h['name'], 'price': Decimal(str(h['price'])), 'row': h}
+        for a in businesses:
+            out[('business', str(a['id']))] = {'name': a['name'], 'price': Decimal(str(a['price'])), 'row': a}
+        for i in items:
+            out[('item', str(i['id']))] = {'name': i['name'], 'price': Decimal(str(i['base_price'])), 'row': i}
+        return out
+    return cached('showroom_catalog', load, client=supabase)
 
 
 def _clock(uid):
@@ -393,20 +401,29 @@ def friends(uid, catalog, limit=6, now=None):
 # --- Everything the feed needs -------------------------------------------------------------------------
 
 def state(uid):
-    catalog = _catalog()
-    balance = BalanceService.get_current_balance(uid)
-    prof = supabase.table('profiles').select('monthly_income, net_worth').eq('user_id', uid).limit(1).execute().data
+    catalog, balance, prof, owned, week = parallel(
+        _catalog,
+        lambda: BalanceService.get_current_balance(uid),
+        lambda: supabase.table('profiles').select('monthly_income, net_worth').eq('user_id', uid).limit(1).execute().data,
+        lambda: _owned_keys(uid),
+        lambda: _clock(uid),
+    )
     prof = prof[0] if prof else {}
-    owned = _owned_keys(uid)
+    wish, deal, gone, pals = parallel(
+        lambda: wishlist(uid, catalog, balance),
+        lambda: deals(uid, catalog, balance, prof.get('monthly_income') or 0),
+        lambda: passed(uid, catalog, owned),
+        lambda: friends(uid, catalog),
+    )
     return {
-        'week': _clock(uid),
+        'week': week,
         'balance': float(balance),
         'net_worth': float(prof.get('net_worth') or 0),
         'season': season(),
-        'wishlist': wishlist(uid, catalog, balance),
-        'deals': deals(uid, catalog, balance, prof.get('monthly_income') or 0),
-        'passed': passed(uid, catalog, owned),
-        'friends': friends(uid, catalog),
+        'wishlist': wish,
+        'deals': deal,
+        'passed': gone,
+        'friends': pals,
     }
 
 

@@ -24,6 +24,7 @@ from decimal import Decimal
 from app import supabase
 from app.game import careers
 from app.services.balance_service import BalanceService
+from app.utils.perf import cached
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,8 @@ def _clock(uid):
 
 
 def _catalog():
-    return {str(c['id']): c for c in supabase.table('courses').select('*').execute().data or []}
+    """All courses by id (cached for a few minutes)."""
+    return cached('courses', lambda: {str(c['id']): c for c in supabase.table('courses').select('*').execute().data or []}, client=supabase)
 
 
 def _mine(uid):

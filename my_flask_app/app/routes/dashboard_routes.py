@@ -17,6 +17,7 @@ from app.utils.jwt_helper import require_auth
 from app import supabase
 import logging
 from app.game import economy
+from app.utils.perf import parallel
 
 logger = logging.getLogger(__name__)
 
@@ -87,94 +88,80 @@ def get_consolidated_dashboard(current_user_id: str):
         logger.info(f"Dashboard: fetching consolidated data for user_ids {user_ids}")
 
         # 1. Profile
-        profile_res = supabase.table('profiles').select('*').in_('user_id', user_ids).execute()
+        def q(fn):
+            """A read that may fail on its own without failing the dashboard."""
+            def run():
+                try:
+                    return fn()
+                except Exception as e:
+                    logger.warning(f"Dashboard read failed: {e}")
+                    return None
+            return run
+
+        def leaderboard():
+            try:
+                return supabase.rpc('get_top_players', {'limit_count': 5}).execute().data or []
+            except Exception as rpc_err:
+                logger.warning(f"Leaderboard RPC failed, using fallback: {str(rpc_err)}")
+                return supabase.table('profiles').select('id, user_id, username, net_worth, profile_picture_url') \
+                    .order('net_worth', desc=True).limit(5).execute().data or []
+
+        # Every read below is independent: make them all at once (was 15 trips one after another).
+        (profile_res, balance_res, assets_res, liabilities_res, loans_res, jobs_res, rental_res,
+         mission_progress_res, completed_missions_res, top_players, news_res, homes_value) = parallel(
+            lambda: supabase.table('profiles').select('*').in_('user_id', user_ids).execute(),
+            lambda: supabase.table('user_balances').select('current_balance').in_('user_id', user_ids).execute(),
+            lambda: supabase.table('user_assets').select('*').in_('user_id', user_ids).execute(),
+            lambda: supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute(),
+            lambda: supabase.table('liabilities').select('*').in_('user_id', user_ids).execute(),
+            lambda: supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute(),
+            lambda: supabase.table('player_rentals').select('*, rental_properties(*)').in_('player_id', user_ids).eq('is_active', True).execute(),
+            lambda: supabase.table('player_mission_progress').select(
+                'id, mission_id, current_month, integrated_missions!mission_id(name, duration_months)'
+            ).in_('player_id', user_ids).eq('is_active', True).execute(),
+            lambda: supabase.table('mission_completion_results').select('id').in_('player_id', user_ids).eq('completed', True).execute(),
+            q(leaderboard),
+            q(lambda: supabase.table('market_news').select('id, headline, body, analyst_tip, category, created_at, sentiment')
+              .order('created_at', desc=True).limit(10).execute()),
+            lambda: _homes_value(current_user_id),
+        )
+
         if not profile_res.data:
             profile_res = supabase.table('profiles').select('*').in_('id', user_ids).execute()
-
         if not profile_res.data:
             return jsonify({'success': False, 'error': 'USER_NOT_FOUND', 'message': 'Profile not found'}), 404
-
         profile = profile_res.data[0]
 
-        # 2. Account Balance
-        balance_res = supabase.table('user_balances').select('current_balance').in_('user_id', user_ids).execute()
         account_balance = 0.0
         if balance_res.data:
             try:
                 account_balance = float(balance_res.data[0].get('current_balance', 0))
             except Exception:
                 pass
-
-        # 3. Assets
-        assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
         assets = assets_res.data or []
-
-        # 4. Active Liabilities (luxury lifestyle items)
-        liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
         luxury_liabilities = liabilities_res.data or []
-
-        # 5. Active Loans
-        loans_res = supabase.table('liabilities').select('*').in_('user_id', user_ids).execute()
         # What clearing each loan costs today (interest not yet earned is refunded).
         loans = [{**l, 'payoff_amount': float(economy.payoff_amount(l))} for l in loans_res.data or []]
-
-        # Combine all liabilities
         all_liabilities = luxury_liabilities + loans
-
-        # 6. Active Jobs
-        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
         jobs = jobs_res.data or []
-
-        # 7. Active Rentals
-        rental_res = supabase.table('player_rentals').select('*, rental_properties(*)').in_('player_id', user_ids).eq('is_active', True).execute()
-        rental = rental_res.data[0] if (rental_res.data and len(rental_res.data) > 0) else None
-
-        # 8. Missions Status
-        mission_progress_res = supabase.table('player_mission_progress').select(
-            'id, mission_id, current_month, integrated_missions!mission_id(name, duration_months)'
-        ).in_('player_id', user_ids).eq('is_active', True).execute()
+        rental = rental_res.data[0] if rental_res.data else None
         active_missions = mission_progress_res.data or []
-
-        # 9. Completed Missions Count
-        completed_missions_res = supabase.table('mission_completion_results').select('id').in_('player_id', user_ids).eq('completed', True).execute()
         completed_count = len(completed_missions_res.data) if completed_missions_res.data else 0
 
-        # 10. Top 5 Leaderboard Players
-        try:
-            leaderboard_res = supabase.rpc('get_top_players', {'limit_count': 5}).execute()
-            top_players = leaderboard_res.data or []
-        except Exception as rpc_err:
-            logger.warning(f"Leaderboard RPC failed, using fallback: {str(rpc_err)}")
-            leaderboard_res = supabase.table('profiles').select(
-                'id, user_id, username, net_worth, profile_picture_url'
-            ).order('net_worth', desc=True).limit(5).execute()
-            top_players = leaderboard_res.data or []
-
-        top_players_with_rank = []
-        for idx, player in enumerate(top_players):
-            top_players_with_rank.append({
-                'id': player.get('id'),
-                'user_id': player.get('user_id'),
-                'username': player.get('username'),
-                'net_worth': float(player.get('net_worth', 0)),
-                'profile_picture_url': player.get('profile_picture_url'),
-                'rank': idx + 1
-            })
+        top_players_with_rank = [{
+            'id': player.get('id'),
+            'user_id': player.get('user_id'),
+            'username': player.get('username'),
+            'net_worth': float(player.get('net_worth', 0)),
+            'profile_picture_url': player.get('profile_picture_url'),
+            'rank': idx + 1,
+        } for idx, player in enumerate(top_players or [])]
         try:
             from app.game.life import attach_avatars
             attach_avatars(top_players_with_rank)
         except Exception as avatar_err:
             logger.warning(f"Leaderboard avatars failed: {avatar_err}")
-
-        # 11. Market News (latest 10 headlines for MarketNewsTicker)
-        try:
-            news_res = supabase.table('market_news').select(
-                'id, headline, body, analyst_tip, category, created_at, sentiment'
-            ).order('created_at', desc=True).limit(10).execute()
-            news = news_res.data or []
-        except Exception as news_err:
-            logger.warning(f"Market news fetch failed: {str(news_err)}")
-            news = []
+        news = (news_res.data or []) if news_res else []
 
         return jsonify({
             'success': True,
@@ -186,7 +173,7 @@ def get_consolidated_dashboard(current_user_id: str):
                 'account_balance': account_balance,
                 'portfolio': assets,
                 # Homes you own, at today's value (they count towards net worth).
-                'homes_value': _homes_value(current_user_id),
+                'homes_value': homes_value,
                 'liabilities': all_liabilities,
                 'jobs': jobs,
                 'rental': rental,

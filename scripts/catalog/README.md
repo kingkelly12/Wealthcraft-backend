@@ -73,3 +73,9 @@ CC BY needs the `image_credit`).
 `scripts/catalog/data/` holds the 121 homes, 116 businesses and 102 luxury items in
 `supabase/migrations/20261207000000_showroom_catalog.sql`. To change them, edit the CSVs and
 re-run the commands above with `--update`.
+
+## Lifestyle categories
+
+Luxury items are `cars`, `motorbikes`, `boats`, `aircraft`, `accessories` or `gadgets`; the `kind` in your
+CSV decides the category and the running costs (`python3 scripts/catalog/catalog.py kinds` lists them).
+`data/accessories_gadgets.csv` is the source of the 42 items in migration `20261213000000`.

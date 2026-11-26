@@ -97,24 +97,24 @@ def business_extras(price, monthly):
 # kind: (category, cost lines [(label, share of price a month, minimum)], depreciation a year,
 #        service (share of price, every N months), lease (share of price a month, label) or None, lease wear)
 KINDS = {
-    'car_small':   ('vehicle', [('Fuel', 0.0090, 70), ('Insurance', 0.0050, 40), ('Parking', 0.0012, 15)], 0.15, (0.025, 6), (0.035, 'Rent it to a ride-hail driver'), 0.03),
-    'car_mid':     ('vehicle', [('Fuel', 0.0055, 90), ('Insurance', 0.0040, 55), ('Parking', 0.0010, 20)], 0.15, (0.018, 6), (0.025, 'Rent it to a ride-hail driver'), 0.03),
-    'car_ev':      ('vehicle', [('Charging', 0.0018, 40), ('Insurance', 0.0030, 60), ('Parking', 0.0006, 20)], 0.16, (0.006, 12), (0.022, 'Rent it on a car-share app'), 0.03),
-    'car_suv':     ('vehicle', [('Fuel', 0.0050, 160), ('Insurance', 0.0045, 90), ('Parking', 0.0010, 30)], 0.16, (0.015, 6), (0.024, 'Hire it for safaris and road trips'), 0.03),
-    'car_lux':     ('vehicle', [('Fuel', 0.0035, 250), ('Insurance', 0.0055, 300), ('Parking', 0.0010, 80)], 0.18, (0.014, 6), (0.022, 'Hire it for weddings and VIPs'), 0.03),
-    'car_classic': ('vehicle', [('Fuel', 0.0025, 120), ('Classic insurance', 0.0025, 90), ('Garage', 0.0025, 100)], 0.00, (0.012, 12), (0.025, 'Hire it for weddings and photo shoots'), 0.02),
-    'car_sport':   ('vehicle', [('Fuel', 0.0025, 250), ('Insurance', 0.0045, 300), ('Garage', 0.0008, 80)], 0.14, (0.018, 6), (0.026, 'Rent it for track days'), 0.04),
-    'car_super':   ('vehicle', [('Fuel', 0.0015, 500), ('Insurance', 0.0048, 1500), ('Garage', 0.0005, 200)], 0.10, (0.020, 6), (0.025, 'Rent it for music videos and events'), 0.04),
-    'moto_small':  ('vehicle', [('Fuel', 0.0080, 20), ('Insurance', 0.0070, 15), ('Parking', 0.0020, 5)], 0.14, (0.030, 6), (0.045, 'Rent it to a delivery rider'), 0.04),
-    'moto_mid':    ('vehicle', [('Fuel', 0.0035, 40), ('Insurance', 0.0040, 45), ('Parking', 0.0010, 10)], 0.13, (0.020, 6), (0.035, 'Rent it to tourists'), 0.04),
-    'moto_big':    ('vehicle', [('Fuel', 0.0022, 60), ('Insurance', 0.0035, 85), ('Garage', 0.0009, 25)], 0.11, (0.016, 12), (0.028, 'Rent it for weekend tours'), 0.03),
-    'boat_small':  ('boat', [('Fuel', 0.0050, 20), ('Insurance', 0.0040, 15), ('Storage', 0.0060, 30)], 0.12, (0.030, 12), (0.050, 'Rent it out at the beach'), 0.04),
-    'boat_speed':  ('boat', [('Fuel', 0.0040, 80), ('Insurance', 0.0040, 70), ('Mooring', 0.0045, 80)], 0.13, (0.028, 6), (0.032, 'Charter it out on weekends'), 0.04),
-    'boat_house':  ('boat', [('Mooring', 0.0060, 300), ('Insurance', 0.0030, 60), ('Maintenance', 0.0030, 80)], 0.06, (0.020, 12), (0.035, 'Let it as a floating holiday home'), 0.03),
-    'boat_sail':   ('boat', [('Insurance', 0.0030, 60), ('Marina berth', 0.0040, 150), ('Sails & rigging', 0.0020, 40)], 0.08, (0.020, 12), (0.032, 'Charter it with a skipper'), 0.03),
-    'yacht_small': ('boat', [('Fuel', 0.0028, 400), ('Insurance', 0.0025, 300), ('Marina berth', 0.0035, 500)], 0.10, (0.020, 6), (0.030, 'Charter it out'), 0.03),
-    'yacht':       ('boat', [('Fuel', 0.0022, 2000), ('Insurance', 0.0012, 1200), ('Crew', 0.0060, 5000), ('Marina berth', 0.0020, 1800)], 0.10, (0.025, 12), (0.034, 'Charter it with crew'), 0.03),
-    'yacht_big':   ('boat', [('Fuel', 0.0015, 15000), ('Insurance', 0.0010, 10000), ('Crew', 0.0035, 40000), ('Marina berth', 0.0012, 12000)], 0.08, (0.030, 12), (0.030, 'Charter it to billionaires'), 0.02),
+    'car_small':   ('cars', [('Fuel', 0.0090, 70), ('Insurance', 0.0050, 40), ('Parking', 0.0012, 15)], 0.15, (0.025, 6), (0.035, 'Rent it to a ride-hail driver'), 0.03),
+    'car_mid':     ('cars', [('Fuel', 0.0055, 90), ('Insurance', 0.0040, 55), ('Parking', 0.0010, 20)], 0.15, (0.018, 6), (0.025, 'Rent it to a ride-hail driver'), 0.03),
+    'car_ev':      ('cars', [('Charging', 0.0018, 40), ('Insurance', 0.0030, 60), ('Parking', 0.0006, 20)], 0.16, (0.006, 12), (0.022, 'Rent it on a car-share app'), 0.03),
+    'car_suv':     ('cars', [('Fuel', 0.0050, 160), ('Insurance', 0.0045, 90), ('Parking', 0.0010, 30)], 0.16, (0.015, 6), (0.024, 'Hire it for safaris and road trips'), 0.03),
+    'car_lux':     ('cars', [('Fuel', 0.0035, 250), ('Insurance', 0.0055, 300), ('Parking', 0.0010, 80)], 0.18, (0.014, 6), (0.022, 'Hire it for weddings and VIPs'), 0.03),
+    'car_classic': ('cars', [('Fuel', 0.0025, 120), ('Classic insurance', 0.0025, 90), ('Garage', 0.0025, 100)], 0.00, (0.012, 12), (0.025, 'Hire it for weddings and photo shoots'), 0.02),
+    'car_sport':   ('cars', [('Fuel', 0.0025, 250), ('Insurance', 0.0045, 300), ('Garage', 0.0008, 80)], 0.14, (0.018, 6), (0.026, 'Rent it for track days'), 0.04),
+    'car_super':   ('cars', [('Fuel', 0.0015, 500), ('Insurance', 0.0048, 1500), ('Garage', 0.0005, 200)], 0.10, (0.020, 6), (0.025, 'Rent it for music videos and events'), 0.04),
+    'moto_small':  ('motorbikes', [('Fuel', 0.0080, 20), ('Insurance', 0.0070, 15), ('Parking', 0.0020, 5)], 0.14, (0.030, 6), (0.045, 'Rent it to a delivery rider'), 0.04),
+    'moto_mid':    ('motorbikes', [('Fuel', 0.0035, 40), ('Insurance', 0.0040, 45), ('Parking', 0.0010, 10)], 0.13, (0.020, 6), (0.035, 'Rent it to tourists'), 0.04),
+    'moto_big':    ('motorbikes', [('Fuel', 0.0022, 60), ('Insurance', 0.0035, 85), ('Garage', 0.0009, 25)], 0.11, (0.016, 12), (0.028, 'Rent it for weekend tours'), 0.03),
+    'boat_small':  ('boats', [('Fuel', 0.0050, 20), ('Insurance', 0.0040, 15), ('Storage', 0.0060, 30)], 0.12, (0.030, 12), (0.050, 'Rent it out at the beach'), 0.04),
+    'boat_speed':  ('boats', [('Fuel', 0.0040, 80), ('Insurance', 0.0040, 70), ('Mooring', 0.0045, 80)], 0.13, (0.028, 6), (0.032, 'Charter it out on weekends'), 0.04),
+    'boat_house':  ('boats', [('Mooring', 0.0060, 300), ('Insurance', 0.0030, 60), ('Maintenance', 0.0030, 80)], 0.06, (0.020, 12), (0.035, 'Let it as a floating holiday home'), 0.03),
+    'boat_sail':   ('boats', [('Insurance', 0.0030, 60), ('Marina berth', 0.0040, 150), ('Sails & rigging', 0.0020, 40)], 0.08, (0.020, 12), (0.032, 'Charter it with a skipper'), 0.03),
+    'yacht_small': ('boats', [('Fuel', 0.0028, 400), ('Insurance', 0.0025, 300), ('Marina berth', 0.0035, 500)], 0.10, (0.020, 6), (0.030, 'Charter it out'), 0.03),
+    'yacht':       ('boats', [('Fuel', 0.0022, 2000), ('Insurance', 0.0012, 1200), ('Crew', 0.0060, 5000), ('Marina berth', 0.0020, 1800)], 0.10, (0.025, 12), (0.034, 'Charter it with crew'), 0.03),
+    'yacht_big':   ('boats', [('Fuel', 0.0015, 15000), ('Insurance', 0.0010, 10000), ('Crew', 0.0035, 40000), ('Marina berth', 0.0012, 12000)], 0.08, (0.030, 12), (0.030, 'Charter it to billionaires'), 0.02),
     'air_tiny':    ('aircraft', [('Insurance', 0.0100, 30), ('Storage', 0.0060, 20)], 0.12, (0.050, 12), None, 0.0),
     'air_small':   ('aircraft', [('Fuel', 0.0030, 120), ('Insurance', 0.0035, 140), ('Hangar', 0.0035, 150)], 0.08, (0.030, 12), (0.030, 'Fly paying tourists'), 0.03),
     'air_light':   ('aircraft', [('Fuel', 0.0028, 600), ('Insurance', 0.0034, 700), ('Hangar', 0.0019, 450), ('Maintenance reserve', 0.0025, 500)], 0.06, (0.020, 12), (0.032, 'Lease it to a flight school'), 0.03),
@@ -123,9 +123,16 @@ KINDS = {
     'jet_big':     ('aircraft', [('Fuel', 0.0018, 40000), ('Insurance', 0.0008, 15000), ('Crew', 0.0012, 40000), ('Hangar', 0.0005, 12000)], 0.06, (0.010, 12), (0.030, 'Charter it to the ultra-rich'), 0.02),
     'heli':        ('aircraft', [('Fuel', 0.0026, 1200), ('Insurance', 0.0022, 900), ('Hangar', 0.0016, 700), ('Pilot', 0.0035, 3500)], 0.08, (0.025, 6), (0.036, 'Fly tours and VIP transfers'), 0.03),
     'heli_big':    ('aircraft', [('Fuel', 0.0020, 4000), ('Insurance', 0.0016, 3500), ('Hangar', 0.0010, 2000), ('Pilot', 0.0018, 9000)], 0.08, (0.020, 6), (0.034, 'Fly VIP transfers'), 0.03),
+    # Things you wear and carry. Watches hold their value; clothes do not.
+    'watch':       ('accessories', [('Insurance', 0.0015, 3)], 0.00, (0.030, 36), None, 0.0),
+    'jewellery':   ('accessories', [('Insurance', 0.0015, 3)], 0.05, (0.020, 24), None, 0.0),
+    'bag':         ('accessories', [('Care & cleaning', 0.0030, 3)], 0.10, (0.030, 12), None, 0.0),
+    'wear':        ('accessories', [('Cleaning', 0.0100, 3)], 0.35, (0.050, 12), None, 0.0),
+    # Gadgets lose value fast.
+    'phone':       ('gadgets', [('Phone plan', 0.0250, 25), ('Insurance', 0.0070, 6)], 0.30, (0.120, 12), None, 0.0),
+    'device':      ('gadgets', [('Subscriptions', 0.0080, 5)], 0.25, (0.050, 12), None, 0.0),
+    'creator':     ('gadgets', [('Insurance', 0.0040, 5)], 0.20, (0.040, 12), (0.045, 'Rent it out for shoots'), 0.08),
 }
-# The profile showcase files a vehicle under motorbikes only if its name has one of these words.
-MOTORBIKE_WORDS = ('bike', 'motorcycle', 'scooter')
 
 
 def luxury_numbers(name, price, kind):
@@ -227,8 +234,6 @@ def build_luxury(rows):
         kind = (row.get('kind') or '').lower()
         if kind not in KINDS:
             raise ValueError(f'line {line}: kind must be one of {", ".join(KINDS)} (got "{row.get("kind")}")')
-        if kind.startswith('moto') and not any(w in name.lower() for w in MOTORBIKE_WORDS):
-            print(f'  line {line}: "{name}" has no "bike", "motorcycle" or "scooter" in its name, so profiles will show it as a car', file=sys.stderr)
         price = _num(row, 'price', line)
         n = luxury_numbers(name, price, kind)
         monthly_override = _num(row, 'monthly_cost', line, False)

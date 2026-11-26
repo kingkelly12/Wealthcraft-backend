@@ -7,7 +7,7 @@ class LiabilityItem(db.Model):
 
     id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = db.Column(db.String(255), nullable=False)
-    category = db.Column(db.String(100), nullable=False)  # car, motorbike, boat, yacht, helicopter, aircraft
+    category = db.Column(db.String(100), nullable=False)  # cars, motorbikes, boats, aircraft, accessories, gadgets
     base_price = db.Column(db.Numeric(15, 2), nullable=False)
     monthly_cost = db.Column(db.Numeric(15, 2), nullable=False)
     description = db.Column(db.Text)

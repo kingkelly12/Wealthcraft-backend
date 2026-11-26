@@ -24,6 +24,7 @@ from decimal import Decimal
 from app import supabase
 from app.game.weekly_cards import CARDS
 from app.services.balance_service import BalanceService
+from app.utils.perf import cached, parallel
 
 logger = logging.getLogger(__name__)
 
@@ -111,47 +112,63 @@ def _can_play(clock) -> bool:
     return _unlimited() or int(clock['banked_weeks']) >= 1
 
 
-def _life_info(uid, week):
+def _life_info(uid, week, life=None, _fetch=True):
     """(start_age, age dict, life_over, life) for the player's current life (default start 18)."""
     from app.game import life as life_mod
-    life = life_mod.current_life(uid)
+    if _fetch and life is None:
+        life = life_mod.current_life(uid)
     start_age = int(life['start_age']) if life else life_mod.DEFAULT_START_AGE
     age = life_mod.age_at(week, start_age)
     return start_age, age, bool(life) and age['years'] >= life_mod.MAX_AGE, life
 
 
+def _has_past_life(uid):
+    return bool(supabase.table('player_lives').select('id').eq('user_id', uid).limit(1).execute().data)
+
+
+def _lives(uid, week):
+    """(start_age, age, life_over, life, between_lives), with both reads made at once."""
+    from app.game import life as life_mod
+    life, past = parallel(lambda: life_mod.current_life(uid), lambda: _has_past_life(uid))
+    start_age, age, over, life = _life_info(uid, week, life, _fetch=False)
+    return start_age, age, over, life, (life is None and past)
+
+
 def _between_lives(uid, life):
     """A life ended and the next hasn't begun: the old run can't be played."""
-    if life:
-        return False
-    past = supabase.table('player_lives').select('id').eq('user_id', uid).limit(1).execute()
-    return bool(past.data)
+    return False if life else _has_past_life(uid)
 
 
 def _check_life(uid, week):
-    _, _, over, life = _life_info(uid, week)
+    """Raises if this life can't be played. Returns its start age."""
+    start_age, _, over, _, between = _lives(uid, week)
     if over:
         raise WeekError('LIFE_OVER', 'This life has reached its end. Time to see how it went.', 409)
-    if _between_lives(uid, life):
+    if between:
         raise WeekError('NEEDS_NEW_LIFE', 'Start a new life to keep playing.', 409)
+    return start_age
 
 
 # --- deck ---------------------------------------------------------------------
 
 def _player_context(uid: str) -> dict:
     from app.game import cast, roommates
-    jobs = supabase.table('jobs').select('id').eq('user_id', uid).eq('is_current', True).limit(1).execute()
-    rentals = supabase.table('player_rentals').select('id').eq('player_id', uid).eq('is_active', True).limit(1).execute()
-    roommate = roommates.roommate_name(uid)
-    owns = supabase.table('player_homes').select('id').eq('player_id', uid).eq('is_active', True).eq('lives_in', True).limit(1).execute()
+    jobs, rentals, roommate, owns, balance, rel = parallel(
+        lambda: supabase.table('jobs').select('id').eq('user_id', uid).eq('is_current', True).limit(1).execute(),
+        lambda: supabase.table('player_rentals').select('id').eq('player_id', uid).eq('is_active', True).limit(1).execute(),
+        lambda: roommates.roommate_name(uid),
+        lambda: supabase.table('player_homes').select('id').eq('player_id', uid).eq('is_active', True).eq('lives_in', True).limit(1).execute(),
+        lambda: BalanceService.get_current_balance(uid),
+        lambda: cast.relationships(uid),
+    )
     return {
         'job': bool(jobs.data),
         # Living in a home you own: no landlord cards, no "move back home" cards.
         'owner': bool(owns.data),
         # Living in a friend's place counts as renting, for the cards.
         'rental': bool(rentals.data) or bool(roommate),
-        'balance': BalanceService.get_current_balance(uid),
-        'rel': cast.relationships(uid),
+        'balance': balance,
+        'rel': rel,
         'roommate_name': roommate or cast.CAST['roommate']['name'],
     }
 
@@ -277,20 +294,29 @@ def _affordable(card, balance) -> bool:
     return any(c['cash'] >= 0 or Decimal(str(-c['cash'])) <= balance for c in card['choices'])
 
 
+def _event_catalog():
+    """All active life events and their choices ({event_id: [choices]}), cached for a few minutes."""
+    def load():
+        events = supabase.table('life_events').select('*').eq('is_active', True).execute().data or []
+        return events, _choices_for([e['id'] for e in events])
+    return cached('life_events', load, client=supabase)
+
+
 def _life_event_cards(uid, rng, ctx, want):
     """Pending life events first (assigned before the player joined game time), then fresh ones."""
     cards = []
-    pending = supabase.table('user_life_events').select('id, life_event_id') \
-        .eq('user_id', uid).is_('choice_id', 'null').order('created_at').limit(MAX_LIFE_EVENTS).execute().data or []
-    recent = supabase.table('user_life_events').select('life_event_id') \
-        .eq('user_id', uid).order('created_at', desc=True).limit(30).execute().data or []
+    pending, recent, (all_events, choices) = parallel(
+        lambda: supabase.table('user_life_events').select('id, life_event_id')
+        .eq('user_id', uid).is_('choice_id', 'null').order('created_at').limit(MAX_LIFE_EVENTS).execute().data or [],
+        lambda: supabase.table('user_life_events').select('life_event_id')
+        .eq('user_id', uid).order('created_at', desc=True).limit(30).execute().data or [],
+        _event_catalog,
+    )
     seen = {r['life_event_id'] for r in recent}
 
     now, today = datetime.now(timezone.utc), _today()
-    all_events = supabase.table('life_events').select('*').eq('is_active', True).execute().data or []
     by_id = {e['id']: e for e in all_events}           # pending ones are always answerable
     events = [e for e in all_events if released(e, now) and in_season(e, today)]
-    choices = _choices_for(by_id.keys())
 
     for p in pending:
         event = by_id.get(p['life_event_id'])
@@ -384,24 +410,31 @@ def public_card(card) -> dict:
     return out
 
 
-def state(user_id: str) -> dict:
-    """Everything the This Week screen and the home card need."""
+def _last_receipt(uid, week):
+    if week <= 1:
+        return None
+    prev = supabase.table('player_weeks').select('receipt').eq('user_id', uid).eq('week', week - 1).limit(1).execute()
+    return prev.data[0].get('receipt') if prev.data else None
+
+
+_UNSET = object()
+
+
+def state(user_id: str, last_receipt=_UNSET, clock=None) -> dict:
+    """Everything the This Week screen and the home card need. `last_receipt`: already known (end of week)."""
     uid = str(user_id)
     today = _today()
-    clock = get_clock(uid)
+    clock = clock or get_clock(uid)
     week = int(clock['week'])
-    deck = get_week(uid, week)
+    deck, last, (_, age, life_over, life, needs_new_life) = parallel(
+        lambda: get_week(uid, week),
+        lambda: _last_receipt(uid, week) if last_receipt is _UNSET else last_receipt,
+        lambda: _lives(uid, week),
+    )
     cards = deck.get('cards') or []
     remaining = sum(1 for c in cards if not c.get('chosen'))
 
-    last = None
-    if week > 1:
-        prev = supabase.table('player_weeks').select('receipt').eq('user_id', uid).eq('week', week - 1).limit(1).execute()
-        last = prev.data[0].get('receipt') if prev.data else None
-
     banked = int(clock['banked_weeks'])
-    _, age, life_over, life = _life_info(uid, week)
-    needs_new_life = _between_lives(uid, life)
     return {
         **week_meta(week),
         'age': age,
@@ -475,15 +508,19 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
     if not _can_play(clock):
         raise WeekError('WEEK_LOCKED', 'Next week unlocks tomorrow.', 403)
     week = int(clock['week'])
-    _check_life(uid, week)
-    deck = get_week(uid, week)
+
+    def baseline():  # the squad race measures growth from before your first card this week
+        try:
+            from app.game import squads
+            squads.ensure_baseline(uid)
+        except Exception as e:
+            logger.warning(f'Squad baseline failed for {uid}: {e}')
+
+    # The life checks, the deck, the squad baseline and the balance are independent: read them at once.
+    _, deck, _, balance = parallel(lambda: _check_life(uid, week), lambda: get_week(uid, week), baseline,
+                                   lambda: BalanceService.get_current_balance(uid))
     if deck['status'] != 'open':
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
-    try:  # the squad race measures growth from before your first card this week
-        from app.game import squads
-        squads.ensure_baseline(uid)
-    except Exception as e:
-        logger.warning(f'Squad baseline failed for {uid}: {e}')
 
     cards = copy.deepcopy(deck.get('cards') or [])
     card = next((c for c in cards if c['id'] == card_id), None)
@@ -497,7 +534,6 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
 
     cash = Decimal(str(choice['cash']))
     if cash < 0:
-        balance = BalanceService.get_current_balance(uid)
         if -cash > balance:
             if any(c['cash'] >= 0 for c in card['choices'] if c['id'] != choice_id):
                 raise WeekError('INSUFFICIENT_FUNDS', f"You can't afford that (${-cash:,.0f}).", 400)
@@ -531,11 +567,12 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
 
     # 2. Money. If it fails, release the claim.
     reason = f"{card['title']} - {choice['label']}"
+    new_balance = balance
     try:
         if cash > 0:
-            BalanceService.add_balance(uid, cash, reason, category='weekly_card')
+            new_balance = BalanceService.add_balance(uid, cash, reason, category='weekly_card').get('new_balance', balance + cash)
         elif cash < 0:
-            BalanceService.subtract_balance(uid, -cash, reason, category='weekly_card')
+            new_balance = BalanceService.subtract_balance(uid, -cash, reason, category='weekly_card').get('new_balance', balance + cash)
     except Exception as e:
         def release(c):
             if c.get('chosen') != choice_id or c.get('result'):
@@ -552,7 +589,7 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
     # 3-4. Income, sanity, relationship, history. The money has moved, so a
     #      failure here must not lose the card's result (the receipt reads it).
     income = Decimal('0')
-    before = new_sanity = _sanity_of(uid)
+    before = new_sanity = None
     rel_delta = 0
     try:
         income = Decimal(str(choice.get('income') or 0))
@@ -564,16 +601,22 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
 
         before = _sanity_of(uid)
         new_sanity = before
-        if choice.get('sanity'):
-            res = supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': int(choice['sanity'])}).execute()
-            new_sanity = int(res.data) if res.data is not None else before
-
-        rel_delta = 0
         who = (card.get('character') or {}).get('key') if isinstance(card.get('character'), dict) else None
-        if who and choice.get('rel'):
+
+        def sanity():
+            if not choice.get('sanity'):
+                return before
+            res = supabase.rpc('adjust_sanity', {'p_user_id': uid, 'p_delta': int(choice['sanity'])}).execute()
+            return int(res.data) if res.data is not None else before
+
+        def relationship():
+            if not (who and choice.get('rel')):
+                return 0
             from app.game import cast
             before_rel = cast.relationships(uid)[who]
-            rel_delta = cast.adjust(uid, who, choice['rel']) - before_rel
+            return cast.adjust(uid, who, choice['rel'], current=before_rel) - before_rel
+
+        new_sanity, rel_delta = parallel(sanity, relationship)
 
         # 4. Life events keep their history (mentors and analytics read it).
         #    Pending ones were already claimed in step 1b.
@@ -587,6 +630,8 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
 
     except Exception as e:
         logger.error(f"Card effects after payment failed for {uid} card {card_id}: {e}")
+    if before is None:
+        before = new_sanity = _sanity_of(uid)
 
     result = {
         'outcome': choice['outcome'],
@@ -595,11 +640,13 @@ def choose(user_id: str, card_id: str, choice_id: str) -> dict:
         'income': float(income),
         'rel': rel_delta,
         'new_sanity': new_sanity,
-        'new_balance': float(BalanceService.get_current_balance(uid)),
+        'new_balance': float(new_balance),
         'game_over': new_sanity <= 0 < before,
     }
     card['result'] = result
-    _update_card(uid, week, card_id, lambda c: c.update(result=result) if c.get('chosen') == choice_id else False)
+    # Usually nobody touched the deck since the claim: save on top of it, and only re-read on a conflict.
+    if _save_cards(claimed, [dict(c, result=result) if c['id'] == card_id else c for c in claimed.get('cards') or cards]) is None:
+        _update_card(uid, week, card_id, lambda c: c.update(result=result) if c.get('chosen') == choice_id else False)
     return {'card': public_card(card), 'result': result, 'remaining': sum(1 for c in cards if not c.get('chosen'))}
 
 
@@ -672,8 +719,7 @@ def complete_week(user_id: str) -> dict:
     week = int(clock['week'])
     if not _can_play(clock):
         raise WeekError('WEEK_LOCKED', 'Next week unlocks tomorrow.', 403)
-    _check_life(uid, week)
-    deck = get_week(uid, week)
+    start_age, deck = parallel(lambda: _check_life(uid, week), lambda: get_week(uid, week))
     if deck['status'] != 'open':
         raise WeekError('WEEK_COMPLETED', 'This week is already over.', 409)
     cards = deck.get('cards') or []
@@ -732,11 +778,7 @@ def complete_week(user_id: str) -> dict:
     month_sanity = int(month['sanity_change']) if month else 0
 
     from app.game import life as life_mod
-    try:
-        start_age, _, _, _ = _life_info(uid, week)
-    except Exception as e:  # never strand a week whose clock already moved
-        logger.warning(f'Life info failed for {uid} at week {week}: {e}')
-        start_age = life_mod.DEFAULT_START_AGE
+    balance_after, sanity_after = parallel(lambda: BalanceService.get_current_balance(uid), lambda: _sanity_of(uid))
     receipt = {
         **meta,
         'age': life_mod.age_at(week, start_age),
@@ -751,41 +793,39 @@ def complete_week(user_id: str) -> dict:
             'cash': float(card_cash + gig_cash + month_net),
             'sanity': card_sanity + gig_sanity + month_sanity,
         },
-        'balance_after': float(BalanceService.get_current_balance(uid)),
-        'sanity_after': _sanity_of(uid),
+        'balance_after': float(balance_after),
+        'sanity_after': sanity_after,
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
-    try:  # the cast never blocks a week (the clock has already moved on)
-        from app.game import cast
-        receipt['texts'] = cast.react_to_week(uid, receipt)
-    except Exception as e:
-        logger.warning(f'Cast reactions failed for {uid} at week {week}: {e}')
-        receipt['texts'] = []
-    try:
-        from app.game import squads
-        receipt['squad'] = squads.record_week(uid, receipt)
-    except Exception as e:  # the squad never blocks a week
-        logger.warning(f'Squad update failed for {uid} at week {week}: {e}')
-        receipt['squad'] = None
-    try:
+    # The cast, the squad, courses and the wishlist don't depend on each other, and neither does
+    # dealing next week: do them all at once. None of them may block the week (the clock has moved on).
+    def guarded(label, fn, default):
+        def run():
+            try:
+                return fn()
+            except Exception as e:
+                logger.warning(f'{label} failed for {uid} at week {week}: {e}')
+                return default
+        return run
+
+    def courses_done():
         from app.game import courses
-        receipt['courses_finished'] = courses.after_week(uid)
-        for c in receipt['courses_finished']:
+        done = courses.after_week(uid)
+        for c in done:
             _course_finished(uid, c)
-    except Exception as e:  # courses never block a week
-        logger.warning(f'Course update failed for {uid} at week {week}: {e}')
-        receipt['courses_finished'] = []
-    try:
-        from app.game import showroom
-        receipt['wishlist_unlocked'] = showroom.after_week(uid)
-    except Exception as e:  # the showroom never blocks a week
-        logger.warning(f'Wishlist check failed for {uid} at week {week}: {e}')
-        receipt['wishlist_unlocked'] = []
+        return done
+
+    from app.game import cast, showroom, squads
+    texts, squad, courses_finished, wishlist_unlocked, nxt = parallel(
+        guarded('Cast reactions', lambda: cast.react_to_week(uid, receipt), []),
+        guarded('Squad update', lambda: squads.record_week(uid, receipt), None),
+        guarded('Course update', courses_done, []),
+        guarded('Wishlist check', lambda: showroom.after_week(uid), []),
+        lambda: state(uid, last_receipt=receipt),   # deals next week so the cliffhanger is a real card
+    )
+    receipt.update({'texts': texts, 'squad': squad, 'courses_finished': courses_finished, 'wishlist_unlocked': wishlist_unlocked})
 
     supabase.table('player_weeks').update({
         'status': 'completed', 'receipt': receipt, 'completed_at': receipt['completed_at'],
     }).eq('id', deck['id']).execute()
-
-    # Deal next week now so the cliffhanger is about a real card.
-    nxt = state(uid)
     return {'receipt': receipt, 'next': nxt}

@@ -43,12 +43,13 @@ def relationships(uid):
     return scores
 
 
-def adjust(uid, character, delta):
-    """Nudge a relationship, clamped 0..100. Returns the new score."""
+def adjust(uid, character, delta, current=None):
+    """Nudge a relationship, clamped 0..100. Returns the new score. `current`: already read by the caller."""
     if character not in CAST or not delta:
-        return relationships(uid).get(character, START_SCORE)
+        return current if current is not None else relationships(uid).get(character, START_SCORE)
     uid = str(uid)
-    current = relationships(uid)[character]
+    if current is None:
+        current = relationships(uid)[character]
     new = max(0, min(100, current + int(delta)))
     now = datetime.now(timezone.utc).isoformat()
     upd = supabase.table('player_relationships').update({'score': new, 'updated_at': now}) \

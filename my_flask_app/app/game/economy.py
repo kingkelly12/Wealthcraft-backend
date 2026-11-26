@@ -137,9 +137,10 @@ def item_economics(item, owned=None):
 
 # --- Showcase -------------------------------------------------------------------------
 # The things players buy to show off, shown on their profile: cars, motorbikes,
-# boats, helicopters and private jets (and other aircraft). Watches, bags, phones
-# and gym passes aren't part of it.
-SHOWCASE_KINDS = {'vehicle': 'cars', 'boat': 'boats', 'aircraft': 'aircraft'}
+# boats, helicopters and private jets (and other aircraft). Accessories and gadgets
+# aren't part of it. 'vehicle' and 'boat' are the names before migration 20261213000000.
+SHOWCASE_KINDS = {'cars': 'cars', 'motorbikes': 'motorbikes', 'boats': 'boats', 'aircraft': 'aircraft',
+                  'vehicle': 'cars', 'boat': 'boats'}
 _MOTORBIKE_WORDS = ('bike', 'motorcycle', 'scooter')
 _EMOJI_BY_NAME = [
     ('jet ski', '🌊'), ('superyacht', '🛥️'), ('catamaran', '⛵'), ('boat', '🚤'),
