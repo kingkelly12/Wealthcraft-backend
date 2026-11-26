@@ -6,15 +6,17 @@ text can offer two quick replies with small effects on the relationship,
 sanity or cash. Relationships (0..100, start at 50) also gate a few weekly
 cards (weekly_cards.py: `character`, `min_rel`, `max_rel`).
 
-Writing rules: texts read like real texts (lowercase is fine, short, emoji
-sparingly). Every reply option has a `response` so the thread feels alive.
+What they say is in cast_lines.py. A line a player has had in the last REPEAT_DAYS
+isn't sent again; if someone has run out, they simply stay quiet.
 """
 import logging
 import random
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app import supabase
+from app.game.cast_lines import LINES
 from app.services.balance_service import BalanceService
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ CAST = {
 
 START_SCORE = 50
 MAX_TEXTS_PER_WEEK = 2
+REPEAT_DAYS = 30               # no line twice within this many real days
 
 
 def relationship_label(score):
@@ -108,7 +111,34 @@ def ensure_intros(uid):
         send(uid, character, body, week=None, replies=replies)
 
 
-def _week_texts(receipt, rel, present, rng):
+def _was_sent(template, recent):
+    """Has this line gone out lately? A line with {age} or {what} counts whatever was filled in."""
+    pattern = re.escape(template).replace(r'\{age\}', '.+').replace(r'\{what\}', '.+')
+    return any(re.fullmatch(pattern, body, re.DOTALL) for body in recent)
+
+
+def _pick(character, situation, rng, recent, **fill):
+    """(body, replies) for a line this player hasn't had in the last REPEAT_DAYS, or None if they've had them all."""
+    fresh = [line for line in LINES[(character, situation)] if not _was_sent(line[0], recent)]
+    if not fresh:
+        return None
+    body, options = rng.choice(fresh)
+    for key, value in fill.items():
+        body = body.replace('{' + key + '}', str(value))
+    replies = [_opt('ab'[i], label, response, rel=rel, sanity=sanity, cash=cash)
+               for i, (label, response, rel, sanity, cash) in enumerate(options)]
+    return body, replies
+
+
+def recent_bodies(uid, now=None):
+    """What the cast has texted this player in the last REPEAT_DAYS."""
+    since = ((now or datetime.now(timezone.utc)) - timedelta(days=REPEAT_DAYS)).isoformat()
+    rows = supabase.table('cast_messages').select('body').eq('user_id', str(uid)).eq('from_player', False) \
+        .gte('created_at', since).limit(1000).execute().data or []
+    return [r['body'] for r in rows]
+
+
+def _week_texts(receipt, rel, present, rng, recent=()):
     """Candidate texts for a finished week, most relevant first: (character, body, replies)."""
     out = []
     month = receipt.get('month_summary') or {}
@@ -116,64 +146,39 @@ def _week_texts(receipt, rel, present, rng):
     totals = receipt.get('totals') or {}
     cards = receipt.get('cards') or []
 
+    def add(character, situation, **fill):
+        line = _pick(character, situation, rng, recent, **fill)
+        if line:
+            out.append((character, *line))
+
     if receipt.get('birthday'):
-        out.append(('mom', f"HAPPY {receipt['birthday']}TH BIRTHDAY MY BABY 🎂🎂 I sent you a little something. call me!!", [
-            _opt('a', 'Calling now ❤️', "best gift is hearing your voice. (the $50 is also nice)", rel=6, sanity=5, cash=50),
-            _opt('b', 'ty mom', "ok. love you. the $50 is for food not 'experiences'", rel=1, cash=50),
-        ]))
-        out.append(('bestie', "HBD 🎉 another year closer to a 401k. drinks on me this weekend", [
-            _opt('a', "I'm holding you to that", "bet. I'll bring my coupon app", rel=4, sanity=3),
-            _opt('b', "Can't afford to age", 'none of us can. happy birthday anyway', rel=2, sanity=1),
-        ]))
+        add('mom', 'birthday', age=receipt['birthday'])
+        add('bestie', 'birthday', age=receipt['birthday'])
 
     if missed:
         what = missed[0]['label'].replace('Missed: ', '').replace('Missed rent: ', 'rent')
-        out.append(('mom', f"honey the bank called about {what.lower()}?? is everything ok 😟", [
-            _opt('a', "It's handled 😅", "ok... you'd tell me if it wasn't right?", rel=-1, sanity=-1),
-            _opt('b', "...can you spot me $150?", "just this once. and we're talking about a budget at thanksgiving", rel=-4, cash=150) if rel['mom'] >= 50
-            else _opt('b', "...can you spot me $150?", "sweetie I can't right now. maybe call the bank?", rel=-2, sanity=-2),
-        ]))
+        add('mom', 'missed', what=what.lower())
+        # Mom only lends when you're on good terms.
+        if out and out[-1][0] == 'mom' and rel['mom'] < 50:
+            for option in out[-1][2]:
+                if option['cash'] > 0:
+                    option.update(response="sweetie I can't right now. maybe call the bank?", rel=-2, sanity=-2, cash=0)
     elif receipt.get('is_payday_week') and rng.random() < 0.6:
-        out.append(('mom', "payday!! proud of you. put some in savings ok? ❤️", [
-            _opt('a', 'I will mom ❤️', "that's my kid", rel=3),
-            _opt('b', 'lol no', "I didn't raise you to say lol no to me", rel=-2, sanity=1),
-        ]))
+        add('mom', 'payday')
 
     if (totals.get('sanity') or 0) <= -8:
-        out.append(('bestie', "you've been quiet this week. you ok?", [
-            _opt('a', 'Not really tbh', "ok I'm coming over with snacks. no arguments", rel=5, sanity=6),
-            _opt('b', 'All good!', "...ok. I'm here if that changes", rel=-1, sanity=-2),
-        ]))
+        add('bestie', 'rough')
     elif (totals.get('cash') or 0) <= -150:
-        out.append(('bestie', "bro your bank account just called me crying 💀", [
-            _opt('a', 'help 😭', "free activities this weekend. I'm thinking park + sad sandwiches", rel=3, sanity=3),
-            _opt('b', "I'm fine. Totally fine.", "that's what the titanic said", sanity=-1),
-        ]))
+        add('bestie', 'broke')
     elif any(c.get('category') == 'social' and (c.get('cash') or 0) < 0 for c in cards):
-        out.append(('bestie', "last night was LEGENDARY 😂 we're never doing that again (we're doing it again)", [
-            _opt('a', 'Same time next week?', "my wallet says no. my heart says yes", rel=4, sanity=2),
-            _opt('b', 'My wallet is in the ER', 'tell it to stay strong', rel=2),
-        ]))
+        add('bestie', 'social')
 
-    if 'roommate' in present and rng.random() < 0.3:
-        body, replies = rng.choice([
-            ("who ate my leftovers. I'm not mad. I'm just disappointed", [
-                _opt('a', 'Guilty. Buying you dinner', "apology accepted. extra guac", rel=5, cash=-15),
-                _opt('b', 'Must have been a ghost', "the ghost left a fork in the sink", rel=-4),
-            ]),
-            ("band practice at ours friday? it'll be quiet I promise", [
-                _opt('a', 'Sure, why not', "you're the best. bring earplugs", rel=4, sanity=-3),
-                _opt('b', 'I have work Saturday', "fair. we'll do the acoustic version (still loud)", rel=-1),
-            ]),
-        ])
-        out.append(('roommate', body, replies))
-
-    ex_odds = 0.25 if (totals.get('sanity') or 0) < 0 else 0.1
-    if rng.random() < ex_odds:
-        out.append(('ex', rng.choice(["u up?", "saw something that reminded me of you. anyway how's life", "do you still have my hoodie"]), [
-            _opt('a', '...yeah', "lol remember when we... nvm. goodnight", rel=6, sanity=-6),
-            _opt('b', 'Blocked.', None, rel=-15, sanity=4),
-        ]))
+    # Out of the blue. Shuffled, so the same person doesn't always get the free slot.
+    odds = {'roommate': 0.35, 'ex': 0.2 if (totals.get('sanity') or 0) < 0 else 0.1, 'mom': 0.2, 'bestie': 0.25}
+    chatty = [c for c, chance in odds.items() if c in present and rng.random() < chance]
+    rng.shuffle(chatty)
+    for character in chatty:
+        add(character, 'casual')
     return out
 
 
@@ -186,7 +191,7 @@ def react_to_week(uid, receipt):
         present = present_cast(uid)
         rng = random.Random(f'{uid}:{week}:texts')
         sent, used = 0, set()
-        for character, body, replies in _week_texts(receipt, rel, present, rng):
+        for character, body, replies in _week_texts(receipt, rel, present, rng, recent_bodies(uid)):
             if sent >= MAX_TEXTS_PER_WEEK:
                 break
             if character in used or character not in present:

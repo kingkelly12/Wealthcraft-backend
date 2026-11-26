@@ -248,3 +248,28 @@ def test_a_failed_payment_leaves_the_reply_open(client, auth_headers, player, fa
     assert client.post(f"/api/texts/messages/{msg['id']}/reply/", json={'reply_id': 'a'}, headers=auth_headers).status_code == 500
     assert next(m for m in fake_supabase.rows('cast_messages') if m['id'] == msg['id'])['replied_with'] is None
     assert cast.relationships(user_id)['bestie'] == 50
+
+
+def test_no_line_repeats_within_a_month(player, fake_supabase, user_id):
+    """Two game weeks a day for 30 days, with every kind of week: nobody says the same thing twice."""
+    fake_supabase.rows('player_rentals').append({'id': 'r1', 'player_id': user_id, 'is_active': True})
+    for week in range(1, 61):
+        receipt = {'week': week, 'is_payday_week': week % 4 == 0, 'cards': [],
+                   'totals': {'cash': -200 if week % 5 == 0 else 20, 'sanity': -10 if week % 7 == 0 else 1},
+                   'month_summary': {'lines': [{'label': 'Missed: Bank loan', 'missed': True}]} if week % 12 == 0 else None}
+        cast.react_to_week(user_id, receipt)
+    bodies = [m['body'] for m in fake_supabase.rows('cast_messages') if not m['from_player'] and m.get('week')]
+    assert len(bodies) > 40 and len(bodies) == len(set(bodies))
+    assert {m['character'] for m in fake_supabase.rows('cast_messages')} >= {'mom', 'bestie', 'roommate', 'ex'}
+
+
+def test_every_line_is_well_formed():
+    from app.game.cast_lines import LINES
+    bodies = [body for lines in LINES.values() for body, _ in lines]
+    assert len(bodies) == len(set(bodies))
+    for (character, _), lines in LINES.items():
+        assert character in cast.CAST
+        for body, options in lines:
+            assert len(options) == 2 and all(len(o) == 5 and o[0] for o in options), body
+    assert len(LINES[('roommate', 'casual')]) >= 30
+
