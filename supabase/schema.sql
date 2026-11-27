@@ -822,6 +822,10 @@ create table public.cast_messages (
   created_at   timestamptz not null default now()
 );
 create index cast_messages_thread_idx on public.cast_messages (user_id, character, created_at desc);
+-- Texts push a few hours later if unread (jobs/cast_pushes.py; migration 20261214000000).
+alter table public.cast_messages add column if not exists push_due_at timestamptz;
+alter table public.cast_messages add column if not exists pushed_at timestamptz;
+create index if not exists cast_messages_push_due_idx on public.cast_messages (push_due_at) where pushed_at is null;
 
 create table public.roommates (
   id              uuid primary key default gen_random_uuid(),

@@ -2,11 +2,15 @@
 import uuid
 from decimal import Decimal
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
+from app.game.cast_lines import LINES
+from jobs import cast_pushes
 from app.game import cast, roommates, week_service
 from app.game.weekly_cards import CARDS
-from tests.conftest import make_token
+from tests.conftest import TEST_CRON_SECRET, make_token
 
 
 @pytest.fixture
@@ -75,7 +79,9 @@ def test_week_texts_react_to_what_happened(player, fake_supabase, user_id):
     assert cast.react_to_week(user_id, receipt) == cast.MAX_TEXTS_PER_WEEK
     sent = fake_supabase.rows('cast_messages')
     assert {m['character'] for m in sent} == {'mom', 'bestie'}
-    assert 'BIRTHDAY' in sent[0]['body']
+    # Whichever birthday line was picked, Mom's comes first.
+    assert sent[0]['character'] == 'mom'
+    assert sent[0]['body'] in [body.replace('{age}', '19') for body, _ in LINES[('mom', 'birthday')]]
 
 
 def test_birthday_gift_pays_out_on_reply(client, auth_headers, player, user_id, fake_supabase, balance):
@@ -264,12 +270,67 @@ def test_no_line_repeats_within_a_month(player, fake_supabase, user_id):
 
 
 def test_every_line_is_well_formed():
-    from app.game.cast_lines import LINES
     bodies = [body for lines in LINES.values() for body, _ in lines]
+    assert {(o[2], o[3], o[4]) for _, options in LINES[('mom', 'birthday')] for o in options[:1]} == {(6, 5, 50)}
     assert len(bodies) == len(set(bodies))
     for (character, _), lines in LINES.items():
         assert character in cast.CAST
         for body, options in lines:
             assert len(options) == 2 and all(len(o) == 5 and o[0] for o in options), body
     assert len(LINES[('roommate', 'casual')]) >= 30
+
+
+# --- pushes, a few hours later -----------------------------------------------------------------
+
+@pytest.fixture
+def pushes(monkeypatch):
+    from app.services.push_notification_service import ExpoPushService
+    sent = []
+    monkeypatch.setattr(ExpoPushService, 'send_notifications_to_users',
+                        classmethod(lambda cls, **kw: sent.extend(kw['user_notifications'])))
+    return sent
+
+
+def _birthday_texts(uid):
+    """Mom and Jordan text; returns a moment after their pushes fall due."""
+    assert cast.react_to_week(uid, {'week': 52, 'birthday': 19, 'totals': {}, 'cards': []}) == 2
+    return datetime.now(timezone.utc) + cast.PUSH_DELAY + timedelta(minutes=5)
+
+
+def test_texts_push_hours_later_not_at_once(player, fake_supabase, user_id, pushes):
+    later = _birthday_texts(user_id)
+    assert cast_pushes.run_cast_pushes()['queued'] == 0 and pushes == []          # not due yet
+    assert cast_pushes.run_cast_pushes(now=later)['queued'] == 2
+    assert sorted(n['data']['screen'] for n in pushes) == ['/texts/bestie', '/texts/mom']
+    assert any(n['title'].endswith('Mom') for n in pushes) and all(n['user_id'] == user_id for n in pushes)
+    assert cast_pushes.run_cast_pushes(now=later)['queued'] == 0 and len(pushes) == 2   # once only
+
+
+def test_no_push_for_a_text_already_read(player, fake_supabase, user_id, pushes):
+    later = _birthday_texts(user_id)
+    cast.mark_read(user_id, 'mom')
+    cast_pushes.run_cast_pushes(now=later)
+    assert [n['data']['character'] for n in pushes] == ['bestie']
+
+
+def test_waits_while_the_player_is_in_the_app(player, fake_supabase, user_id, pushes):
+    later = _birthday_texts(user_id)
+    player['last_active_at'] = (later - timedelta(minutes=5)).isoformat()
+    assert cast_pushes.run_cast_pushes(now=later) == {'due': 2, 'queued': 0, 'waiting': 2}
+    assert cast_pushes.run_cast_pushes(now=later + timedelta(minutes=45))['queued'] == 2   # they've left
+
+
+def test_old_news_is_dropped_and_a_backlog_is_not_a_flood(player, fake_supabase, user_id, pushes):
+    later = _birthday_texts(user_id)
+    assert cast_pushes.run_cast_pushes(now=later + timedelta(days=2))['queued'] == 0
+    for week in (53, 54, 55, 56):   # a binge of four weeks
+        cast.react_to_week(user_id, {'week': week, 'birthday': week, 'totals': {}, 'cards': []})
+    assert cast_pushes.run_cast_pushes(now=datetime.now(timezone.utc) + timedelta(hours=4))['queued'] == 2
+    assert all(m.get('pushed_at') for m in fake_supabase.rows('cast_messages'))
+
+
+def test_cron_endpoint_runs_the_cast_pushes(client, fake_supabase, pushes):
+    assert client.post('/api/cron/cast-pushes/').status_code == 401
+    res = client.post('/api/cron/cast-pushes/', headers={'Authorization': f'Bearer {TEST_CRON_SECRET}'})
+    assert res.status_code == 200 and res.get_json()['data']['due'] == 0
 

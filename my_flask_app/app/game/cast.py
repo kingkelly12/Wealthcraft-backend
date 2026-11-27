@@ -31,6 +31,7 @@ CAST = {
 START_SCORE = 50
 MAX_TEXTS_PER_WEEK = 2
 REPEAT_DAYS = 30               # no line twice within this many real days
+PUSH_DELAY = timedelta(hours=3)  # a week's texts reach the phone this much later, if unread
 
 
 def relationship_label(score):
@@ -76,13 +77,20 @@ def present_cast(uid):
 
 # --- messages -------------------------------------------------------------------------
 
-def send(uid, character, body, week=None, replies=None, from_player=False):
+def send(uid, character, body, week=None, replies=None, from_player=False, push_due_at=None):
     row = {
         'user_id': str(uid), 'character': character, 'week': week, 'body': body,
         'from_player': from_player, 'replies': replies, 'replied_with': None,
         'read_at': datetime.now(timezone.utc).isoformat() if from_player else None,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
+    if push_due_at:  # jobs/cast_pushes.py sends it then, if it's still unread
+        try:
+            return supabase.table('cast_messages').insert({**row, 'push_due_at': push_due_at.isoformat()}).execute().data[0]
+        except Exception as e:  # the column isn't there yet: the text matters more than its push
+            if 'push_due_at' not in str(e):
+                raise
+            logger.warning('cast_messages.push_due_at is missing: run migration 20261214000000')
     return supabase.table('cast_messages').insert(row).execute().data[0]
 
 
@@ -191,12 +199,13 @@ def react_to_week(uid, receipt):
         present = present_cast(uid)
         rng = random.Random(f'{uid}:{week}:texts')
         sent, used = 0, set()
+        push_at = datetime.now(timezone.utc) + PUSH_DELAY
         for character, body, replies in _week_texts(receipt, rel, present, rng, recent_bodies(uid)):
             if sent >= MAX_TEXTS_PER_WEEK:
                 break
             if character in used or character not in present:
                 continue
-            send(uid, character, body, week=week, replies=replies)
+            send(uid, character, body, week=week, replies=replies, push_due_at=push_at)
             used.add(character)
             sent += 1
         return sent

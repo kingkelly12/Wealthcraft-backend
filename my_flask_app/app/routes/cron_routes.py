@@ -14,6 +14,7 @@ from jobs.daily_mentor_analysis import run_daily_mentor_analysis
 from jobs.event_deadlines import run_event_deadlines
 from jobs.inactive_users_monitor import run_inactive_users_monitor
 from jobs.week_ready_nudge import run_week_ready_nudge
+from jobs.cast_pushes import run_cast_pushes
 
 cron_bp = Blueprint('cron', __name__)
 
@@ -176,3 +177,15 @@ def cron_health():
         ]),
         'diagnostics': diagnostics
     }), 200
+
+
+@cron_bp.route('/cast-pushes/', methods=['POST'], strict_slashes=False)
+@require_cron_secret
+def cron_cast_pushes():
+    """Unread texts from the cast, a few hours after they were written. Schedule: */15 * * * *"""
+    try:
+        return jsonify({'success': True, 'data': run_cast_pushes()}), 200
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Cast pushes failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e), 'type': type(e).__name__}), 500

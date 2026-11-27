@@ -20,11 +20,11 @@ LINES = {
         ("my baby is {age}. I'm not crying, I'm cutting onions. at the office. HAPPY BIRTHDAY 🎉", [
             ('Love you mom', "love you more. wear something warm", 6, 5, 50), ('put the onions down', "never. happy birthday", 2, 3, 50)]),
         ("Happy {age}th!! I found your baby photos and sent them to the family group. you're welcome 📸", [
-            ('MOM no', "your aunt says you were a very round baby", 2, 3, 50), ('Iconic, honestly', "THAT'S my child", 6, 4, 50)]),
+            ('MOM no', "your aunt says you were a very round baby", 6, 5, 50), ('Iconic, honestly', "THAT'S my child", 6, 4, 50)]),
         ("HAPPY BIRTHDAY SWEETHEART. at {age} I already had a sofa. no pressure. here's $50 toward a sofa", [
-            ('Sofa fund activated', "good. get a washable one", 4, 2, 50), ('noted, no pressure', "none at all. (some)", 1, 0, 50)]),
+            ('Sofa fund activated', "good. get a washable one", 6, 5, 50), ('noted, no pressure', "none at all. (some)", 1, 0, 50)]),
         ("{age}!!! blow a candle for me. if you don't have a candle use the toaster. actually don't", [
-            ('No toasters were harmed', "good. proud of you", 5, 4, 50), ('too late', "I'm calling the fire department and also you", 2, 2, 50)]),
+            ('No toasters were harmed', "good. proud of you", 6, 5, 50), ('too late', "I'm calling the fire department and also you", 2, 2, 50)]),
     ],
     ('mom', 'missed'): [
         ("honey the bank called about {what}?? is everything ok 😟", [
@@ -100,7 +100,7 @@ LINES = {
         ("I can smell burnout from here. it smells like cold coffee", [('Guilty', "phone down, shoes on, we're walking", 4, 6, 0), ("I'm fine it's fine", "famous last words of a fine person", 0, -1, 0)]),
         ("do you need advice, snacks or silence. pick one, I deliver all three", [('Snacks', "excellent choice. crisps incoming", 4, 5, 0), ('Silence', "...", 3, 4, 0)]),
         ("hey. whatever it is, it's not your whole life. it's a week. a stupid week", [('Needed that', "anytime. I charge in hugs", 6, 6, 0), ('Very stupid week', "the stupidest. we'll get a better one", 4, 3, 0)]),
-        ("I'm sending you 14 videos of otters. do not reply until you've watched them", [('The otters healed me', "science", 4, 7, 0), ('I have no time for otters', "everyone has time for otters", -1, 2, 0)]),
+        ("I'm sending you 14 videos of cats. do not reply until you've watched them", [('The cats healed me', "science", 4, 7, 0), ('I have no time for cats', "everyone has time for cats", -1, 2, 0)]),
         ("when did you last sleep like a person", [('Define person', "horizontal, dark room, no phone. try it", 2, 3, 0), ('Tonight, I promise', "I'll be checking. creepily", 3, 4, 0)]),
         ("you ghosted the meme I sent. now I'm worried. it was a GOOD meme", [("Sorry, rough week", "forgiven. the meme will wait. will you tell me about it", 5, 4, 0), ('It was mid', "ok you're clearly unwell", -2, 1, 0)]),
         ("reminder: you're allowed to be bad at adulting some weeks. I'm bad at it most", [('You really are', "wow. but yes. we're a team of disasters", 4, 5, 0), ('Thank you', "that's what the group chat of two is for", 5, 4, 0)]),

@@ -42,6 +42,8 @@ select cron.schedule('inactive-users',   '0 10 * * *',  $$select public.call_bac
 select cron.schedule('week-ready',       '0 16 * * *',  $$select public.call_backend_cron('/api/cron/week-ready/')$$);
 select cron.schedule('mission-deadlines', '30 9 * * *',  $$select public.call_backend_cron('/api/cron/mission-deadlines/')$$);
 select cron.schedule('push-receipts',    '20 * * * *',  $$select public.call_backend_cron('/api/cron/push-receipts/')$$);
+-- Unread texts from Mom, Jordan, Sam and Riley, a few hours after they were written (needs migration 20261214000000).
+select cron.schedule('cast-pushes',       '*/15 * * * *', $$select public.call_backend_cron('/api/cron/cast-pushes/')$$);
 -- Everyone is on game time: markets, paydays, depreciation and growth all run on a player's
 -- game weeks (app/game), so there are no calendar jobs for them. Databases set up before
 -- this change may still have those jobs: remove them (and the old random-events job).
