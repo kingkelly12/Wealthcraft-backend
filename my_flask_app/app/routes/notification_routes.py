@@ -222,7 +222,7 @@ def mark_notification_read(current_user_id: str, notification_id: str):
         # Verify notification belongs to user and mark as read
         result = supabase.table('notifications').update({
             'read': True
-        }).eq('id', notification_id).eq('user_id', current_user_id).execute()
+        }).eq('id', notification_id).in_('user_id', resolve_user_ids(current_user_id)).execute()
         
         if not result.data:
             return jsonify({
@@ -290,7 +290,7 @@ def get_unread_count(current_user_id: str):
 def mark_all_read(current_user_id: str):
     """Mark all notifications as read"""
     try:
-        supabase.table('notifications').update({'read': True}).eq('user_id', current_user_id).eq('read', False).execute()
+        supabase.table('notifications').update({'read': True}).in_('user_id', resolve_user_ids(current_user_id)).eq('read', False).execute()
         return jsonify({'success': True, 'message': 'All marked as read'}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
