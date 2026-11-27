@@ -75,7 +75,7 @@ def _shift_days(monkeypatch, days):
 def test_first_visit_starts_the_clock_and_deals_a_week(client, auth_headers, player, fake_supabase, user_id):
     data = _get(client, auth_headers)
     assert data['week'] == 1 and data['month'] == 1
-    assert data['can_play'] and data['banked_weeks'] == week_service.WEEKS_PER_DAY
+    assert data['can_play'] and data['banked_weeks'] == week_service.FIRST_DAY_WEEKS == 4
     assert data['deck']['total'] == week_service.CARDS_PER_WEEK == data['deck']['remaining']
     assert data['teaser']
     assert len(fake_supabase.rows('player_game_clock')) == 1
@@ -124,7 +124,9 @@ def test_week_cannot_end_with_cards_left(client, auth_headers, player):
     assert res.status_code == 400 and res.get_json()['error'] == 'CARDS_REMAINING'
 
 
-def test_completing_a_week_advances_the_clock_and_locks_until_tomorrow(client, auth_headers, player):
+def test_completing_a_week_advances_the_clock_and_locks_until_tomorrow(client, auth_headers, player, fake_supabase):
+    _get(client, auth_headers)
+    fake_supabase.rows('player_game_clock')[0]['banked_weeks'] = week_service.WEEKS_PER_DAY      # an ordinary day
     assert _play_week(client, auth_headers).status_code == 200      # today's first week...
     res = _play_week(client, auth_headers)                            # ...and its second
     assert res.status_code == 200
@@ -143,10 +145,12 @@ def test_completing_a_week_advances_the_clock_and_locks_until_tomorrow(client, a
 
 def test_two_weeks_a_day_and_missed_days_bank_up_to_seven(client, auth_headers, player, monkeypatch):
     assert week_service.WEEKS_PER_DAY == 2 and week_service.MAX_BANKED == 7
-    assert _get(client, auth_headers)['banked_weeks'] == 2           # day one: two weeks
-    assert _play_week(client, auth_headers).status_code == 200
-    assert _play_week(client, auth_headers).status_code == 200
-    assert not _get(client, auth_headers)['can_play']                # that's today's two
+    assert _get(client, auth_headers)['banked_weeks'] == 4           # day one: four, to reach payday
+    for week in range(1, 5):
+        res = _play_week(client, auth_headers)
+        assert res.status_code == 200
+        assert bool(res.get_json()['data']['receipt']['month_summary']) == (week == 4)
+    assert not _get(client, auth_headers)['can_play']                # that's the first day done
     _shift_days(monkeypatch, 1)
     assert _get(client, auth_headers)['banked_weeks'] == 2
     _shift_days(monkeypatch, 5)                                       # away for a long weekend

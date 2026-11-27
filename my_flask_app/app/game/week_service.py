@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 WEEKS_PER_MONTH = 4
 WEEKS_PER_DAY = 2            # two weeks (8 cards, ~3-4 minutes) a day
+FIRST_DAY_WEEKS = 4          # a new player's first day: enough to reach payday (week 4) once
 MAX_BANKED = 7               # catch-up for a missed weekend; no binging a month at once
 CARDS_PER_WEEK = 4
 MAX_LIFE_EVENTS = 2
@@ -80,7 +81,7 @@ def get_clock(user_id: str) -> dict:
     if not res.data:
         try:
             supabase.table('player_game_clock').insert({
-                'user_id': uid, 'week': 1, 'banked_weeks': WEEKS_PER_DAY, 'bank_updated_on': today.isoformat(),
+                'user_id': uid, 'week': 1, 'banked_weeks': FIRST_DAY_WEEKS, 'bank_updated_on': today.isoformat(),
             }).execute()
         except Exception as e:  # lost a creation race: read the winner's row
             if '23505' not in str(e) and 'duplicate' not in str(e).lower():

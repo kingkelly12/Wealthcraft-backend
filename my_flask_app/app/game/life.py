@@ -517,13 +517,14 @@ def _reset_run(uid, bg, legacy_bonus=0, forced=False):
     roommates.end_all_for(uid)
     cast.reset(uid)
 
-    # A fresh clock: week 1, a day's weeks ready to play.
-    from app.game.week_service import WEEKS_PER_DAY
+    # Back to week 1, keeping the weeks they had left: a restart must not refill the day's allowance.
+    # (No clock yet means a brand-new player, who gets the first-day allowance.)
+    from app.game.week_service import FIRST_DAY_WEEKS
     supabase.table('player_weeks').delete().eq('user_id', uid).execute()
-    today = datetime.now(timezone.utc).date().isoformat()
-    clock = supabase.table('player_game_clock').update({'week': 1, 'banked_weeks': WEEKS_PER_DAY, 'bank_updated_on': today}).eq('user_id', uid).execute()
+    clock = supabase.table('player_game_clock').update({'week': 1}).eq('user_id', uid).execute()
     if not clock.data:
-        supabase.table('player_game_clock').insert({'user_id': uid, 'week': 1, 'banked_weeks': WEEKS_PER_DAY, 'bank_updated_on': today}).execute()
+        supabase.table('player_game_clock').insert({'user_id': uid, 'week': 1, 'banked_weeks': FIRST_DAY_WEEKS,
+                                                    'bank_updated_on': datetime.now(timezone.utc).date().isoformat()}).execute()
 
     # Money: the background's starting cash, plus the legacy bonus.
     current = BalanceService.get_current_balance(uid)

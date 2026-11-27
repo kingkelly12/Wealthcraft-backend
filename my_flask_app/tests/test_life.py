@@ -151,6 +151,37 @@ def test_open_p2p_loans_block_a_new_life(client, auth_headers, player, fake_supa
     assert balance['amount'] == Decimal('4000')          # nothing was reset
 
 
+def _clock_row(fake, uid):
+    return next(c for c in fake.rows('player_game_clock') if c['user_id'] == uid)
+
+
+def test_a_new_player_gets_the_first_day_allowance_when_they_begin(client, auth_headers, player, fake_supabase, user_id):
+    # 'scholarship' resets the run (creating the clock); 'original' keeps it, so the first week creates it.
+    for background in ('scholarship', 'original'):
+        fake_supabase.rows('player_game_clock').clear()
+        fake_supabase.rows('player_lives').clear()
+        assert _begin(client, auth_headers, background).status_code == 200
+        assert client.get('/api/week/', headers=auth_headers).get_json()['data']['banked_weeks'] == 4
+
+
+def test_beginning_after_a_first_look_keeps_the_four(client, auth_headers, player, fake_supabase, user_id):
+    assert client.get('/api/week/', headers=auth_headers).get_json()['data']['banked_weeks'] == 4   # the feed asks first
+    _begin(client, auth_headers, 'original')
+    assert _clock_row(fake_supabase, user_id)['banked_weeks'] == 4
+
+
+@pytest.mark.parametrize('left', [0, 1])
+def test_a_new_life_does_not_refill_the_weeks(client, auth_headers, player, fake_supabase, user_id, left):
+    _with_progress(fake_supabase, user_id)
+    _begin(client, auth_headers, 'original')
+    clock = _clock_row(fake_supabase, user_id)
+    clock.update({'week': 9, 'banked_weeks': left})
+    assert client.post('/api/life/end/', headers=auth_headers).status_code == 200
+    assert _begin(client, auth_headers, 'rich_parents').status_code == 200
+    assert _clock_row(fake_supabase, user_id)['week'] == 1
+    assert _clock_row(fake_supabase, user_id)['banked_weeks'] == left
+
+
 def test_cannot_reroll_on_day_one(client, auth_headers, player):
     _begin(client, auth_headers, 'scholarship')
     res = client.post('/api/life/end/', headers=auth_headers)

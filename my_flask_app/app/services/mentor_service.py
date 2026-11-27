@@ -63,9 +63,15 @@ CTA_ROUTES = {
     'navigate_to_jobs': '/(tabs)/jobs',
     'navigate_to_loans': '/banking',
     'navigate_to_liabilities': '/upgrade-lifestyle',
-    'navigate_to_dashboard': '/(tabs)',
-    'navigate_to_profile': '/profile',
-    'share_milestone': '/profile',
+    # '/dashboard' is the app's Bank screen: cash, assets, debts and sanity in one place.
+    'navigate_to_dashboard': '/dashboard',
+    'navigate_to_profile': '/dashboard',     # the templates mean "your numbers", not the public profile
+    'share_milestone': '/profile',           # showing off is what the profile is for
+}
+# Triggers with a better home than their template's general one.
+TRIGGER_ROUTES = {
+    'poor_credit_score': '/banking',         # the credit score lives in The Bank
+    'overworking': '/(tabs)/jobs',           # "Review Schedule": the jobs and gigs
 }
 
 
@@ -430,7 +436,7 @@ class MentorService:
         if message_template is not None and message_template.cta_text and 'suggested_actions' not in ai_metadata:
             ai_metadata['suggested_actions'] = [{
                 'label': message_template.cta_text,
-                'screen': CTA_ROUTES.get(message_template.cta_action or '', '/(tabs)'),
+                'screen': TRIGGER_ROUTES.get(message_template.trigger_type) or CTA_ROUTES.get(message_template.cta_action or '', '/dashboard'),
                 'params': {},
             }]
 
