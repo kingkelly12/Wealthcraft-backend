@@ -246,8 +246,9 @@ def month_mood(swing: Decimal) -> str:
 
 def income_figures(monthly_per_unit, quantity=1, cost_basis_per_unit=None, category=None, risk_level=None):
     """Income per week / month / year, the yield on what you paid, and expected growth."""
-    monthly = money(Decimal(str(monthly_per_unit or 0)) * Decimal(str(quantity or 1)))
-    annual = monthly * 12
+    exact = Decimal(str(monthly_per_unit or 0)) * Decimal(str(quantity or 1))
+    monthly = money(exact)
+    annual = money(exact * 12)        # from the exact figure: small dividends round to $0 a month
     basis = money(Decimal(str(cost_basis_per_unit or 0)) * Decimal(str(quantity or 1)))
     growth = 6.0 if appreciates(category) else None
     yield_pct = float(round(annual / basis * 100, 1)) if basis > 0 else None

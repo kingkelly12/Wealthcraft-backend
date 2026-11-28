@@ -91,7 +91,11 @@ class ProfileService:
             from app.game import homes
             homes_total = float(homes.total_value(user_id))
 
-            net_worth = balance + assets_total + items_total + homes_total - debt_total
+            # 6. Land you own, at its current value.
+            from app.game import land
+            land_total = float(land.total_value(user_id))
+
+            net_worth = balance + assets_total + items_total + homes_total + land_total - debt_total
 
             # 5. Update Profile
             ProfileService.update_net_worth(user_id, net_worth)

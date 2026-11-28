@@ -50,7 +50,7 @@ def run_inactive_users_monitor():
             if profile.net_worth > 0 or profile.monthly_income > 0:
                 title = "📈 The markets didn't sleep..."
                 body = "A week went by. Your net worth has been doing something interesting while you were away."
-                data = {"type": "market", "screen": "/profile"}
+                data = {"type": "market", "screen": "/bank"}   # "your net worth": the Bank dashboard
                 
             # Variant A: The Mentor's Whisper (If beginner or no assets but they started)
             elif profile.has_completed_onboarding:

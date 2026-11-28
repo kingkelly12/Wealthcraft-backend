@@ -60,6 +60,7 @@ def create_app(config_name='default'):
     from app.routes.cast_routes import texts_bp, roommates_bp
     from app.routes.squad_routes import squads_bp
     from app.routes.home_routes import homes_bp
+    from app.routes.land_routes import land_bp
     from app.routes.showroom_routes import showroom_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -88,6 +89,7 @@ def create_app(config_name='default'):
     app.register_blueprint(roommates_bp, url_prefix='/api/roommates')
     app.register_blueprint(squads_bp, url_prefix='/api/squads')
     app.register_blueprint(homes_bp, url_prefix='/api/homes')
+    app.register_blueprint(land_bp, url_prefix='/api/land')
     app.register_blueprint(showroom_bp, url_prefix='/api/showroom')
 
     

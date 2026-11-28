@@ -5,7 +5,7 @@ Each player (each life) has their own market that moves one step every game
 week they finish, not every few real hours. So whether you play ten weeks in
 an evening or one a day, a year in the game is a year in the market.
 
-* Every asset has a yearly drift (its average growth) and a yearly volatility
+* Every asset has a yearly drift (its typical growth) and a yearly volatility
   (how far it swings). A week's move is drift/52 plus a random swing scaled
   by volatility/sqrt(52). An index fund grows ~7% a year and wobbles; Bitcoin
   grows more on average but can halve; a meme stock goes nowhere, violently.
@@ -30,7 +30,8 @@ from app import supabase
 
 logger = logging.getLogger(__name__)
 
-TRADED = ('stocks', 'crypto', 'forex', 'investments')
+FUNDS = ('bonds', 'mutual_funds', 'special_funds', 'hedge_funds', 'private_capital')
+TRADED = ('stocks', 'crypto', 'forex', 'investments') + FUNDS
 WEEKS = 52
 MAX_WEEKLY_MOVE = 0.60          # no single ordinary week moves more than this
 PRICE_FLOOR = Decimal('0.01')
@@ -41,7 +42,17 @@ DEFAULTS = {
     'crypto': (0.10, 0.70),
     'forex': (0.00, 0.08),
     'investments': (0.05, 0.10),
+    # Funds and bonds: drift is price growth only; the rest of their yearly
+    # return is paid out as income (assets.monthly_income).
+    'bonds': (0.00, 0.04),
+    'mutual_funds': (0.05, 0.10),
+    'special_funds': (0.06, 0.14),
+    'hedge_funds': (0.09, 0.08),
+    'private_capital': (0.12, 0.15),
 }
+
+# How much of a stock market crash or bull run reaches a fund (bonds: none).
+STOCK_EXPOSURE = {'mutual_funds': 0.6, 'special_funds': 0.5, 'hedge_funds': 0.3, 'private_capital': 0.5}
 
 # A shock's headline size is what the benchmark takes: an index fund for
 # stocks, Bitcoin for crypto. Swingier assets are hit harder (see _beta).
@@ -96,7 +107,9 @@ def _beta(asset) -> float:
 def weekly_return(asset, rng) -> float:
     """An ordinary week's move (fraction), from drift and volatility."""
     drift, vol = params(asset)
-    log_r = (drift - vol * vol / 2) / WEEKS + vol / math.sqrt(WEEKS) * rng.gauss(0, 1)
+    # `drift` is the typical (median) year: what most players actually see. Using it as the
+    # average instead would make a very swingy asset lose money in a typical year.
+    log_r = math.log(1 + drift) / WEEKS + vol / math.sqrt(WEEKS) * rng.gauss(0, 1)
     return max(-MAX_WEEKLY_MOVE, min(MAX_WEEKLY_MOVE, math.exp(log_r) - 1))
 
 
@@ -116,14 +129,32 @@ def _applies(event, asset) -> bool:
     cat = (asset.get('category') or '').lower()
     if event['category'] == 'meme':
         return is_meme(asset)
+    if event['category'] == 'stocks' and cat in STOCK_EXPOSURE:
+        return True
     return event['category'] == cat           # crashes and bull runs hit meme stocks too
 
 
 def shock_for(event, asset) -> float:
     pct = event['shock_pct']
-    if event['category'] in ('stocks', 'crypto'):
+    exposure = STOCK_EXPOSURE.get((asset.get('category') or '').lower())
+    if exposure is not None:
+        pct *= exposure
+    elif event['category'] in ('stocks', 'crypto'):
         pct *= _beta(asset)
     return max(-75.0, pct) / 100
+
+
+def shock_drag(asset) -> float:
+    """
+    What crashes and booms add or take away in an average week (log return). The
+    ordinary weeks make up for it, so the long-run growth stays what the asset says.
+    """
+    total = 0.0
+    for key, cat, chance, lo, hi, *_ in EVENTS:
+        event = {'category': cat, 'shock_pct': (lo + hi) / 2}
+        if _applies(event, asset):
+            total += chance * math.log(1 + shock_for(event, asset))
+    return total
 
 
 # --- state ---------------------------------------------------------------------------
@@ -190,24 +221,24 @@ def advance(uid, week) -> dict:
     events = roll_events(random.Random(f'{uid}:{life}:{week}:events'))
     now = datetime.now(timezone.utc).isoformat()
 
-    new_prices = {}
+    new_prices, writes = {}, []
     for a in sorted(assets, key=lambda a: str(a['id'])):
         aid = str(a['id'])
         rng = random.Random(f'{uid}:{life}:{week}:{aid}')
         old = Decimal(str(rows[aid]['price'])) if aid in rows else Decimal(str(a.get('price') or 0))
         if old <= 0:
             continue
-        move = weekly_return(a, rng)
+        move = (1 + weekly_return(a, rng)) * math.exp(-shock_drag(a)) - 1
         for e in events:
             if _applies(e, a):
                 move = (1 + move) * (1 + shock_for(e, a)) - 1
         new = max(PRICE_FLOOR, (old * Decimal(str(1 + move))).quantize(Decimal('0.01')))
         new_prices[aid] = (a, old, new)
-        payload = {'price': float(new), 'prev_price': float(old), 'week': week, 'updated_at': now}
-        if aid in rows:
-            supabase.table('player_market_prices').update(payload).eq('user_id', uid).eq('asset_id', aid).execute()
-        else:
-            supabase.table('player_market_prices').insert({'user_id': uid, 'asset_id': aid, **payload}).execute()
+        writes.append({'user_id': uid, 'asset_id': aid, 'price': float(new), 'prev_price': float(old), 'week': week, 'updated_at': now})
+
+    # One write for the whole market: a call per asset would make ending a week slow.
+    if writes:
+        supabase.table('player_market_prices').upsert(writes, on_conflict='user_id,asset_id').execute()
 
     # Re-value what the player holds.
     by_name = {a['name']: aid for aid, (a, _, _) in new_prices.items()}

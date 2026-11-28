@@ -183,7 +183,8 @@ def _has_progress(uid):
     if _clock_week(uid) > 1:
         return True
     for table, col, extra in (('jobs', 'user_id', ('is_current', True)), ('player_rentals', 'player_id', ('is_active', True)), ('user_assets', 'user_id', None),
-                              ('player_homes', 'player_id', ('is_active', True))):
+                              ('player_homes', 'player_id', ('is_active', True)),
+                              ('player_land', 'player_id', ('is_active', True))):
         q = supabase.table(table).select('id').eq(col, uid)
         if extra:
             q = q.eq(*extra)
@@ -500,8 +501,9 @@ def _reset_run(uid, bg, legacy_bonus=0, forced=False):
     supabase.table('player_rentals').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('player_liabilities').update({'is_active': False}).eq('player_id', uid).eq('is_active', True).execute()
     supabase.table('user_assets').delete().eq('user_id', uid).execute()
-    from app.game import homes, showroom
+    from app.game import homes, land, showroom
     homes.clear_for_new_life(uid)
+    land.clear_for_new_life(uid)
     showroom.clear_for_new_life(uid)
     supabase.table('liabilities').delete().eq('user_id', uid).execute()
     supabase.table('bank_loans').update({'status': 'completed'}).eq('borrower_id', uid).eq('status', 'active').execute()

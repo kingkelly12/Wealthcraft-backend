@@ -124,8 +124,9 @@ class _Query:
         self.op, self.payload = 'insert', payload
         return self
 
-    def upsert(self, payload, **_kw):
+    def upsert(self, payload, on_conflict=None, **_kw):
         self.op, self.payload = 'upsert', payload
+        self.conflict = [c.strip() for c in on_conflict.split(',')] if on_conflict else []
         return self
 
     def update(self, payload):
@@ -148,6 +149,12 @@ class _Query:
             new = self.payload if isinstance(self.payload, list) else [self.payload]
             out = []
             for item in new:
+                keys = getattr(self, 'conflict', [])
+                old = next((r for r in rows if keys and all(_norm(r.get(k)) == _norm(item.get(k)) for k in keys)), None)
+                if old is not None:
+                    old.update(item)
+                    out.append(old)
+                    continue
                 row = {'id': str(uuid.uuid4()), **item}
                 rows.append(row)
                 out.append(row)

@@ -51,6 +51,11 @@ class _MonthSummary:
         self.details.append(detail)
         self.lines.append({'label': label, 'amount': float(-amount), 'missed': True, **({'note': note} if note else {})})
 
+    def note(self, label, note):
+        """News on the receipt with no money attached."""
+        self.details.append(f"{label}: {note}")
+        self.lines.append({'label': label, 'amount': 0.0, 'missed': False, 'note': note})
+
     def failed(self, what):
         """Something broke while processing `what`: the player sees it on the receipt instead of it vanishing."""
         self.details.append(f"⚠️ Couldn't process {what}")
@@ -130,6 +135,7 @@ def _run_month(scope, profiles_map, game_years):
         ('lifestyle running costs', lambda: _charge_maintenance(scope, get_summary)),
         ('rent', lambda: _charge_rent(scope, get_summary)),
         ('homes you own', lambda: _run_homes(scope, get_summary)),
+        ('land you own', lambda: _run_land(scope, get_summary)),
         ('roommate rent and bills', lambda: _roommate_rent(scope, get_summary, game_years)),
         ('household bills', lambda: _charge_living_costs(scope, profiles_map, get_summary, game_years)),
         ('asset income', lambda: _pay_asset_income(scope, get_summary)),
@@ -377,6 +383,18 @@ def _charge_rent(scope, get_summary):
                 summ.missed(rent, f"Missed rent: {name}", f"⚠️ Missed {name} (${rent:,.2f})")
 
 
+def _run_land(scope, get_summary):
+    """Rates and lease payments on land, and offers arriving or lapsing."""
+    from app.game import land
+    uid = scope.only_user
+    if not land.owned(uid):
+        return
+    try:
+        land.run_month(uid, get_summary(uid))
+    except Exception as e:
+        logger.error(f"Land month failed for {uid}: {e}")
+
+
 def _run_homes(scope, get_summary):
     """Upkeep on homes players own, rent from homes they let out, and value growth."""
     from app.game import homes
@@ -518,6 +536,7 @@ def _pay_asset_income(scope, get_summary):
                 swing = economy.profit_swing(listing.get('risk_level'))
                 total_income = economy.money(total_income * swing)
                 note = f"{economy.month_mood(swing)} · {int(swing * 100)}% of usual"
+            total_income = economy.money(total_income)   # dividends can be fractions of a cent per share
             if total_income > 0:
                 BalanceService.add_balance(user_id=user_id, amount=total_income, reason=f"Monthly Asset Income: {name}", category='asset_income')
                 label = f"{name} profit" if note else f"{name} yield"

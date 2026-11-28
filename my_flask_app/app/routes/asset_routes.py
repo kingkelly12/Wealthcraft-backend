@@ -42,6 +42,19 @@ logger = logging.getLogger(__name__)
 
 VOLATILE_TYPES = ('stocks', 'crypto', 'forex')
 
+# Money you can't take back out for a while, in game years (52 weeks each).
+# Buying more of a holding restarts the clock on all of it.
+LOCK_YEARS = {'private_capital': 3}
+
+
+def _game_week(user_id) -> int:
+    rows = supabase.table('player_game_clock').select('week').eq('user_id', str(user_id)).limit(1).execute().data
+    return int(rows[0]['week']) if rows else 1
+
+
+def _weeks_locked(holding, week) -> int:
+    return max(int(holding.get('locked_until_week') or 0) - week, 0)
+
 
 def _asset_type_for(category: str) -> str:
     return {
@@ -49,6 +62,12 @@ def _asset_type_for(category: str) -> str:
         'business': 'business',   # not market-priced: appreciates monthly like property
         'stocks': 'stocks',
         'investments': 'stocks',
+        # Funds and bonds are priced by the market, like stocks.
+        'bonds': 'stocks',
+        'mutual_funds': 'stocks',
+        'special_funds': 'stocks',
+        'hedge_funds': 'stocks',
+        'private_capital': 'stocks',
         'crypto': 'crypto',
         'forex': 'forex',
     }.get(category or '', 'property')
@@ -97,6 +116,8 @@ def purchase_asset(current_user_id: str):
 
         # 2. Create or stack the holding; refund if this fails
         try:
+            years = LOCK_YEARS.get(asset.get('category'))
+            lock = {'locked_until_week': _game_week(current_user_id) + years * 52} if years else {}
             existing = None
             if asset_type in VOLATILE_TYPES:
                 existing_response = supabase.table('user_assets').select('*') \
@@ -113,6 +134,7 @@ def purchase_asset(current_user_id: str):
                     # weighted-average cost basis per unit
                     'purchase_price': float(((old_basis + total_price) / new_quantity).quantize(Decimal('0.01'))),
                     'asset_id': asset['id'],
+                    **lock,
                 }).eq('id', existing['id']).execute()
                 result_asset_id = existing['id']
             else:
@@ -125,6 +147,7 @@ def purchase_asset(current_user_id: str):
                     'value': float(total_price),
                     'purchase_price': float(unit_price),
                     'quantity': float(quantity),
+                    **lock,
                 }).execute()
                 result_asset_id = insert_response.data[0]['id'] if insert_response.data else None
         except Exception:
@@ -256,7 +279,7 @@ def get_assets_overview(current_user_id: str):
                 drift, vol = game_market.params(a)
                 a['expected_growth_pct'] = round(drift * 100, 1)
                 a['volatility_pct'] = round(vol * 100)
-            listings.append({**a, 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'), a.get('risk_level'))})
+            listings.append({**a, 'lock_years': LOCK_YEARS.get(a.get('category')), 'income': economy.income_figures(a.get('monthly_income'), 1, a.get('price'), a.get('category'), a.get('risk_level'))})
         events = [{'headline': f"{e['emoji']} {e['title']}", 'body': e['body'],
                    'analyst_tip': 'Big swings are normal. Selling in a panic is how most people lose money.',
                    'market_mood': 'Crash' if (e.get('shock_pct') or 0) < 0 else 'Boom',
@@ -297,7 +320,12 @@ def get_user_assets_internal(user_id):
     try:
         user_ids = resolve_user_ids(user_id)
         response = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
-        return with_income_figures(response.data or [])
+        holdings = response.data or []
+        if any(h.get('locked_until_week') for h in holdings):
+            week = _game_week(user_id)
+            for h in holdings:
+                h['locked_weeks_left'] = _weeks_locked(h, week)
+        return with_income_figures(holdings)
     except Exception as e:
         logger.error(f"Error fetching assets for user {user_id}: {str(e)}")
         raise e
@@ -372,6 +400,11 @@ def sell_asset(current_user_id: str, asset_id: str = None):
             }), 404
 
         asset = asset_response.data[0]
+        if asset.get('locked_until_week'):
+            left = _weeks_locked(asset, _game_week(current_user_id))
+            if left:
+                return jsonify({'success': False, 'error': 'LOCKED',
+                                'message': f"{asset.get('name')} is locked for {left} more game week{'s' if left != 1 else ''}."}), 400
         held_qty = Decimal(str(asset.get('quantity') or 1))
         cost_basis_unit = Decimal(str(asset.get('purchase_price') or 0))
 

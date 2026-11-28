@@ -78,7 +78,7 @@ def send_message(current_user_id: str):
             'user_id': str(data.recipient_id),
             'type': 'system',
             'title': 'New Message',
-            'message': 'You have a new message',
+            'message': content[:80] + ('...' if len(content) > 80 else ''),
             'related_user_id': current_user_id,
             'read': False
         }).execute()

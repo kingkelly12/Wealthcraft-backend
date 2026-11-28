@@ -106,6 +106,7 @@ def test_a_crash_week_is_recorded_and_shows_in_the_news(client, exchange, monkey
     monkeypatch.setattr(market, 'roll_events', lambda rng: [{'key': 'stock_crash', 'category': 'stocks', 'shock_pct': -25.0,
                                                              'emoji': '📉', 'title': 'Stock market crash', 'body': 'Ouch.'}])
     monkeypatch.setattr(market, 'weekly_return', lambda asset, rng: 0.0)
+    monkeypatch.setattr(market, 'shock_drag', lambda asset: 0.0)
     week = market.advance(uid, 9)
     prices = {r['asset_id']: r['price'] for r in exchange.rows('player_market_prices')}
     assert prices['a-vti'] == 187.5 and prices['a-btc'] == 60000      # stocks crash, crypto doesn't
@@ -169,3 +170,36 @@ def test_a_failed_news_write_is_logged_not_swallowed(exchange, monkeypatch, capl
     with caplog.at_level('WARNING'):
         week = market.advance(uid, 2)
     assert week['events'] and 'db down' in caplog.text
+
+
+def test_the_whole_market_is_saved_in_one_write(fake_supabase):
+    uid, _ = _player(fake_supabase)
+    fake_supabase.rows('assets').extend([dict(VTI), dict(TECH), dict(BTC)])
+    for week in (1, 2):
+        before = len(fake_supabase.calls)
+        market.advance(uid, week)
+        writes = [c for c in fake_supabase.calls[before:] if c[1] == 'player_market_prices' and c[0] != 'select']
+        assert len(writes) == 1
+    assert len(fake_supabase.rows('player_market_prices')) == 3
+
+
+@pytest.mark.parametrize('asset', [VTI, TECH, BTC], ids=lambda a: a['name'])
+def test_long_run_growth_matches_the_asset_even_with_crashes(asset):
+    """Typical yearly growth, crashes and booms included, comes out at the asset's own figure."""
+    rng = random.Random(11)
+    weeks = 52 * 20000
+    total = 0.0
+    for _ in range(weeks):
+        move = (1 + market.weekly_return(asset, rng)) * math.exp(-market.shock_drag(asset))
+        for e in market.roll_events(rng):
+            if market._applies(e, asset):
+                move *= 1 + market.shock_for(e, asset)
+        total += math.log(move)
+    assert math.exp(total / weeks * 52) - 1 == pytest.approx(asset['annual_drift'], abs=0.015)
+
+
+def test_small_dividends_still_count():
+    from app.game import economy
+    figures = economy.income_figures(0.004, 1, 0.97, 'stocks')
+    assert figures['income_annual'] == 0.05
+    assert economy.income_figures(0.004, 1000, 0.97, 'stocks')['income_monthly'] == 4.0

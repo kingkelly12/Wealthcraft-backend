@@ -268,9 +268,29 @@ def get_all_notifications(current_user_id: str):
         user_ids = resolve_user_ids(current_user_id)
         limit = request.args.get('limit', 20, type=int)
         response = supabase.table('notifications').select('*').in_('user_id', user_ids).order('created_at', desc=True).limit(limit).execute()
-        return jsonify({'success': True, 'data': response.data}), 200
+        return jsonify({'success': True, 'data': _with_people(response.data or [])}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _with_people(rows):
+    """Add 'actor' (who it's about: name and face) to notifications that are about another player."""
+    ids = list({str(r['related_user_id']) for r in rows if r.get('related_user_id')})
+    if not ids:
+        return rows
+    try:
+        people = {str(p['user_id']): p for p in supabase.table('profiles').select('user_id, username, profile_picture_url')
+                  .in_('user_id', ids).execute().data or []}
+        from app.game.life import avatars_for
+        faces = avatars_for(ids)
+        for r in rows:
+            who = str(r.get('related_user_id') or '')
+            if who in people:
+                r['actor'] = {'username': people[who].get('username'), 'profile_picture_url': people[who].get('profile_picture_url'),
+                              'avatar': (faces.get(who) or {}).get('avatar')}
+    except Exception as e:  # the list matters more than the faces
+        logger.warning(f'Could not add people to notifications: {e}')
+    return rows
 
 
 @notification_bp.route('/unread/', methods=['GET'])
