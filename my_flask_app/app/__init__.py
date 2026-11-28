@@ -93,6 +93,10 @@ def create_app(config_name='default'):
     app.register_blueprint(showroom_bp, url_prefix='/api/showroom')
 
     
+    # Big lists (markets, homes) are sent gzipped: far less to download on a phone.
+    from app.utils.compress import gzip_response
+    app.after_request(gzip_response)
+
     # Health check endpoint
     @app.route('/health')
     def health_check():

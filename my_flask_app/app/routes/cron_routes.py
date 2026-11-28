@@ -182,7 +182,7 @@ def cron_health():
 @cron_bp.route('/cast-pushes/', methods=['POST'], strict_slashes=False)
 @require_cron_secret
 def cron_cast_pushes():
-    """Unread texts from the cast, a few hours after they were written. Schedule: */15 * * * *"""
+    """Unread texts from the cast, an hour after they were written. Schedule: */15 * * * *"""
     try:
         return jsonify({'success': True, 'data': run_cast_pushes()}), 200
     except Exception as e:

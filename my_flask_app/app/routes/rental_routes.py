@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.rental_schema import RentalRequest, RentalResponse, MoveOutResponse
+from app.utils.perf import parallel
 from app import supabase
 from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
@@ -105,20 +106,12 @@ def get_current_rental(current_user_id: str):
 def get_rentals_overview(current_user_id: str):
     """Consolidated rental market and user status"""
     try:
-        # 1. Available Properties
-        market_res = supabase.table('rental_properties').select('*').execute()
-        
-        # 2. Current User Rental
-        current = get_current_rental_internal(current_user_id)
-        
-        # 3. Real Estate News (AI)
-        news_res = supabase.table('market_news')\
-            .select('*')\
-            .eq('category', 'rentals')\
-            .order('created_at', desc=True)\
-            .limit(3)\
-            .execute()
-        
+        market_res, news_res = parallel(
+            lambda: supabase.table('rental_properties').select('*').execute(),
+            lambda: supabase.table('market_news').select('*').eq('category', 'rentals').order('created_at', desc=True).limit(3).execute(),
+        )
+        current = get_current_rental_internal(current_user_id)    # on this thread: it looks up your ids
+
         return jsonify({
             'success': True,
             'data': {

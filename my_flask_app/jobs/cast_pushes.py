@@ -1,5 +1,5 @@
 """
-Cast texts as pushes, a few hours later, to bring players back.
+Cast texts as pushes, an hour later, to bring players back.
 
 A text written when a week ends gets `push_due_at` (cast.PUSH_DELAY from then). This job, every
 15 minutes, pushes the ones that are due:

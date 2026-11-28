@@ -338,6 +338,14 @@ def get_active_mission(current_user_id: str):
         ).eq('player_mission_id', progress['id']).execute()
         
         player_decision_ids = [d['decision_point_id'] for d in (player_decisions_response.data or [])]
+
+        # Words for the history, not ids: what was asked and what you chose.
+        points = {p['id']: p for p in (decisions_response.data or [])}
+        for d in player_decisions_response.data or []:
+            point = points.get(d['decision_point_id']) or {}
+            option = next((o for o in point.get('mission_decision_options') or [] if o['id'] == d.get('chosen_option_id')), {})
+            d['title'] = point.get('title')
+            d['choice_label'] = option.get('label')
         
         # Next decision: the earliest one that's due and not yet made. (Only the
         # current month's used to be offered, so a decision skipped while the

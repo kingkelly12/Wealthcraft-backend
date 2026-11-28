@@ -31,7 +31,7 @@ CAST = {
 START_SCORE = 50
 MAX_TEXTS_PER_WEEK = 2
 REPEAT_DAYS = 30               # no line twice within this many real days
-PUSH_DELAY = timedelta(hours=3)  # a week's texts reach the phone this much later, if unread
+PUSH_DELAY = timedelta(hours=1)  # a week's texts reach the phone this much later, if unread
 
 
 def relationship_label(score):

@@ -3,6 +3,7 @@ from pydantic import ValidationError
 from app.services.profile_service import ProfileService
 from app.schemas.profile_schema import ProfileCreate, ProfileUpdate, ProfileResponse
 from app.routes.rental_routes import get_current_rental_internal
+from app.utils.perf import parallel
 from app import supabase
 import uuid
 import logging
@@ -154,66 +155,61 @@ def get_comprehensive_dashboard(current_user_id: str):
         except:
             balance = 0.0
 
-        # Batch Supabase calls together to reduce network roundtrips
-        # 3. Assets
-        assets_res = supabase.table('user_assets').select('*').in_('user_id', user_ids).execute()
-        assets = assets_res.data or []
-        
-        # 4. Liabilities
-        # Try to fetch with liability_items relationship
-        try:
-            liabilities_res = supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute()
-        except:
-            # Fallback: fetch without relationship
-            liabilities_res = supabase.table('player_liabilities').select('*').in_('player_id', user_ids).eq('is_active', True).execute()
-        liabilities = liabilities_res.data or []
-        
-        # 5. Jobs
-        jobs_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
-        jobs = jobs_res.data or []
-        
-        # 6. Rental - Use resolved user_ids to avoid additional lookups
-        rental = None
-        try:
-            rental_response = supabase.table('player_rentals')\
-                .select('*, rental_properties(*)')\
-                .in_('player_id', user_ids)\
-                .eq('is_active', True)\
-                .maybe_single()\
-                .execute()
-            rental = rental_response.data if rental_response else None
-        except Exception as e:
-            logger.warning(f"Error fetching rental for user {target_user_id}: {str(e)}")
-            rental = None
-
-        # 7. Social Stats (Followers/Following) - Parallel queries
-        followers_res = supabase.table('user_follows').select('id', count='exact').in_('following_id', user_ids).execute()
-        following_res = supabase.table('user_follows').select('id', count='exact').in_('follower_id', user_ids).execute()
-        
-        # 8. Rank
+        # Everything below is read from Supabase side by side.
         net_worth = profile.net_worth if profile else 0
-        rank_res = supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute()
-        rank = (rank_res.count or 0) + 1
+        someone_else = str(target_user_id) != str(current_user_id)
 
-        # 8b. You and them: do you follow them, do they follow you (not on your own profile)
-        relationship = None
-        if str(target_user_id) not in [str(current_user_id)]:
+        def liabilities_of():
+            try:
+                return supabase.table('player_liabilities').select('*, liability_items(*)').in_('player_id', user_ids).eq('is_active', True).execute().data or []
+            except Exception:  # without the relationship
+                return supabase.table('player_liabilities').select('*').in_('player_id', user_ids).eq('is_active', True).execute().data or []
+
+        def rental_of():
+            try:
+                res = supabase.table('player_rentals').select('*, rental_properties(*)').in_('player_id', user_ids) \
+                    .eq('is_active', True).maybe_single().execute()
+                return res.data if res else None
+            except Exception as e:
+                logger.warning(f"Error fetching rental for user {target_user_id}: {str(e)}")
+                return None
+
+        # You and them: do you follow them, do they follow you (not on your own profile)
+        def relationship_of():
+            if not someone_else:
+                return None
             try:
                 is_following = bool(supabase.table('user_follows').select('id').eq('follower_id', current_user_id)
                                     .in_('following_id', user_ids).limit(1).execute().data)
                 follows_you = bool(supabase.table('user_follows').select('id').in_('follower_id', user_ids)
                                    .eq('following_id', current_user_id).limit(1).execute().data)
-                relationship = {'is_following': is_following, 'follows_you': follows_you}
+                return {'is_following': is_following, 'follows_you': follows_you}
             except Exception as e:
                 logger.warning(f"Relationship lookup failed: {e}")
+                return None
 
-        # 8c. Their timeline: what they bought, sold, started and quit
-        try:
-            activity = supabase.table('player_activity').select('id, kind, emoji, text, amount, profit, created_at') \
-                .in_('user_id', user_ids).order('created_at', desc=True).limit(30).execute().data or []
-        except Exception as e:
-            logger.warning(f"Activity lookup failed: {e}")
-            activity = []
+        # Their timeline: what they bought, sold, started and quit
+        def activity_of():
+            try:
+                return supabase.table('player_activity').select('id, kind, emoji, text, amount, profit, created_at') \
+                    .in_('user_id', user_ids).order('created_at', desc=True).limit(30).execute().data or []
+            except Exception as e:
+                logger.warning(f"Activity lookup failed: {e}")
+                return []
+
+        (assets, liabilities, jobs, rental, followers_res, following_res, rank_res,
+         relationship, activity) = parallel(
+            lambda: supabase.table('user_assets').select('*').in_('user_id', user_ids).execute().data or [],
+            liabilities_of,
+            lambda: supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute().data or [],
+            rental_of,
+            lambda: supabase.table('user_follows').select('id', count='exact').in_('following_id', user_ids).execute(),
+            lambda: supabase.table('user_follows').select('id', count='exact').in_('follower_id', user_ids).execute(),
+            lambda: supabase.table('profiles').select('id', count='exact').gt('net_worth', net_worth).execute(),
+            relationship_of,
+            activity_of,
+        )
+        rank = (rank_res.count or 0) + 1
 
         # 8d. The balance sheet: what they own and what they owe
         homes_list = _homes_for(target_user_id)

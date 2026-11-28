@@ -280,7 +280,7 @@ def test_every_line_is_well_formed():
     assert len(LINES[('roommate', 'casual')]) >= 30
 
 
-# --- pushes, a few hours later -----------------------------------------------------------------
+# --- pushes, an hour later -----------------------------------------------------------------
 
 @pytest.fixture
 def pushes(monkeypatch):

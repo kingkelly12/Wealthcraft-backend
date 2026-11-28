@@ -4,6 +4,7 @@ from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.services.mentor_service import MentorService
 from app.schemas.asset_schema import AssetPurchase
+from app.utils.perf import parallel
 from app import supabase
 from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
@@ -242,34 +243,30 @@ def get_assets_overview(current_user_id: str):
         user_ids = resolve_user_ids(current_user_id)
         logger.info(f"Assets Overview: fetching data for user_ids {user_ids}")
         
-        # 1. Available Market
+        # The market, your profile snippet and the latest headlines, read side by side.
         category = request.args.get('category')
-        query = supabase.table('assets').select('*')
-        if category:
-            query = query.eq('category', category)
-        market_res = query.execute()
-        
-        # 2. User Portfolio
-        portfolio = get_user_assets_internal(current_user_id)
-        
-        # 3. Profile Snippet (Balance/Sanity)
-        profile_res = supabase.table('profiles')\
-            .select('user_id, username, profile_picture_url, sanity, net_worth')\
-            .in_('user_id', user_ids)\
-            .execute()
-            
+
+        def market():
+            query = supabase.table('assets').select('*')
+            if category:
+                query = query.eq('category', category)
+            return query.execute()
+
+        market_res, profile_res, news_res = parallel(
+            market,
+            lambda: supabase.table('profiles').select('user_id, username, profile_picture_url, sanity, net_worth')
+            .in_('user_id', user_ids).execute(),
+            lambda: supabase.table('market_news').select('*').order('created_at', desc=True).limit(5).execute(),
+        )
         profile = profile_res.data[0] if profile_res.data else None
-        
-        # 4. Market News (Latest 5 headlines)
-        news_res = supabase.table('market_news')\
-            .select('*')\
-            .order('created_at', desc=True)\
-            .limit(5)\
-            .execute()
-        
+        portfolio = get_user_assets_internal(current_user_id)     # on this thread: it looks up your ids
+
         # Traded assets show your market's price and this week's move.
         from app.game import market as game_market
-        mine = game_market.view(current_user_id, market_res.data or [])
+        mine, recent = parallel(
+            lambda: game_market.view(current_user_id, market_res.data or []),
+            lambda: game_market.recent_events(current_user_id, 3),
+        )
         listings = []
         for a in market_res.data or []:
             p = mine.get(str(a['id']))
@@ -284,7 +281,7 @@ def get_assets_overview(current_user_id: str):
                    'analyst_tip': 'Big swings are normal. Selling in a panic is how most people lose money.',
                    'market_mood': 'Crash' if (e.get('shock_pct') or 0) < 0 else 'Boom',
                    'market_mood_emoji': e['emoji'], 'created_at': e.get('created_at')}
-                  for e in game_market.recent_events(current_user_id, 3)]
+                  for e in recent]
 
         return jsonify({
             'success': True,

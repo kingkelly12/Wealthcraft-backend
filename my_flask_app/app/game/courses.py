@@ -21,6 +21,7 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.utils.perf import parallel
 from app import supabase
 from app.game import careers
 from app.services.balance_service import BalanceService
@@ -111,12 +112,16 @@ def _next_rung(have):
 
 
 def overview(uid):
-    week = _clock(uid)
-    catalog = _catalog()
-    rows = _mine(uid)
+    week, catalog, rows, exp, job, gigs, balance = parallel(
+        lambda: _clock(uid),
+        _catalog,
+        lambda: _mine(uid),
+        lambda: careers.experience(uid),
+        lambda: _main_job(uid),
+        lambda: supabase.table('jobs').select('title, kind').eq('user_id', str(uid)).eq('is_current', True).eq('kind', 'gig').execute().data or [],
+        lambda: BalanceService.get_current_balance(uid),
+    )
     by_course = {str(r['course_id']): r for r in rows}
-    exp = careers.experience(uid)
-    job = _main_job(uid)
     job_industry = job.get('industry') if job else None
     bonus, bonus_titles = pay_bonus(uid, job_industry, rows, catalog)
     active = sum(1 for r in rows if not _done(r))
@@ -163,9 +168,8 @@ def overview(uid):
         'max_active': MAX_ACTIVE,
         'job_title': job.get('title') if job else None,
         # Gigs you do now: their side-hustle courses come first.
-        'my_gigs': [g.get('title') for g in supabase.table('jobs').select('title, kind').eq('user_id', str(uid)).eq('is_current', True)
-                    .eq('kind', 'gig').execute().data or []],
-        'balance': float(BalanceService.get_current_balance(uid)),
+        'my_gigs': [g.get('title') for g in gigs],
+        'balance': float(balance),
     }
 
 

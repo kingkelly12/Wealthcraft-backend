@@ -19,6 +19,7 @@ import random
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.utils.perf import parallel
 from app import supabase
 from app.game import economy
 from app.services.balance_service import BalanceService
@@ -163,19 +164,23 @@ def lived_in(uid):
 
 def overview(uid) -> dict:
     uid = str(uid)
-    listings = sorted(_listings().values(), key=lambda l: float(l.get('price') or 0))
-    mine = owned(uid)
-    rental = supabase.table('player_rentals').select('id, monthly_rent').eq('player_id', uid).eq('is_active', True).limit(1).execute().data
-    prof = supabase.table('profiles').select('credit_score').eq('user_id', uid).limit(1).execute().data
+    catalog, mine, rental, prof, (income, payments), balance = parallel(
+        _listings,
+        lambda: owned(uid),
+        lambda: supabase.table('player_rentals').select('id, monthly_rent').eq('player_id', uid).eq('is_active', True).limit(1).execute().data,
+        lambda: supabase.table('profiles').select('credit_score').eq('user_id', uid).limit(1).execute().data,
+        lambda: economy.finances(uid),
+        lambda: BalanceService.get_current_balance(uid),
+    )
+    listings = sorted(catalog.values(), key=lambda l: float(l.get('price') or 0))
     credit = (prof[0] if prof else {}).get('credit_score') or 0
-    income, payments = economy.finances(uid)
     return {
         'listings': [{**l, 'figures': figures(l), 'mortgage': mortgage_quote(l, credit, income, payments),
                       'owned': sum(1 for h in mine if str(h['home_id']) == str(l['id']))} for l in listings],
         'mine': [_view(h) for h in mine],
         'living': ('own' if any(h.get('lives_in') for h in mine) else 'renting' if rental else 'parents'),
         'rent_now': float(rental[0]['monthly_rent']) if rental else 0.0,
-        'balance': float(BalanceService.get_current_balance(uid)),
+        'balance': float(balance),
     }
 
 

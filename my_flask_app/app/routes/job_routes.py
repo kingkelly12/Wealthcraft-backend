@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from app.utils.jwt_helper import require_auth
 from app.services.balance_service import BalanceService
 from app.schemas.job_schema import JobApplicationRequest, JobApplicationResponse, JobQuitResponse
+from app.utils.perf import parallel
 from app import supabase
 from app.utils.mission_constraints import enforce_mission_constraints
 from decimal import Decimal
@@ -69,8 +70,13 @@ def get_jobs_overview(current_user_id: str):
     try:
         # 1. Available Market, each listing with whether you have the experience for it
         from app.game import careers
-        market_res = supabase.table('job_market').select('*').execute()
-        exp = careers.experience(current_user_id)
+        user_ids = resolve_user_ids(current_user_id)
+        market_res, exp, current_res, news_res = parallel(
+            lambda: supabase.table('job_market').select('*').execute(),
+            lambda: careers.experience(current_user_id),
+            lambda: supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute(),
+            lambda: supabase.table('market_news').select('*').eq('category', 'jobs').order('created_at', desc=True).limit(3).execute(),
+        )
         market = []
         for j in market_res.data or []:
             fit = careers.check(j, exp)
@@ -79,17 +85,6 @@ def get_jobs_overview(current_user_id: str):
         market.sort(key=lambda j: ((j.get('kind') or 'job') == 'gig', j.get('industry') or '',
                                    rank.get((j.get('level') or 'entry').lower(), 0), float(j.get('salary') or 0)))
 
-        # 2. Current User Jobs
-        user_ids = resolve_user_ids(current_user_id)
-        current_res = supabase.table('jobs').select('*').in_('user_id', user_ids).eq('is_current', True).execute()
-        
-        # 3. Job Market News
-        news_res = supabase.table('market_news')\
-            .select('*')\
-            .eq('category', 'jobs')\
-            .order('created_at', desc=True)\
-            .limit(3)\
-            .execute()
         
         return jsonify({
             'success': True,
