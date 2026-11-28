@@ -196,7 +196,7 @@ def _view(h):
                       'missed_streak': int(loan.get('missed_streak') or 0), 'misses_allowed': MISSES_BEFORE_REPOSSESSION} if loan else None),
         'sale_net': float(economy.money(value * (1 - SELLING_FEES)) - owed),
         'id': h['id'], 'home_id': h['home_id'], 'name': listing.get('name'), 'home_type': listing.get('home_type'),
-        'location': listing.get('location'), 'image_url': listing.get('image_url'),
+        'location': listing.get('location'), 'image_url': listing.get('image_url'), 'image_credit': listing.get('image_credit'),
         'value': float(value), 'purchase_price': float(paid), 'gain': float(value - paid),
         'lives_in': bool(h.get('lives_in')), 'months_held': int(h.get('months_held') or 0),
         'sale_price': float(economy.money(value * (1 - SELLING_FEES))),
